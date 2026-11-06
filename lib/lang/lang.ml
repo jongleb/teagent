@@ -50,6 +50,25 @@ let compile source =
           ( [ "`Just` values"; "Result" ],
             "This value is a `Result`: match `Ok value` and `Err problem`, not `Just` and \
              `Nothing`." );
+          ( [ "I cannot find a `Task." ],
+            "There is no `Task` module: the task functions come from Agent and are written \
+             without a prefix, as `succeed`, `fail`, `andThen`, `map`, `mapErr`, `onError`, \
+             `batch` and `fromResult`." );
+          ( [ "does not expose `Ok`" ],
+            "`Result`, `Ok` and `Err` are already imported. To import a type with its \
+             constructors elsewhere, write `Type(..)`." );
+          ( [ "does not expose `Just`" ],
+            "`Maybe`, `Just` and `Nothing` are already imported. To import a type with its \
+             constructors elsewhere, write `Type(..)`." );
+          ( [ "I cannot find a `List." ],
+            "Only the core List functions exist (map, filter, filterMap, foldl, foldr, head, \
+             tail, take, drop, length, member, any, all, sort, sortBy, concat, concatMap, \
+             indexedMap, partition, unique and the like). To get the element at index n, \
+             write `List.head (List.drop n list)`." );
+          ( [ "I cannot find a `IoErr` variant" ],
+            "`IoErr` is a type, not a constructor. Its values are `NotFound path`, `Denied \
+             path` and `Conflict reason`. For failures of your own, declare your own error \
+             type." );
         ]
         @ List.map
             (fun word ->

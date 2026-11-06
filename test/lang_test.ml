@@ -92,6 +92,15 @@ let () =
           \            Err _ ->\n\
           \                0\n\
           \        )\n" );
+        ( "There is no `Task` module",
+          "main : Task Never Int\nmain =\n    Task.succeed 1\n" );
+        ( "`Result`, `Ok` and `Err` are already imported",
+          "import Result exposing (Result, Ok, Err)\n\n\n\
+           main : Task Never Int\nmain =\n    succeed 1\n" );
+        ( "Only the core List functions exist",
+          "main : Task Never (Maybe Int)\nmain =\n    succeed (List.getAt 0 [ 1 ])\n" );
+        ( "`IoErr` is a type, not a constructor",
+          "main : Task IoErr Int\nmain =\n    fail (NotFound (IoErr \"x\"))\n" );
         ( "These tasks fail with different error types",
           "type Err\n\
           \    = ReadFailed IoErr\n\n\n\
@@ -114,6 +123,20 @@ let () =
     with
     | Ok _ -> []
     | Error report -> [ "a case subject with |> does not compile\n" ^ report ]
+  in
+  let piped =
+    piped
+    @
+    match
+      Lang.compile
+        (header
+       ^ "main : Task String Int\n\
+          main =\n\
+         \    fromResult (Result.fromMaybe \"not a number\" (String.toInt \"7\"))\n"
+        )
+    with
+    | Ok _ -> []
+    | Error report -> [ "fromResult does not compile\n" ^ report ]
   in
   match accepted @ rejected @ hinted @ piped with
   | [] -> ()

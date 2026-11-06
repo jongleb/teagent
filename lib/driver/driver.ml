@@ -51,6 +51,9 @@ let system =
         writes are staged with your edits.\n\
         - `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), \
         not a `Result`. `port`, `type`, `as` and `where` are reserved words.\n\
+        - Write the Agent functions without a prefix (`succeed`, not `Task.succeed`); \
+        `fromResult` turns a `Result` into a task. Only the core List functions exist, \
+        there is no `List.Extra`.\n\
         - If `main` has its own error type, convert each `IoErr` with `mapErr`; otherwise \
         use `IoErr` itself.\n\
         - Look before you answer: write a program that reads or searches first.\n\

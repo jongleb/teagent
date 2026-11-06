@@ -1,7 +1,7 @@
 module Agent exposing
     ( Task, IoErr(..), Match
     , read, write, edit, grep, shell
-    , succeed, fail, andThen, map, mapErr, onError, batch
+    , succeed, fail, andThen, map, mapErr, onError, batch, fromResult
     )
 
 
@@ -77,3 +77,13 @@ onError =
 batch : List (Task e a) -> Task e (List a)
 batch =
     Elm.Kernel.Agent.batch
+
+
+fromResult : Result e a -> Task e a
+fromResult result =
+    case result of
+        Ok value ->
+            succeed value
+
+        Err problem ->
+            fail problem

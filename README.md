@@ -237,8 +237,39 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl                                 
 | `--dry-run` | show the changes, write nothing |
 | `--undo FILE` | put back every file a session changed, unless you changed it since |
 | `--exec FILE` | run a program you wrote, with no model inside |
+| `--mcp` | serve bash, read, write, edit and grep to another agent over MCP |
 
-### From another agent
+### With Claude Code, over MCP
+
+`teagent --mcp` serves five tools to another agent: `bash`, `read`, `write`, `edit` and
+`grep`. Commands run in a sandboxed copy without network, and what they write or delete is
+applied when they end. Writes never overwrite a file you changed meanwhile. The whole session is
+logged, so `teagent --undo` puts everything back.
+
+Add it to a project and switch off Claude Code's own shell and editing, so every change goes
+through teagent:
+
+```console
+$ cd ~/code/app
+$ claude mcp add --scope project teagent -- /path/to/teagent --mcp
+```
+
+`.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__teagent"],
+    "deny": ["Bash", "Edit", "WebFetch", "WebSearch"]
+  }
+}
+```
+
+`Edit` also covers Claude Code's Write and NotebookEdit. Its read-only tools (Read, Grep, Glob)
+stay on. Each session prints its log path on stderr; undo it with
+`teagent --undo ~/.teagent/sessions/NNNN.jsonl`.
+
+### From another agent, with a Dartea program
 
 Any agent that can write a file and run a command can use teagent as its executor: Claude
 Code, Codex, a script. It writes the Dartea program, teagent checks and runs it.
@@ -270,6 +301,7 @@ $ dune exec bench/bench.exe -- --root bench --model … 04_count_lines    # some
 | `lib/tools` | the only IO: files, search, processes, the sandbox, commit |
 | `lib/llm` | its own client for Anthropic Messages and OpenAI-compatible servers |
 | `lib/driver` | the session loop, the world it runs against, logs, replay, resume |
+| `lib/mcp` | the MCP server: tools for another agent, applied and logged |
 | `bin/teagent.ml` | the CLI |
 | `bench/` | 20 tasks with fixtures, expected files and reference programs |
 | `vendor/dartea` | the compiler, on its `rune-agent` branch |

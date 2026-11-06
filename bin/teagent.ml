@@ -43,6 +43,9 @@ let () =
       ( "--exec",
         Arg.String (fun file -> mode := `Exec file),
         "FILE  Run a Dartea program you wrote, with no model" );
+      ( "--mcp",
+        Arg.Unit (fun () -> mode := `Mcp),
+        "  Serve bash, read, write, edit and grep to another agent over MCP (stdio)" );
     ]
     (fun word -> words := word :: !words)
     "teagent [options] TASK...";
@@ -177,6 +180,42 @@ let () =
         exit 1
   in
   match !mode with
+  | `Mcp ->
+      let log = started "MCP session" in
+      prerr_endline ("teagent MCP server in " ^ !directory ^ ", logging to " ^ log);
+      Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
+          let program =
+            Mcp.start (Tools.at !directory) !shell ~on:(fun event ->
+                Out_channel.output_string channel
+                  (Yojson.Safe.to_string (Driver.event_to_json event) ^ "\n");
+                Out_channel.flush channel;
+                Lwt.return_unit)
+          in
+          let rec served () =
+            match In_channel.input_line stdin with
+            | None -> ()
+            | Some "" -> served ()
+            | Some line ->
+                let answer =
+                  match Yojson.Safe.from_string line with
+                  | json -> Lwt_main.run (Mcp.handled program json)
+                  | exception Yojson.Json_error _ ->
+                      Some
+                        (`Assoc
+                          [
+                            ("jsonrpc", `String "2.0");
+                            ("id", `Null);
+                            ("error", `Assoc [ ("code", `Int (-32700)); ("message", `String "Parse error") ]);
+                          ])
+                in
+                Option.iter
+                  (fun answer ->
+                    print_string (Yojson.Safe.to_string answer ^ "\n");
+                    flush stdout)
+                  answer;
+                served ()
+          in
+          served ())
   | `Undo file -> (
       let _, place, recorded = loaded file in
       let workspace = Option.value ~default:!directory place in

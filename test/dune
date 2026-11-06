@@ -1,5 +1,5 @@
 (tests
- (names lang_test interp_test handler_test driver_test)
- (libraries lang interp value tools handler driver llm lwt.unix yojson)
+ (names lang_test interp_test handler_test driver_test mcp_test)
+ (libraries lang interp value tools handler driver llm mcp lwt.unix yojson)
  (deps
   (glob_files ../bench/programs/*.elm)))

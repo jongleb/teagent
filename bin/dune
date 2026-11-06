@@ -1,0 +1,3 @@
+(executable
+ (name rune)
+ (libraries driver handler llm tools value lwt lwt.unix yojson))

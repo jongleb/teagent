@@ -1,0 +1,13 @@
+(data_only_dirs tasks)
+
+(executable
+ (name bench)
+ (libraries driver handler interp lang llm tools value lwt lwt.unix))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree tasks)
+  (glob_files programs/*.elm))
+ (action
+  (run %{exe:bench.exe} --reference)))

@@ -1,0 +1,21 @@
+(rule
+ (target examples.ml)
+ (deps
+  ../../bench/programs/01_rename.elm
+  ../../bench/programs/02_todos.elm
+  ../../bench/programs/03_build.elm)
+ (action
+  (with-stdout-to
+   examples.ml
+   (progn
+    (echo "let all = [ {elm|")
+    (cat ../../bench/programs/01_rename.elm)
+    (echo "|elm}; {elm|")
+    (cat ../../bench/programs/02_todos.elm)
+    (echo "|elm}; {elm|")
+    (cat ../../bench/programs/03_build.elm)
+    (echo "|elm} ]\n")))))
+
+(library
+ (name driver)
+ (libraries agent lang interp handler llm tools value lwt yojson))

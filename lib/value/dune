@@ -1,0 +1,3 @@
+(library
+ (name value)
+ (libraries dartea.ir yojson))

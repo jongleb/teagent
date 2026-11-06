@@ -1,0 +1,11 @@
+(library
+ (name lang)
+ (libraries
+  agent
+  dartea
+  dartea.data
+  dartea.diagnostic
+  dartea.ir
+  dartea.project
+  dartea.reporting
+  dartea.typed))

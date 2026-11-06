@@ -1,0 +1,3 @@
+(library
+ (name llm)
+ (libraries curl lwt lwt.unix threads.posix yojson))

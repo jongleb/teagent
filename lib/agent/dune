@@ -1,0 +1,13 @@
+(rule
+ (target agent.ml)
+ (deps Agent.elm)
+ (action
+  (with-stdout-to
+   agent.ml
+   (progn
+    (echo "let source = {elm|")
+    (cat Agent.elm)
+    (echo "|elm}\n")))))
+
+(library
+ (name agent))

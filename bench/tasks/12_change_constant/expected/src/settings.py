@@ -1,0 +1,3 @@
+DEBUG = False
+MAX_RETRIES = 5
+TIMEOUT = 30

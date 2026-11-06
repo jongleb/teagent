@@ -1,0 +1,3 @@
+[submodule "vendor/dartea"]
+	path = vendor/dartea
+	url = https://github.com/jongleb/dartea

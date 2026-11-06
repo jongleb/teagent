@@ -1,13 +1,13 @@
-# Sandboxing Rune: how far the handler goes, and where the OS must take over
+# Sandboxing teagent: how far the handler goes, and where the OS must take over
 
-Research note, 2026-11-06. It answers one question: every Rune effect already passes through one interpreter, so how close can Rune get to container-grade isolation *inside the handler*, and where does it still need real OS mechanisms?
+Research note, 2026-11-06. It answers one question: every teagent effect already passes through one interpreter, so how close can teagent get to container-grade isolation *inside the handler*, and where does it still need real OS mechanisms?
 
 ## TL;DR
 
-- **Do not try to "implement Linux".** gVisor does exactly that: it is a user-space kernel that reimplements a *subset* of the Linux syscall ABI. It is Linux-only and needs a large engineering team. Rune doesn't need it because its syscall table is `Agent.elm`, which has five tools today. **The handler is Rune's Sentry**, and it is tiny because the ABI is tiny.
+- **Do not try to "implement Linux".** gVisor does exactly that: it is a user-space kernel that reimplements a *subset* of the Linux syscall ABI. It is Linux-only and needs a large engineering team. teagent doesn't need it because its syscall table is `Agent.elm`, which has five tools today. **The handler is teagent's Sentry**, and it is tiny because the ABI is tiny.
 - **Do in the handler:** a copy-on-write overlay over the repo, transactional commit, O(1) forks, record/replay, per-effect policy and budgets. All of this is ordinary OCaml over a persistent map. None of it needs the OS, and none of it is available to an agent running in Docker.
 - **Where the OS is needed:** `shell` runs real binaries (dune, cargo, node), which need a real filesystem and real processes. There the job is *containment plus harvesting*. Run the process under Seatbelt (macOS) or bubblewrap/Landlock (Linux), with writes redirected into a scratch layer. Then turn whatever it wrote back into `Write` effects in the overlay. That moves `shell` out of the "irreversible" class for its filesystem side effects. Network stays off by default; the only route out is an egress proxy.
-- **Docker is a wall without windows.** It limits blast radius but shows nothing, can only roll back the whole container, and on macOS it means a Linux VM with a different toolchain. Rune's design gives the windows. A VM backend (Apple `container`, Firecracker) can still be added later as an optional heavy wall behind the same `shell` effect.
+- **Docker is a wall without windows.** It limits blast radius but shows nothing, can only roll back the whole container, and on macOS it means a Linux VM with a different toolchain. teagent's design gives the windows. A VM backend (Apple `container`, Firecracker) can still be added later as an optional heavy wall behind the same `shell` effect.
 
 ---
 
@@ -42,7 +42,7 @@ Research note, 2026-11-06. It answers one question: every Rune effect already pa
 ### 1.3 Linux primitives and the tools built on them
 
 - **Namespaces** ([namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html)): mount, pid and user since 3.8; cgroup since 4.6; time since 5.6. Unprivileged user namespaces give the creator a full capability set *inside* the namespace, and overlayfs can be mounted there since 5.11 ([user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)). **Caveat:** Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor by default ([release notes](https://discourse.ubuntu.com/t/ubuntu-24-04-lts-noble-numbat-release-notes/39890)). bwrap therefore needs a profile or a sysctl change on stock Ubuntu.
-- **overlayfs** ([docs](https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html)): read-only lower layers and a writable upper layer. Modifying a file copies it up; deleting it leaves a *whiteout*. This is exactly the shape Rune's handler overlay has, implemented in the kernel.
+- **overlayfs** ([docs](https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html)): read-only lower layers and a writable upper layer. Modifying a file copies it up; deleting it leaves a *whiteout*. This is exactly the shape teagent's handler overlay has, implemented in the kernel.
 - **seccomp-bpf** filters on the syscall number and raw arguments, and cannot dereference pointers ([kernel docs](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html)), so it cannot express "only files under X". Its user-notification supervisor mode "can not be used to implement a security policy" because of TOCTOU races ([seccomp_unotify(2)](https://man7.org/linux/man-pages/man2/seccomp_unotify.2.html)). That rules out "intercept every `openat` from the handler" as a design.
 - **Landlock** ([kernel docs](https://www.kernel.org/doc/html/latest/userspace-api/landlock.html)) is unprivileged and stackable. ABIs by kernel version ([crate docs](https://docs.rs/landlock/latest/landlock/enum.ABI.html)):
 
@@ -73,18 +73,18 @@ Research note, 2026-11-06. It answers one question: every Rune effect already pa
 
 - **WASI** is capability-based: a guest sees only the directories it was given (preopens) and has no processes. 0.2 (January 2024) introduced the component model. **0.3 was released on 2026-06-11** and adds native async ([roadmap](https://wasi.dev/roadmap)). **wasmtime** offers deterministic *fuel*, non-deterministic but cheaper *epoch interruption*, `ResourceLimiter` for memory, and sockets denied by default ([Config](https://docs.wasmtime.dev/api/wasmtime/struct.Config.html), [WasiCtxBuilder](https://docs.wasmtime.dev/api/wasmtime_wasi/struct.WasiCtxBuilder.html)).
 - **WebContainers** runs Node toolchains in a browser tab. It "can only execute languages… natively supported on the Web", and native addons are disabled ([troubleshooting](https://webcontainers.io/guides/troubleshooting)). **Pyodide** cannot use `threading`, `multiprocessing` or `socket` ([constraints](https://pyodide.org/en/stable/usage/wasm-constraints.html)). **container2wasm**, **v86** and **WebVM/CheerpX** emulate whole x86 or RISC-V machines in Wasm: full fidelity at emulator speed.
-- **Vercel just-bash** ([repo](https://github.com/vercel-labs/just-bash), v3.6.0) is a bash interpreter in TypeScript. It offers `InMemoryFs`, `OverlayFs` (reads a real directory, keeps writes in memory) and `ReadWriteFs`. It ships ~reimplemented cat/grep/sed/awk/jq/rg/sqlite3. `curl` doesn't exist until URL prefixes are allow-listed. Execution limits cover call depth, command count, time and output size. Its README says execution "happens without VM isolation" and recommends a real sandbox for real binaries. Overlay-FS-plus-interpreter is the closest existing analogue to what Rune's handler could be.
+- **Vercel just-bash** ([repo](https://github.com/vercel-labs/just-bash), v3.6.0) is a bash interpreter in TypeScript. It offers `InMemoryFs`, `OverlayFs` (reads a real directory, keeps writes in memory) and `ReadWriteFs`. It ships ~reimplemented cat/grep/sed/awk/jq/rg/sqlite3. `curl` doesn't exist until URL prefixes are allow-listed. Execution limits cover call depth, command count, time and output size. Its README says execution "happens without VM isolation" and recommends a real sandbox for real binaries. Overlay-FS-plus-interpreter is the closest existing analogue to what teagent's handler could be.
 
 ### 1.6 Capability operating systems as the design model
 
 - **Plan 9** gives each process its own namespace: `bind`, `mount`, and `rfork(RFNAMEG)` to copy it. `RFNOMNT` forbids further mounts, which makes a sandbox out of one flag ([Pike et al., "The Use of Name Spaces in Plan 9"](https://9p.io/sys/doc/names.html), [rfork(2)](https://9p.io/magic/man2html/2/fork)).
 - **Fuchsia** has "no global file system". "Every component receives its own namespace", built from handles that its parent routes to it ([namespaces](https://fuchsia.dev/fuchsia-src/concepts/process/namespaces), [security principles](https://fuchsia.dev/fuchsia-src/concepts/principles/secure)).
 
-Rune already sits in this lineage. A Dartea program has *no ambient authority*: it can only build `Task` values, and what a tool means is decided by whichever handler interprets it. Wrapping a handler is `bind`. Giving a subagent a forked overlay is `rfork(RFNAMEG)`. A policy that denies new tools is `RFNOMNT`.
+teagent already sits in this lineage. A Dartea program has *no ambient authority*: it can only build `Task` values, and what a tool means is decided by whichever handler interprets it. Wrapping a handler is `bind`. Giving a subagent a forked overlay is `rfork(RFNAMEG)`. A policy that denies new tools is `RFNOMNT`.
 
 ### 1.7 Hermetic builds
 
-**Nix** sandboxes builds by default on Linux. On macOS the default is off, and when enabled it uses Seatbelt profiles ([nix.conf](https://nix.dev/manual/nix/latest/command-ref/conf-file.html)). **Bazel** has `linux-sandbox` (user, mount, PID, network and IPC namespaces), `darwin-sandbox` (sandbox-exec) and a portable symlink-tree `processwrapper-sandbox`. It notes that sandboxed processes "can still read all files" ([sandboxing](https://bazel.build/docs/sandboxing)). Two lessons for Rune: (a) Seatbelt plus namespaces are enough to run real compilers hermetically; (b) Bazel's per-action *declared inputs and outputs* are what make outputs harvestable.
+**Nix** sandboxes builds by default on Linux. On macOS the default is off, and when enabled it uses Seatbelt profiles ([nix.conf](https://nix.dev/manual/nix/latest/command-ref/conf-file.html)). **Bazel** has `linux-sandbox` (user, mount, PID, network and IPC namespaces), `darwin-sandbox` (sandbox-exec) and a portable symlink-tree `processwrapper-sandbox`. It notes that sandboxed processes "can still read all files" ([sandboxing](https://bazel.build/docs/sandboxing)). Two lessons for teagent: (a) Seatbelt plus namespaces are enough to run real compilers hermetically; (b) Bazel's per-action *declared inputs and outputs* are what make outputs harvestable.
 
 ### 1.8 How coding agents sandbox today
 
@@ -97,7 +97,7 @@ Rune already sits in this lineage. A Dartea program has *no ambient authority*: 
 | **OpenHands** | Docker | Docker | — | The process runtime is "unsafe, but fast" |
 | **pi** | none for shell | none for shell | — | QuickJS-WASM only for codemode glue |
 
-**The 2026 escape pattern.** The sandboxes themselves held. What escaped was the agent *writing a file that an unsandboxed host component later trusted*: `.git/config` or hooks through fsmonitor, `.claude/settings.json` hooks, symlinks followed by the unsandboxed app, venv interpreters, `.vscode` tasks, or a reachable Docker socket. See Pillar's ["Week of Sandbox Escapes"](https://www.pillar.security/blog/the-week-of-sandbox-escapes) ("sandboxing the agent process does not sandbox the host") and Claude Code advisories CVE-2026-25725, CVE-2026-39861 and CVE-2026-55607 ([advisories](https://github.com/anthropics/claude-code/security/advisories)). Separately, allow-listed domains are an exfiltration channel: Anthropic's docs admit domain fronting is possible because the proxy does not inspect TLS. DNS has been used too ([CVE-2025-55284](https://embracethered.com/blog/posts/2025/claude-code-exfiltration-via-dns-requests)). **This matters most for Rune's design:** the dangerous output of a sandboxed process is *the files it leaves behind*, and Rune can turn those into data before anything trusts them (§2.5).
+**The 2026 escape pattern.** The sandboxes themselves held. What escaped was the agent *writing a file that an unsandboxed host component later trusted*: `.git/config` or hooks through fsmonitor, `.claude/settings.json` hooks, symlinks followed by the unsandboxed app, venv interpreters, `.vscode` tasks, or a reachable Docker socket. See Pillar's ["Week of Sandbox Escapes"](https://www.pillar.security/blog/the-week-of-sandbox-escapes) ("sandboxing the agent process does not sandbox the host") and Claude Code advisories CVE-2026-25725, CVE-2026-39861 and CVE-2026-55607 ([advisories](https://github.com/anthropics/claude-code/security/advisories)). Separately, allow-listed domains are an exfiltration channel: Anthropic's docs admit domain fronting is possible because the proxy does not inspect TLS. DNS has been used too ([CVE-2025-55284](https://embracethered.com/blog/posts/2025/claude-code-exfiltration-via-dns-requests)). **This matters most for teagent's design:** the dangerous output of a sandboxed process is *the files it leaves behind*, and teagent can turn those into data before anything trusts them (§2.5).
 
 ### 1.9 Does the plan's critique of pi hold?
 
@@ -105,17 +105,17 @@ pi's codemode ([README](https://github.com/earendil-works/pi/blob/main/packages/
 
 | Plan's claim | Verdict |
 | --- | --- |
-| "`eval` and `Function` work", implying the cage leaks | **Overstated.** pi documents that they "only produce more code inside the same VM". Isolation holds. What `eval` breaks is *static visibility*: you cannot enumerate effects before running. That is the real and correct argument for Rune. |
+| "`eval` and `Function` work", implying the cage leaks | **Overstated.** pi documents that they "only produce more code inside the same VM". Isolation holds. What `eval` breaks is *static visibility*: you cannot enumerate effects before running. That is the real and correct argument for teagent. |
 | "interrupt handler, which builtins on Bun don't poll" | **Holds.** pi's own README says a long built-in on Bun "may not poll QuickJS's interrupt handler… does not guarantee computation has stopped". |
 | No determinism (`Date`, `Math.random`, promise order) | Plausible. pi removes timers, but I did not verify whether `Date` and `Math.random` exist in its VM. |
 | pi #10897 as a tool-argument problem | Accurate as cited: it is JSON prefix-salvage of streaming tool arguments in `pi-ai`, not a sandbox leak. |
-| "The cage leaks" in general | **Misdirected.** pi's real gap is that `tools.bash` is unsandboxed *by design* ([SECURITY.md](https://github.com/earendil-works/pi/blob/main/SECURITY.md)). **Rune has exactly the same gap through `shell`.** "The language is the sandbox" is true for the program and false for `shell`. |
+| "The cage leaks" in general | **Misdirected.** pi's real gap is that `tools.bash` is unsandboxed *by design* ([SECURITY.md](https://github.com/earendil-works/pi/blob/main/SECURITY.md)). **teagent has exactly the same gap through `shell`.** "The language is the sandbox" is true for the program and false for `shell`. |
 
 The plan should say this outright: language-level isolation and an OS sandbox for `shell` are complementary. The plan's "What we don't do: a sandbox for the model's code" is correct only because the model's code here means Dartea, not the processes it spawns.
 
 ---
 
-## 2. What Rune can do purely in the handler
+## 2. What teagent can do purely in the handler
 
 The handler receives a tree of `Value.task` whose continuations are interpreted closures (`{home; parameters; scope; body : Ir.Ast.term}`), with no OCaml functions in them. That one fact makes everything below cheap. A suspended program is a *value*: it can be logged, diffed, forked and serialised.
 
@@ -161,11 +161,11 @@ The language is pure, so a run is fully determined by the program plus the seque
 
 ### 2.5 A typed replacement for most of the shell
 
-What agents use bash for, and how each use maps to Rune:
+What agents use bash for, and how each use maps to teagent:
 
-| Shell use | Rune answer |
+| Shell use | teagent answer |
 | --- | --- |
-| Glue: pipes, loops, `xargs`, `sed`, `awk`, `head` | **Dartea itself.** The program is the glue. This is why just-bash's 70-command reimplementation is mostly unnecessary for Rune: just-bash exists because bash is *their* glue language, and Dartea is ours. |
+| Glue: pipes, loops, `xargs`, `sed`, `awk`, `head` | **Dartea itself.** The program is the glue. This is why just-bash's 70-command reimplementation is mostly unnecessary for teagent: just-bash exists because bash is *their* glue language, and Dartea is ours. |
 | Listing and search: `ls`, `find`, `rg`, `wc` | New pure-read effects `list : Glob -> Task e (List Path)` and `stat`, plus `grep`. They run in-process over the overlay. |
 | VCS: `git status`, `diff`, `log`, `show` | Typed read effects over the overlay. `git status` and `git diff` *against the overlay* are computable without git touching disk. Mutations (`commit`, `checkout`) are separate effects with their own policy class, and `push` is network. |
 | HTTP | `http : Request -> Task HttpErr Response` with a domain policy, enforced in the handler where the URL is a typed value. No proxy is needed for this path. |
@@ -225,7 +225,7 @@ Invoke `/usr/bin/sandbox-exec` by absolute path, as Codex does. Keep the profile
 
 **Network egress.** The default is no network for `exec`. When a policy allows it (`opam install`, `npm ci`), start a local HTTP CONNECT proxy and let the sandbox reach only that port: through Seatbelt on macOS, through a socket bridged into the netns on Linux, as Claude Code does with socat. The proxy enforces a host allowlist and logs each connection *as an effect* in the session log. State the limits plainly: no TLS inspection, so domain fronting through allowed CDNs and exfiltration to allowed hosts remain possible. A shell with network is still classified **Irreversible**.
 
-**Code placement under Rune's invariants:**
+**Code placement under teagent's invariants:**
 
 - The sandbox wrappers (profile generation, bwrap argv, harvest walk) are IO and live in `lib/tools`.
 - The overlay, policy, budget and harvest-to-effects logic live in `lib/effect` as handlers.
@@ -233,12 +233,12 @@ Invoke `/usr/bin/sandbox-exec` by absolute path, as Codex does. Keep the profile
 
 ---
 
-## 4. Value for Rune, by plan stage
+## 4. Value for teagent, by plan stage
 
 ### What exists *only* because effects are a data tree
 
 1. **Exact speculative planning.** Today the plan handler stubs `Write` with `V_unit` and must cut the plan at the first read-after-write (1.2). With an overlay, the plan handler is just `run` over a *forked overlay*. Reads after writes see the staged content, so speculation is exact and the plan's main risk ("speculating a read after a write returns stale content") disappears. With a contained `exec`, planning can go *past* `dune test`. The user approves a plan that already shows the test result, and approval is just `commit` of that overlay, with no second run. This is the strongest argument for the whole design.
-2. **Policy on intent, not syscalls.** Seatbelt sees `file-write-data /path`; Rune sees `Edit {path; old; new}` produced by line N of the program. Harvested process writes enter the same vocabulary.
+2. **Policy on intent, not syscalls.** Seatbelt sees `file-write-data /path`; teagent sees `Edit {path; old; new}` produced by line N of the program. Harvested process writes enter the same vocabulary.
 3. **Forkable computations.** `(task, overlay)` is a value. That gives O(1) branches for subagents, `batch [spawn …]` each with its own overlay, and an explicit typed `merge` effect for conflicts. Docker gives one filesystem per container and a `git worktree` per agent at best.
 4. **Replay by structural equality** of typed effects, including shell outputs and their file effects.
 5. **One log for conversation, files and shell side effects**, which the plan already identifies as the agent-afk #4271 wish.
@@ -260,7 +260,7 @@ Invoke `/usr/bin/sandbox-exec` by absolute path, as Codex does. Keep the profile
 
 ### Honest comparison with "just run the agent in Docker"
 
-| | Agent inside Docker | Rune handler + OS sandbox for `exec` |
+| | Agent inside Docker | teagent handler + OS sandbox for `exec` |
 | --- | --- | --- |
 | Blast radius of a malicious process | Container (shared kernel; on macOS, a shared VM) | Seatbelt/bwrap profile (shared kernel). Comparable on Linux; Docker's VM on macOS is stronger |
 | Visibility before running | None | Full plan, typed, with speculative results |

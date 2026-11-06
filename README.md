@@ -2,14 +2,14 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img src="assets/logo.svg" alt="rune: the raidho rune carved into a stone" width="140">
+  <img src="assets/logo.svg" alt="teagent: a cup of tea with steam shaped like code brackets" width="140">
 </picture>
 
-# rune
+# teagent
 
 **A coding agent that writes one typed program, which is checked before anything runs.**
 
-The model writes Dartea, a pure dialect of Elm. Rune typechecks it, evaluates it into a tree
+The model writes Dartea, a pure dialect of Elm. teagent typechecks it, evaluates it into a tree
 of effects, runs commands in a sandboxed copy, shows the diff, and only then touches your files.
 
 ![OCaml 5.4](https://img.shields.io/badge/OCaml-5.4-ec6813?logo=ocaml&logoColor=white)
@@ -18,7 +18,7 @@ of effects, runs commands in a sandboxed copy, shows the diff, and only then tou
 ![Bench](https://img.shields.io/badge/bench-20%2F20%20reference-1a7f37)
 ![Stage](https://img.shields.io/badge/stage-0%20spike-9a6700)
 
-[Why](#why-rune) · [How it works](#how-it-works) · [The language](#the-language) ·
+[Why](#why-teagent) · [How it works](#how-it-works) · [The language](#the-language) ·
 [Status](#status) · [Install](#install) · [Quick start](#quick-start) · [Layout](#layout)
 
 </div>
@@ -33,7 +33,7 @@ of effects, runs commands in a sandboxed copy, shows the diff, and only then tou
 <br>
 
 ```console
-$ rune -C ~/code/app "Rename Foo.bar to Foo.baz in all .ml files, then run the tests"
+$ teagent -C ~/code/app "Rename Foo.bar to Foo.baz in all .ml files, then run the tests"
 ```
 
 ```diff
@@ -45,7 +45,7 @@ $ rune -C ~/code/app "Rename Foo.bar to Foo.baz in all .ml files, then run the t
 Apply these changes? [y/N]
 ```
 
-## Why rune
+## Why teagent
 
 <table>
 <tr>
@@ -193,12 +193,12 @@ The sandbox design and the roadmap behind it: [docs/research/sandboxing.md](docs
 
 ## Install
 
-Rune needs OCaml 5.4 and the libraries Dartea builds with (menhir, ppx_jane, ppx_deriving,
+teagent needs OCaml 5.4 and the libraries Dartea builds with (menhir, ppx_jane, ppx_deriving,
 yojson, lwt, curl, str).
 
 ```console
-$ git clone --recurse-submodules https://github.com/jongleb/rune.git
-$ cd rune
+$ git clone --recurse-submodules https://github.com/jongleb/teagent.git
+$ cd teagent
 $ eval $(opam env --switch=<a 5.4 switch with those libraries>)
 $ dune build
 $ dune test
@@ -210,11 +210,11 @@ $ dune test
 
 ```console
 $ export ANTHROPIC_API_KEY=…            # or ANTHROPIC_AUTH_TOKEN from `ant auth login`
-$ rune -C ~/code/app "Find every TODO under lib/ and count them per file"
+$ teagent -C ~/code/app "Find every TODO under lib/ and count them per file"
 
-$ rune --openai http://localhost:11434/v1 --model qwen2.5-coder:7b "…"   # any OpenAI-compatible server
-$ rune --replay ~/.rune/sessions/0001.jsonl                               # no model, no disk
-$ rune --resume ~/.rune/sessions/0001.jsonl                               # go on after a crash
+$ teagent --openai http://localhost:11434/v1 --model qwen2.5-coder:7b "…"   # any OpenAI-compatible server
+$ teagent --replay ~/.teagent/sessions/0001.jsonl                               # no model, no disk
+$ teagent --resume ~/.teagent/sessions/0001.jsonl                               # go on after a crash
 ```
 
 | Flag | Meaning |
@@ -245,6 +245,6 @@ $ dune exec bench/bench.exe -- --root bench --model … 04_count_lines    # some
 | `lib/tools` | the only IO: files, search, processes, the sandbox, commit |
 | `lib/llm` | its own client for Anthropic Messages and OpenAI-compatible servers |
 | `lib/driver` | the session loop, the world it runs against, logs, replay, resume |
-| `bin/rune.ml` | the CLI |
+| `bin/teagent.ml` | the CLI |
 | `bench/` | 20 tasks with fixtures, expected files and reference programs |
 | `vendor/dartea` | the compiler, on its `rune-agent` branch |

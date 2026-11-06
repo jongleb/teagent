@@ -1,7 +1,7 @@
 let () =
   let workspaces = ref [] in
   let fresh () =
-    let workspace = Filename.temp_dir "rune" "" in
+    let workspace = Filename.temp_dir "teagent" "" in
     workspaces := workspace :: !workspaces;
     Sys.mkdir (Filename.concat workspace "lib") 0o755;
     Out_channel.with_open_text (Filename.concat workspace "lib/a.ml") (fun channel ->

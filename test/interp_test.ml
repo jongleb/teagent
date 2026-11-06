@@ -94,7 +94,7 @@ let () =
                                constructor = { module_name = "Agent"; name = "NotFound" };
                                arguments = [ V_string "README.md" ];
                              }),
-                        Interp.apply loaded searched (V_string "# Rune\nmore") )
+                        Interp.apply loaded searched (V_string "# Teagent\nmore") )
                     with
                     | ( Ok (V_task (Succeed (V_string ""))),
                         Ok
@@ -112,7 +112,7 @@ let () =
                         | Ok
                             (V_record
                               [
-                                ("title", V_string "# Rune");
+                                ("title", V_string "# Teagent");
                                 ( "todos",
                                   V_list
                                     [

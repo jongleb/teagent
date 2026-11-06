@@ -1,3 +1,3 @@
 (executable
- (name rune)
+ (name teagent)
  (libraries driver handler llm tools value lwt lwt.unix yojson))

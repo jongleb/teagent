@@ -31,7 +31,7 @@ type world = {
 let system =
   String.concat "\n\n"
     ([
-       "You are Rune, a coding agent. You act only by writing a program in Dartea, a \
+       "You are teagent, a coding agent. You act only by writing a program in Dartea, a \
         dialect of Elm. The harness typechecks it, runs it in the user's workspace, and \
         shows you the value of `main`.";
        "Rules:\n\
@@ -152,7 +152,7 @@ let solve { ask; approve; handler; commit } ~on task =
     let failed : Interp.error -> string = function
       | Crashed reason -> "main crashed: " ^ reason
       | Budget_exhausted -> "main ran out of steps; it probably loops forever."
-      | Stuck reason -> "The harness failed to run main (a bug in Rune): " ^ reason
+      | Stuck reason -> "The harness failed to run main (a bug in teagent): " ^ reason
     in
     let program = Interp.load ~budget:10_000_000 modules in
     let rec stepped task =

@@ -38,7 +38,7 @@ let () =
         "FILE  Continue a session from its log: replay what it holds, then go on live" );
     ]
     (fun word -> words := word :: !words)
-    "rune [options] TASK...";
+    "teagent [options] TASK...";
   let failed reason =
     prerr_endline reason;
     exit 2
@@ -173,11 +173,11 @@ let () =
         task
   | `Fresh -> (
       match String.concat " " (List.rev !words) with
-      | "" -> failed "Say what to do: rune [options] TASK..."
+      | "" -> failed "Say what to do: teagent [options] TASK..."
       | task ->
           let world = live () in
           let sessions =
-            List.fold_left Filename.concat (Sys.getenv "HOME") [ ".rune"; "sessions" ]
+            List.fold_left Filename.concat (Sys.getenv "HOME") [ ".teagent"; "sessions" ]
           in
           List.iter
             (fun directory -> if not (Sys.file_exists directory) then Sys.mkdir directory 0o700)

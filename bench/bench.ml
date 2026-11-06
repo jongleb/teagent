@@ -98,7 +98,7 @@ let () =
         List.map
           (fun name ->
             let task = Filename.concat tasks_directory name in
-            let workspace = Filename.temp_dir ("rune-" ^ name) "" in
+            let workspace = Filename.temp_dir ("teagent-" ^ name) "" in
             copied (Filename.concat task "workspace") workspace;
             let answer, rounds =
               match attempt with

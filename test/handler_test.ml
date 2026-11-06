@@ -1,7 +1,7 @@
 let () =
   let workspaces = ref [] in
   let fresh () =
-    let workspace = Filename.temp_dir "rune" "" in
+    let workspace = Filename.temp_dir "teagent" "" in
     workspaces := workspace :: !workspaces;
     let placed path content =
       let rec made directory =

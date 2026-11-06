@@ -45,7 +45,7 @@ let read workspace (path : Path.t) =
 let write workspace (path : Path.t) content =
   let file = Filename.concat workspace.root path in
   let staging =
-    Filename.concat (Filename.dirname file) ("." ^ Filename.basename file ^ ".rune")
+    Filename.concat (Filename.dirname file) ("." ^ Filename.basename file ^ ".teagent")
   in
   let rec made directory =
     Lwt.catch
@@ -223,7 +223,7 @@ let contained workspace staged command =
   match Sys.file_exists "/usr/bin/sandbox-exec" with
   | false -> refused "A contained shell needs macOS sandbox-exec; run with --shell open."
   | true ->
-      let base = Unix.realpath (Filename.temp_dir "rune-shadow" "") in
+      let base = Unix.realpath (Filename.temp_dir "teagent-shadow" "") in
       let clone = Filename.concat base "work" and scratch = Filename.concat base "tmp" in
       let shadow = { root = clone } in
       Lwt.finalize

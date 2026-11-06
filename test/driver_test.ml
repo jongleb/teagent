@@ -63,6 +63,45 @@ let () =
     (workspace, report, events, List.rev !asked)
   in
   let applied = session ~decision:Driver.Apply in
+  let stubborn =
+    let workspace = fresh () in
+    let reading =
+      "module Main exposing (main)\n\n\
+       import Agent exposing (..)\n\n\n\
+       main : Task IoErr String\n\
+       main =\n\
+      \    read \"lib/a.ml\"\n"
+    in
+    let replies =
+      ref
+        [
+          "It is surely Foo.bar in lib/a.ml.";
+          fenced broken;
+          fenced broken;
+          fenced reading;
+          fenced reading;
+          "lib/a.ml holds Foo.bar.";
+        ]
+    in
+    let asked = ref [] in
+    let report, events =
+      collected
+        {
+          ask =
+            (fun ~system:_ history ->
+              asked := history :: !asked;
+              match !replies with
+              | reply :: rest ->
+                  replies := rest;
+                  Lwt.return (Ok reply)
+              | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+          approve = (fun _ -> Lwt.return Driver.Apply);
+          handler = Handler.staged (Tools.at workspace) Handler.Open;
+          commit = Tools.commit (Tools.at workspace);
+        }
+    in
+    (report, events, List.rev !asked)
+  in
   let failures =
     List.filter_map Fun.id
       [
@@ -98,6 +137,44 @@ let () =
             | "let x = Foo.baz 1\n", true, true, 5 -> None
             | _, _, _, _ -> Some ("apply: the file, diff, result or history is wrong\n" ^ ran))
         | _ -> Some "apply: the session went another way");
+        (let contains text piece =
+           let rec at index =
+             index + String.length piece <= String.length text
+             && (String.equal (String.sub text index (String.length piece)) piece
+                || at (index + 1))
+           in
+           at 0
+         in
+         let last (history : Llm.message list) =
+           Option.fold ~none:"" ~some:(fun (message : Llm.message) -> message.text)
+             (List.nth_opt (List.rev history) 0)
+         in
+         match stubborn with
+         | ( { ending = Ok "lib/a.ml holds Foo.bar."; rounds = [ 3; 1 ] },
+             [
+               Guessed _;
+               Wrote _;
+               Refused _;
+               Wrote _;
+               Refused _;
+               Wrote _;
+               Performed _;
+               Ran _;
+               Wrote _;
+               Performed _;
+               Ran _;
+               Answered _;
+             ],
+             [ _; guessed; once; twice; _; ran_again ] ) -> (
+             match
+               ( contains (last guessed) "You have not looked at the workspace yet",
+                 contains (last once) "This is the same program",
+                 contains (last twice) "This is the same program",
+                 contains (last ran_again) "You already ran this same program" )
+             with
+             | true, false, true, true -> None
+             | _ -> Some "stubborn: the model was not told what it repeats or guesses")
+         | _ -> Some "stubborn: the session went another way");
         (match session ~decision:Driver.Discard with
         | workspace, { ending = Error Discarded; rounds = [ 2 ] }, _, _ -> (
             match contents workspace "lib/a.ml" with

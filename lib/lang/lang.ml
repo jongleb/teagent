@@ -31,9 +31,67 @@ let compile source =
   in
   let sources = Reporting.Sources.of_list outcome.sources in
   let refused reports =
+    let hinted text =
+      let contains piece =
+        let rec at index =
+          index + String.length piece <= String.length text
+          && (String.equal (String.sub text index (String.length piece)) piece || at (index + 1))
+        in
+        at 0
+      in
+      let maybe =
+        "`String.toInt`, `List.head` and `Dict.get` return a `Maybe`: match `Just value` and \
+         `Nothing`, not `Ok` and `Err`."
+      in
+      let rules =
+        [
+          ([ "`Ok` values"; "Maybe" ], maybe);
+          ([ "`Err` values"; "Maybe" ], maybe);
+          ( [ "`Just` values"; "Result" ],
+            "This value is a `Result`: match `Ok value` and `Err problem`, not `Just` and \
+             `Nothing`." );
+        ]
+        @ List.map
+            (fun word ->
+              ( [ "I was not expecting `" ^ word ^ "`" ],
+                "`" ^ word
+                ^ "` is a reserved word in Elm, so it cannot name a variable or a field; pick \
+                   another name." ))
+            [ "port"; "type"; "module"; "import"; "exposing"; "as"; "where"; "alias"; "effect" ]
+      in
+      let errors =
+        List.sort_uniq String.compare
+          (List.filter_map
+             (fun line ->
+               match String.split_on_char ' ' (String.trim line) with
+               | "Task" :: error :: _ -> Some error
+               | _ -> None)
+             (String.split_on_char '\n' text))
+      in
+      let hints =
+        List.sort_uniq String.compare
+          (List.filter_map
+             (fun (pieces, hint) ->
+               match List.filter (fun piece -> not (contains piece)) pieces with
+               | [] -> Some hint
+               | _ :: _ -> None)
+             rules
+          @ (match List.partition (String.equal "IoErr") errors with
+            | _ :: _, _ :: _ ->
+                [
+                  "These tasks fail with different error types. Convert an `IoErr` with \
+                   `mapErr`, as in `read path |> mapErr ReadFailed`, or make `IoErr` the \
+                   error type of `main`.";
+                ]
+            | [], _ | _ :: _, [] -> []))
+      in
+      String.concat "\n\n" (text :: List.map (fun hint -> "Hint: " ^ hint) hints)
+    in
     Error
       (String.concat "\n\n"
-         (List.map (Reporting.Report.to_string ~colours:false) reports))
+         (List.map
+            (fun report -> hinted (Reporting.Report.to_string ~colours:false report))
+            reports))
   in
   match
     ( outcome.errors,

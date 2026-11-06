@@ -58,6 +58,7 @@ let () =
     | Committed (Ok ()) -> section "commit" "written"
     | Committed (Error reason) -> section "commit" ("refused: " ^ reason)
     | Ran result -> section "result" result
+    | Guessed reply -> section "guess, sent back" reply
     | Answered reply -> section "answer" reply
   in
   let loaded file =

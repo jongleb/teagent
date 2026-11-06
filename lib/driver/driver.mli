@@ -15,6 +15,7 @@ type event =
   | Decided of decision
   | Committed of (unit, string) result
   | Ran of string  (** What the program returned, as the model sees it. *)
+  | Guessed of string  (** A reply without a program before any program ran; sent back once. *)
   | Answered of string  (** The model's final reply, without a program. *)
 
 (** Why a session ended without an answer. *)

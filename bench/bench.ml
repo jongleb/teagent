@@ -136,7 +136,7 @@ let () =
                          ~on:(fun event ->
                            match (!loud, event) with
                            | `Quiet, _ -> Lwt.return_unit
-                           | `Loud, (Wrote text | Refused text | Staged text | Ran text | Answered text)
+                           | `Loud, (Wrote text | Refused text | Staged text | Ran text | Guessed text | Answered text)
                              ->
                                Lwt.return (Printf.printf "%s\n%s\n\n%!" name text)
                            | `Loud, (Performed _ | Deferred _ | Decided _ | Committed _) ->

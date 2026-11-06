@@ -15,6 +15,7 @@ type event =
   | Decided of decision
   | Committed of (unit, string) result
   | Ran of string
+  | Guessed of string
   | Answered of string
 
 type stop = Llm_failed of Llm.error | Never_compiled of string | Discarded | Too_many_programs
@@ -45,11 +46,20 @@ let system =
         - `grep` takes an Emacs-style regular expression, not PCRE: alternation is `\\|` \
         (written \"a\\\\|b\" in an Elm string) and there is no `\\d`. `glob` matches \
         paths like `lib/**/*.ml`.\n\
-        - `shell` runs `/bin/sh -c` in the workspace and returns stdout and stderr \
-        together.\n\
-        - When the compiler reports an error, send the whole corrected program.\n\
-        - When the task is done, reply in plain text without a code block.";
+        - `shell` runs `/bin/sh -c` in a sandboxed copy of the workspace that already holds \
+        your edits, without network, and returns stdout and stderr together; the files it \
+        writes are staged with your edits.\n\
+        - `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), \
+        not a `Result`. `port`, `type`, `as` and `where` are reserved words.\n\
+        - If `main` has its own error type, convert each `IoErr` with `mapErr`; otherwise \
+        use `IoErr` itself.\n\
+        - Look before you answer: write a program that reads or searches first.\n\
+        - When the compiler reports an error, change the program and send all of it again.\n\
+        - When the task is done, reply in plain text without a code block, and state the \
+        facts you found: names, paths, numbers.";
        "The Agent module:\n\n```elm\n" ^ Agent.source ^ "```";
+       "The examples below show the style only. Each solves a different task from yours; \
+        write a new program for your task instead of copying one.";
      ]
     @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
 
@@ -70,7 +80,16 @@ let solve { ask; approve; handler; commit } ~on task =
                        staged =
                          List.filter
                            (fun change -> not (List.mem change (Handler.Overlay.changes overlay)))
-                           (Handler.Overlay.changes after);
+                           (Handler.Overlay.changes after)
+                         @ List.filter_map
+                             (fun (earlier : Tools.change) ->
+                               Option.fold
+                                 ~none:(Some { earlier with before = None; after = None })
+                                 ~some:(fun _ -> None)
+                                 (List.find_opt
+                                    (fun (later : Tools.change) -> later.path = earlier.path)
+                                    (Handler.Overlay.changes after)))
+                             (Handler.Overlay.changes overlay);
                      })
               in
               Lwt.return step
@@ -150,21 +169,35 @@ let solve { ask; approve; handler; commit } ~on task =
     | Ok task -> stepped task
     | Error (`Interp error) -> Lwt.return (Ok (failed error))
   in
-  let rec conversation history rounds =
+  let rec conversation history rounds runs nudged =
     match List.length rounds >= 8 with
     | true -> Lwt.return { ending = Error Too_many_programs; rounds = List.rev rounds }
-    | false -> replied history rounds 1
-  and replied history rounds round =
+    | false -> replied history rounds runs nudged 1 None
+  and replied history rounds runs nudged round previous =
     let* reply = ask ~system history in
     match reply with
     | Error (`Llm problem) ->
         Lwt.return { ending = Error (Llm_failed problem); rounds = List.rev rounds }
     | Ok text -> (
-        match program_in text with
-        | None ->
+        match (program_in text, rounds, nudged) with
+        | None, [], `Not_nudged ->
+            let* () = on (Guessed text) in
+            replied
+              (history
+              @ [
+                  { Llm.role = Assistant; text };
+                  {
+                    Llm.role = User;
+                    text =
+                      "You have not looked at the workspace yet, so that answer is a guess. \
+                       Write a program that finds out, then answer from what it returns.";
+                  };
+                ])
+              rounds runs `Nudged round previous
+        | None, _, _ ->
             let* () = on (Answered text) in
             Lwt.return { ending = Ok text; rounds = List.rev rounds }
-        | Some source -> (
+        | Some source, _, _ -> (
             let* () = on (Wrote text) in
             let history = history @ [ { Llm.role = Assistant; text } ] in
             match Lang.compile source with
@@ -179,11 +212,16 @@ let solve { ask; approve; handler; commit } ~on task =
                       {
                         Llm.role = User;
                         text =
-                          "The program does not compile:\n\n" ^ report
+                          (match previous with
+                          | Some earlier when String.equal earlier source ->
+                              "This is the same program you sent before, so the compiler \
+                               rejects it the same way. Change it.\n\n"
+                          | Some _ | None -> "")
+                          ^ "The program does not compile:\n\n" ^ report
                           ^ "\n\nSend the whole corrected program.";
                       };
                     ])
-                  rounds (round + 1)
+                  rounds runs nudged (round + 1) (Some source)
             | Ok modules -> (
                 let* result = executed modules in
                 match result with
@@ -197,13 +235,23 @@ let solve { ask; approve; handler; commit } ~on task =
                             Llm.role = User;
                             text =
                               result
-                              ^ "\n\nIf the task is done, reply in plain text without a \
-                                 program. Otherwise send the next program.";
+                              ^ Option.fold
+                                  ~none:
+                                    "\n\nIf the task is done, reply in plain text without a \
+                                     program, and state the facts you found: names, paths, \
+                                     numbers. Otherwise send the next program."
+                                  ~some:(fun _ ->
+                                    "\n\nYou already ran this same program and got this same \
+                                     result, so running it again will not help. The task is:\n\n"
+                                    ^ task
+                                    ^ "\n\nWrite a different program, or answer in plain text \
+                                       from what you found.")
+                                  (List.find_opt (fun run -> run = (source, result)) runs);
                           };
                         ])
-                      (round :: rounds))))
+                      (round :: rounds) ((source, result) :: runs) nudged)))
   in
-  conversation [ { Llm.role = User; text = task } ] []
+  conversation [ { Llm.role = User; text = task } ] [] [] `Not_nudged
 
 let explained = function
   | Llm_failed problem -> Llm.explained problem
@@ -220,7 +268,9 @@ let resumed events live =
         Some first
     | [] -> None
   in
-  let replies = queued (function Wrote text | Answered text -> Some text | _ -> None) in
+  let replies =
+    queued (function Wrote text | Guessed text | Answered text -> Some text | _ -> None)
+  in
   let steps =
     queued (function
       | Performed { tool; result; staged } -> Some (tool, `Performed (result, staged))
@@ -286,6 +336,7 @@ let event_to_json event : Yojson.Safe.t =
   | Refused report -> text "refused" report
   | Staged diff -> text "staged" diff
   | Ran result -> text "ran" result
+  | Guessed reply -> text "guessed" reply
   | Answered reply -> text "answered" reply
   | Decided Apply -> text "decided" "apply"
   | Decided Discard -> text "decided" "discard"
@@ -312,7 +363,8 @@ let event_to_json event : Yojson.Safe.t =
                              ("path", `String (path :> string));
                              ( "before",
                                Option.fold ~none:`Null ~some:(fun text -> `String text) before );
-                             ("after", `String after);
+                             ( "after",
+                               Option.fold ~none:`Null ~some:(fun text -> `String text) after );
                            ])
                        staged) );
               ] );
@@ -324,6 +376,7 @@ let event_of_json (json : Yojson.Safe.t) =
   | `Assoc [ ("refused", `String report) ] -> Ok (Refused report)
   | `Assoc [ ("staged", `String diff) ] -> Ok (Staged diff)
   | `Assoc [ ("ran", `String result) ] -> Ok (Ran result)
+  | `Assoc [ ("guessed", `String reply) ] -> Ok (Guessed reply)
   | `Assoc [ ("answered", `String reply) ] -> Ok (Answered reply)
   | `Assoc [ ("decided", `String "apply") ] -> Ok (Decided Apply)
   | `Assoc [ ("decided", `String "discard") ] -> Ok (Decided Discard)
@@ -345,16 +398,20 @@ let event_of_json (json : Yojson.Safe.t) =
                 (List.fold_right
                    (fun change collected ->
                      Result.bind collected (fun rest ->
+                         let text = function
+                           | `Null -> Ok None
+                           | `String content -> Ok (Some content)
+                           | _ -> Error ("not a recorded change: " ^ Yojson.Safe.to_string change)
+                         in
                          match change with
-                         | `Assoc
-                             [ ("path", `String path); ("before", before); ("after", `String after) ]
-                           -> (
-                             match (Tools.Path.of_string path, before) with
-                             | Ok path, `Null -> Ok ({ Tools.path; before = None; after } :: rest)
-                             | Ok path, `String before ->
-                                 Ok ({ Tools.path; before = Some before; after } :: rest)
-                             | Ok _, _ | Error _, _ ->
-                                 Error ("not a recorded change: " ^ Yojson.Safe.to_string change))
+                         | `Assoc [ ("path", `String path); ("before", before); ("after", after) ] -> (
+                             match (Tools.Path.of_string path, text before, text after) with
+                             | Ok path, Ok before, Ok after ->
+                                 Ok ({ Tools.path; before; after } :: rest)
+                             | Error _, _, _ ->
+                                 Error ("not a recorded change: " ^ Yojson.Safe.to_string change)
+                             | Ok _, (Error _ as failure), _ | Ok _, Ok _, (Error _ as failure) ->
+                                 failure)
                          | _ -> Error ("not a recorded change: " ^ Yojson.Safe.to_string change)))
                    staged (Ok []))))
   | other -> Error ("not a recorded event: " ^ Yojson.Safe.to_string other)

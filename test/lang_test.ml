@@ -54,7 +54,68 @@ let () =
           \            )\n" );
       ]
   in
-  match accepted @ rejected with
+  let header =
+    "module Main exposing (main)\n\nimport Agent exposing (..)\n\n\n"
+  in
+  let hinted =
+    List.filter_map
+      (fun (hint, source) ->
+        let contains text piece =
+          let rec at index =
+            index + String.length piece <= String.length text
+            && (String.equal (String.sub text index (String.length piece)) piece || at (index + 1))
+          in
+          at 0
+        in
+        match Lang.compile (header ^ source) with
+        | Error report when contains report ("Hint: " ^ hint) -> None
+        | Error report -> Some ("no hint `" ^ hint ^ "` in\n" ^ report)
+        | Ok _ -> Some ("compiled, so no hint `" ^ hint ^ "`"))
+      [
+        ( "`port` is a reserved word",
+          "main : Task Never Int\n\
+           main =\n\
+          \    succeed\n\
+          \        (case String.toInt \"1\" of\n\
+          \            Just port ->\n\
+          \                port\n\n\
+          \            Nothing ->\n\
+          \                0\n\
+          \        )\n" );
+        ( "`String.toInt`, `List.head` and `Dict.get` return a `Maybe`",
+          "main : Task Never Int\n\
+           main =\n\
+          \    succeed\n\
+          \        (case String.toInt \"1\" of\n\
+          \            Ok n ->\n\
+          \                n\n\n\
+          \            Err _ ->\n\
+          \                0\n\
+          \        )\n" );
+        ( "These tasks fail with different error types",
+          "type Err\n\
+          \    = ReadFailed IoErr\n\n\n\
+           main : Task Err String\n\
+           main =\n\
+          \    succeed \"x\" |> andThen (\\_ -> read \"a.txt\")\n" );
+      ]
+  in
+  let piped =
+    match
+      Lang.compile
+        (header
+       ^ "main : Task Never Int\n\
+          main =\n\
+         \    succeed\n\
+         \        (case [ 1 ] |> List.length of\n\
+         \            n ->\n\
+         \                n\n\
+         \        )\n")
+    with
+    | Ok _ -> []
+    | Error report -> [ "a case subject with |> does not compile\n" ^ report ]
+  in
+  match accepted @ rejected @ hinted @ piped with
   | [] -> ()
   | failures ->
       prerr_endline (String.concat "\n\n" failures);

@@ -24,7 +24,7 @@ end
 
 type found = { path : string; line : int; text : string }
 type ran = { out : string; code : int }
-type change = { path : Path.t; before : string option; after : string }
+type change = { path : Path.t; before : string option; after : string option }
 
 let failed path = function
   | Unix.Unix_error ((ENOENT | ENOTDIR), _, _) -> `Tools (Not_found path)
@@ -67,6 +67,18 @@ let write workspace (path : Path.t) content =
       let* () = Lwt_unix.rename staging file in
       Lwt.return (Ok ()))
     (fun problem -> Lwt.return (Error (failed path problem)))
+
+let placed workspace change =
+  match change.after with
+  | Some text -> write workspace change.path text
+  | None ->
+      Lwt.catch
+        (fun () ->
+          let* () = Lwt_unix.unlink (Filename.concat workspace.root change.path) in
+          Lwt.return (Ok ()))
+        (function
+          | Unix.Unix_error (ENOENT, _, _) -> Lwt.return (Ok ())
+          | problem -> Lwt.return (Error (failed change.path problem)))
 
 let replaced (path : Path.t) ~old ~new_ text =
   let rec occurrences from found =
@@ -226,9 +238,7 @@ let contained workspace staged command =
               match copied.code with
               | 0 ->
                   let* () =
-                    Lwt_list.iter_s
-                      (fun change -> Lwt.map ignore (write shadow change.path change.after))
-                      staged
+                    Lwt_list.iter_s (fun change -> Lwt.map ignore (placed shadow change)) staged
                   in
                   let* untouched = walked clone "" in
                   let* done_ =
@@ -269,17 +279,27 @@ let contained workspace staged command =
                             let seen =
                               Option.fold
                                 ~none:(Result.to_option original)
-                                ~some:(fun change -> Some change.after)
+                                ~some:(fun change -> change.after)
                                 (List.find_opt (fun change -> String.equal change.path path) staged)
                             in
                             match (produced, seen) with
                             | Ok text, Some seen when String.equal text seen -> None
                             | Ok text, (Some _ | None) ->
-                                Some { path; before = Result.to_option original; after = text }
+                                Some { path; before = Result.to_option original; after = Some text }
                             | Error _, _ -> None))
                       touched
                   in
-                  Lwt.return (done_, written)
+                  let* deleted =
+                    Lwt_list.filter_map_s
+                      (fun (path, _) ->
+                        match List.assoc_opt path touched with
+                        | Some _ -> Lwt.return None
+                        | None ->
+                            let+ original = read workspace path in
+                            Some { path; before = Result.to_option original; after = None })
+                      untouched
+                  in
+                  Lwt.return (done_, written @ deleted)
               | _ -> refused ("Could not clone the workspace: " ^ copied.out))
             (fun problem -> refused ("Could not run the contained shell: " ^ Printexc.to_string problem)))
         (fun () -> Lwt.catch (fun () -> removed base) (fun _ -> Lwt.return_unit))
@@ -290,7 +310,8 @@ let commit workspace changes =
       (fun change ->
         let+ now = read workspace change.path in
         match (now, change.before) with
-        | Ok text, _ when String.equal text change.after -> None
+        | Ok text, _ when Option.equal String.equal (Some text) change.after -> None
+        | Error (`Tools (Not_found _)), _ when Option.is_none change.after -> None
         | Ok text, Some before when String.equal text before -> None
         | Error (`Tools (Not_found _)), None -> None
         | Ok _, (Some _ | None) | Error _, _ -> Some (change.path :> string))
@@ -306,7 +327,7 @@ let commit workspace changes =
       let rec applied = function
         | [] -> Lwt.return (Ok ())
         | change :: rest -> (
-            let* written = write workspace change.path change.after in
+            let* written = placed workspace change in
             match written with
             | Ok () -> applied rest
             | Error _ as failure -> Lwt.return failure)

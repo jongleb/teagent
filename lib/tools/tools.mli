@@ -25,7 +25,7 @@ type ran = { out : string; code : int }
 type change = {
   path : Path.t;
   before : string option;  (** [None]: the file did not exist. *)
-  after : string;
+  after : string option;  (** [None]: the file is deleted. *)
 }
 
 val read : t -> Path.t -> (string, [> `Tools of error ]) result Lwt.t

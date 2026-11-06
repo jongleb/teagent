@@ -10,7 +10,11 @@ module Overlay = struct
 
   let added overlay changes =
     List.fold_left
-      (fun overlay (change : Tools.change) -> Paths.add (change.path :> string) change overlay)
+      (fun overlay (change : Tools.change) ->
+        match change with
+        | { before = None; after = None; _ } -> Paths.remove (change.path :> string) overlay
+        | { before = Some _; _ } | { after = Some _; _ } ->
+            Paths.add (change.path :> string) change overlay)
       overlay changes
 
   (** One line of a diff, with the line numbers before it in each version. *)
@@ -26,7 +30,8 @@ module Overlay = struct
       | all -> Array.of_list (List.rev all)
     in
     let rendered ({ path; before; after } : Tools.change) =
-      let old = lines (Option.value ~default:"" before) and fresh = lines after in
+      let old = lines (Option.value ~default:"" before)
+      and fresh = lines (Option.value ~default:"" after) in
       let rows = Array.length old and columns = Array.length fresh in
       let common = Array.make_matrix (rows + 1) (columns + 1) 0 in
       for row = rows - 1 downto 0 do
@@ -92,9 +97,9 @@ module Overlay = struct
                   ^ line.text ^ "\n")
                 span))
       in
-      Printf.sprintf "--- %s\n+++ b/%s\n%s"
+      Printf.sprintf "--- %s\n+++ %s\n%s"
         (Option.fold ~none:"/dev/null" ~some:(fun _ -> "a/" ^ (path :> string)) before)
-        (path :> string)
+        (Option.fold ~none:"/dev/null" ~some:(fun _ -> "b/" ^ (path :> string)) after)
         (String.concat "" (List.map hunk groups))
     in
     String.concat "" (List.map rendered (changes overlay))
@@ -174,17 +179,17 @@ let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]
 let staged workspace shell =
   let current overlay (path : Tools.Path.t) =
     match Overlay.Paths.find_opt (path :> string) overlay with
-    | Some (change : Tools.change) -> Lwt.return (Ok (Some change))
+    | Some (change : Tools.change) -> Lwt.return (Ok (change.before, change.after))
     | None ->
         Lwt.map
           (function
-            | Ok text -> Ok (Some { Tools.path; before = Some text; after = text })
-            | Error (`Tools (Tools.Not_found _)) -> Ok None
+            | Ok text -> Ok (Some text, Some text)
+            | Error (`Tools (Tools.Not_found _)) -> Ok (None, None)
             | Error _ as failure -> failure)
           (Tools.read workspace path)
   in
   let stored overlay (path : Tools.Path.t) before after =
-    Overlay.Paths.add (path :> string) { Tools.path; before; after } overlay
+    Overlay.added overlay [ { Tools.path; before; after } ]
   in
   let perform (tool : Value.tool) overlay =
     let kept result = Performed (seen result, overlay) in
@@ -195,9 +200,8 @@ let staged workspace shell =
         | Ok path ->
             Lwt.map
               (function
-                | Ok (Some (change : Tools.change)) ->
-                    Performed (Ok (Value.V_string change.after), overlay)
-                | Ok None -> kept (Error (`Tools (Tools.Not_found (path :> string))))
+                | Ok (_, Some text) -> Performed (Ok (Value.V_string text), overlay)
+                | Ok (_, None) -> kept (Error (`Tools (Tools.Not_found (path :> string))))
                 | Error _ as failure -> kept failure)
               (current overlay path))
     | Write { path; content } -> (
@@ -206,12 +210,8 @@ let staged workspace shell =
         | Ok path ->
             Lwt.map
               (function
-                | Ok found ->
-                    Performed
-                      ( Ok Value.V_unit,
-                        stored overlay path
-                          (Option.bind found (fun (change : Tools.change) -> change.before))
-                          content )
+                | Ok (before, _) ->
+                    Performed (Ok Value.V_unit, stored overlay path before (Some content))
                 | Error _ as failure -> kept failure)
               (current overlay path))
     | Edit { path; old; new_ } -> (
@@ -220,12 +220,12 @@ let staged workspace shell =
         | Ok path ->
             Lwt.map
               (function
-                | Ok (Some (change : Tools.change)) -> (
-                    match Tools.replaced path ~old ~new_ change.after with
+                | Ok (before, Some text) -> (
+                    match Tools.replaced path ~old ~new_ text with
                     | Ok after ->
-                        Performed (Ok Value.V_unit, stored overlay path change.before after)
+                        Performed (Ok Value.V_unit, stored overlay path before (Some after))
                     | Error _ as failure -> kept failure)
-                | Ok None -> kept (Error (`Tools (Tools.Not_found (path :> string))))
+                | Ok (_, None) -> kept (Error (`Tools (Tools.Not_found (path :> string))))
                 | Error _ as failure -> kept failure)
               (current overlay path))
     | Grep { pattern; glob } ->
@@ -241,7 +241,8 @@ let staged workspace shell =
                        on_disk
                     @ List.concat_map
                         (fun (change : Tools.change) ->
-                          Tools.search ~pattern ~glob ~path:(change.path :> string)
+                          Option.fold ~none:[]
+                            ~some:(Tools.search ~pattern ~glob ~path:(change.path :> string))
                             change.after)
                         (Overlay.changes overlay)))),
             overlay )

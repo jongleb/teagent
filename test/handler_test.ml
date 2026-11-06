@@ -251,7 +251,7 @@ let () =
                main : Task IoErr String\n\
                main =\n\
               \    edit { path = \"lib/a.ml\", old = \"Foo.bar\", new = \"Foo.baz\" }\n\
-              \        |> andThen (\\_ -> shell \"cat lib/a.ml; echo built > out.txt; echo escaped > "
+              \        |> andThen (\\_ -> shell \"cat lib/a.ml; echo built > out.txt; rm lib/c.ml; echo escaped > "
              ^ Filename.concat workspace "escape.txt"
              ^ "; /usr/bin/curl -s -m 5 https://example.com > /dev/null; echo net=$?\")\n\
                \        |> map .out\n")
@@ -273,20 +273,31 @@ let () =
                        (Handler.Overlay.changes overlay),
                      Sys.file_exists (Filename.concat workspace "out.txt"),
                      Sys.file_exists (Filename.concat workspace "escape.txt"),
-                     contents workspace "lib/a.ml" )
+                     contents workspace "lib/a.ml",
+                     Sys.file_exists (Filename.concat workspace "lib/c.ml"),
+                     contains (Handler.Overlay.diff overlay) "--- a/lib/c.ml\n+++ /dev/null\n" )
                  with
                  | ( true,
                      false,
-                     [ ("lib/a.ml", "let x = Foo.baz 1\n"); ("out.txt", "built\n") ],
+                     [
+                       ("lib/a.ml", Some "let x = Foo.baz 1\n");
+                       ("lib/c.ml", None);
+                       ("out.txt", Some "built\n");
+                     ],
                      false,
                      false,
-                     "let x = Foo.bar 1\n" ) -> (
+                     "let x = Foo.bar 1\n",
+                     true,
+                     true ) -> (
                      match
                        Lwt_main.run
                          (Tools.commit (Tools.at workspace) (Handler.Overlay.changes overlay))
                      with
-                     | Ok () when String.equal (contents workspace "out.txt") "built\n" -> None
-                     | _ -> Some "contained: the harvested file did not commit")
+                     | Ok ()
+                       when String.equal (contents workspace "out.txt") "built\n"
+                            && not (Sys.file_exists (Filename.concat workspace "lib/c.ml")) ->
+                         None
+                     | _ -> Some "contained: the harvested write or deletion did not commit")
                  | _ -> Some ("contained: the sandbox leaked or missed a write\n" ^ out))
              | _ -> Some "contained: the program did not finish"));
       ]

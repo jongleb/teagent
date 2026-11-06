@@ -332,6 +332,35 @@ let replayed events =
       commit = (fun _ -> Lwt.return (Error (`Tools (Tools.Conflict "the log has no commit here"))));
     }
 
+let undone events =
+  let committed, _ =
+    List.fold_left
+      (fun (committed, overlay) event ->
+        match event with
+        | Performed { staged; _ } -> (committed, Handler.Overlay.added overlay staged)
+        | Committed (Ok ()) -> (committed @ Handler.Overlay.changes overlay, Handler.Overlay.empty)
+        | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
+        | Wrote _ | Refused _ | Deferred _ | Staged _ | Decided Apply | Ran _ | Guessed _
+        | Answered _ ->
+            (committed, overlay))
+      ([], Handler.Overlay.empty) events
+  in
+  let spans =
+    List.fold_left
+      (fun spans (change : Tools.change) ->
+        let key = (change.path :> string) in
+        match List.assoc_opt key spans with
+        | Some (path, before, _) -> (key, (path, before, change.after)) :: List.remove_assoc key spans
+        | None -> (key, (change.path, change.before, change.after)) :: spans)
+      [] committed
+  in
+  List.filter_map
+    (fun (_, (path, before, after)) ->
+      match Option.equal String.equal before after with
+      | true -> None
+      | false -> Some { Tools.path; before = after; after = before })
+    (List.sort (fun (one, _) (other, _) -> String.compare one other) spans)
+
 let event_to_json event : Yojson.Safe.t =
   let text tag body = `Assoc [ (tag, `String body) ] in
   match event with

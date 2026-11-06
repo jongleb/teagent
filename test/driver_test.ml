@@ -226,6 +226,19 @@ let () =
          | None, None -> None
          | Some failure, _ | _, Some failure -> Some failure);
         (let _, _, recorded, _ = applied in
+         match Driver.undone recorded with
+         | [ ({ path; before = Some "let x = Foo.baz 1\n"; after = Some "let x = Foo.bar 1\n" } as
+              change) ]
+           when String.equal (path :> string) "lib/a.ml" -> (
+             let workspace = fresh () in
+             Out_channel.with_open_text (Filename.concat workspace "lib/a.ml") (fun channel ->
+                 Out_channel.output_string channel "let x = Foo.baz 1\n");
+             match Lwt_main.run (Tools.commit (Tools.at workspace) [ change ]) with
+             | Ok () when String.equal (contents workspace "lib/a.ml") "let x = Foo.bar 1\n" ->
+                 None
+             | _ -> Some "undo: the file was not put back")
+         | _ -> Some "undo: the inverse of the session is wrong");
+        (let _, _, recorded, _ = applied in
          match
            List.map
              (fun event ->

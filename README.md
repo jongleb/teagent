@@ -9,8 +9,9 @@
 
 **A coding agent that writes one typed program, which is checked before anything runs.**
 
-The model writes Dartea, a pure dialect of Elm. teagent typechecks it, evaluates it into a tree
-of effects, runs commands in a sandboxed copy, shows the diff, and only then touches your files.
+The model writes Dartea, a pure dialect of Elm. teagent typechecks it, turns it into a tree of
+effects, runs every command in a sandboxed copy, and applies the result by itself. Nothing it does
+leaves the project folder, and any session can be undone with one command.
 
 ![OCaml 5.4](https://img.shields.io/badge/OCaml-5.4-ec6813?logo=ocaml&logoColor=white)
 ![Dartea](https://img.shields.io/badge/programs-Dartea%20%C2%B7%20Elm-5b4fd6)
@@ -42,7 +43,13 @@ $ teagent -C ~/code/app "Rename Foo.bar to Foo.baz in all .ml files, then run th
 @@ -1,1 +1,1 @@
 -let x = Foo.bar 1
 +let x = Foo.baz 1
-Apply these changes? [y/N]
+```
+
+```console
+$ teagent --undo ~/.teagent/sessions/0001.jsonl
+Put back 2 file(s) in /Users/me/code/app:
+  restored lib/a.ml
+  restored lib/b.ml
 ```
 
 ## Why teagent
@@ -71,8 +78,9 @@ the program. A handler walks it: run, stage, replay. A plan is the same tree, cu
 </td>
 <td valign="top">
 
-**Staged by default.** Writes and edits stay in memory and reads see them. You get one diff
-and commit it all, or nothing. A file changed on disk meanwhile refuses the whole commit.
+**Nothing to approve, nothing irreversible.** Edits are staged in memory, checked against the
+disk and written as one commit. Any session can be undone, and a file you changed since is
+never overwritten, by the agent or by the undo.
 
 </td>
 </tr>
@@ -124,8 +132,8 @@ only when nothing is staged, so a command never sees a different tree than the p
   <img src="assets/replay.svg" alt="A session log of events; --replay answers from the log and checks the events match, --resume plays the log and then goes on live" width="100%">
 </picture>
 
-A session is a pure function of its world: the model, the person who approves, the tools and
-the disk. A live run gets the real world; `--replay` gets one built from the log and checks
+A session is a pure function of its world: the model, the approval (automatic unless you pass
+`--ask`), the tools and the disk. A live run gets the real world; `--replay` gets one built from the log and checks
 that the new events equal the logged ones.
 
 ## The language
@@ -215,6 +223,7 @@ $ teagent -C ~/code/app "Find every TODO under lib/ and count them per file"
 $ teagent --openai http://localhost:11434/v1 --model qwen2.5-coder:7b "…"   # any OpenAI-compatible server
 $ teagent --replay ~/.teagent/sessions/0001.jsonl                               # no model, no disk
 $ teagent --resume ~/.teagent/sessions/0001.jsonl                               # go on after a crash
+$ teagent --undo ~/.teagent/sessions/0001.jsonl                                 # put everything back
 ```
 
 | Flag | Meaning |
@@ -224,7 +233,9 @@ $ teagent --resume ~/.teagent/sessions/0001.jsonl                               
 | `--effort LEVEL` | `low`, `medium`, `high` (default), `xhigh`, `max` |
 | `--openai URL` | an OpenAI-compatible `/chat/completions` server |
 | `--shell MODE` | `contained` (default), `open`, `off` |
-| `--yes` | apply changes without asking |
+| `--ask` | ask before writing changes |
+| `--dry-run` | show the changes, write nothing |
+| `--undo FILE` | put back every file a session changed, unless you changed it since |
 | `--exec FILE` | run a program you wrote, with no model inside |
 
 ### From another agent
@@ -233,8 +244,8 @@ Any agent that can write a file and run a command can use teagent as its executo
 Code, Codex, a script. It writes the Dartea program, teagent checks and runs it.
 
 ```console
-$ teagent -C ~/code/app --exec plan.elm         # typecheck, run contained, print results and diff; writes nothing
-$ teagent -C ~/code/app --exec plan.elm --yes   # the same, then commit
+$ teagent -C ~/code/app --exec plan.elm --dry-run   # typecheck, run contained, print results and diff; writes nothing
+$ teagent -C ~/code/app --exec plan.elm             # the same, then commit
 ```
 
 A program that does not compile prints the report with its hints and exits with 1. These runs

@@ -41,5 +41,6 @@ val explained : stop -> string
 val solve : world -> on:(event -> unit Lwt.t) -> string -> report Lwt.t
 val resumed : event list -> world -> world
 val replayed : event list -> world
+val undone : event list -> Tools.change list
 val event_to_json : event -> Yojson.Safe.t
 val event_of_json : Yojson.Safe.t -> (event, string) result

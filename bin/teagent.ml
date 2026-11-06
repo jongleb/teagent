@@ -3,7 +3,7 @@ let () =
   let model = ref None in
   let effort = ref Llm.High in
   let openai = ref None in
-  let approval = ref `Ask in
+  let approval = ref `Auto in
   let shell = ref Handler.Contained in
   let mode = ref `Fresh in
   let words = ref [] in
@@ -22,7 +22,8 @@ let () =
       ( "--openai",
         Arg.String (fun url -> openai := Some url),
         "URL  Use an OpenAI-compatible server at URL, e.g. http://localhost:8080/v1" );
-      ("--yes", Arg.Unit (fun () -> approval := `Always), "  Apply changes without asking");
+      ("--ask", Arg.Unit (fun () -> approval := `Ask), "  Ask before writing changes");
+      ("--dry-run", Arg.Unit (fun () -> approval := `Dry), "  Show the changes, write nothing");
       ( "--shell",
         Arg.Symbol
           ( List.map fst Handler.shells,
@@ -30,6 +31,9 @@ let () =
           ),
         "  contained: a sandboxed clone, no network, writes staged (default); open: the \
          workspace itself; off: never" );
+      ( "--undo",
+        Arg.String (fun file -> mode := `Undo file),
+        "FILE  Put back every file a session changed, unless you changed it since" );
       ( "--replay",
         Arg.String (fun file -> mode := `Replay file),
         "FILE  Replay a session log without the model or the disk, and check it matches" );
@@ -38,8 +42,7 @@ let () =
         "FILE  Continue a session from its log: replay what it holds, then go on live" );
       ( "--exec",
         Arg.String (fun file -> mode := `Exec file),
-        "FILE  Run a Dartea program you wrote, with no model: show the result and the diff, \
-         apply only with --yes" );
+        "FILE  Run a Dartea program you wrote, with no model" );
     ]
     (fun word -> words := word :: !words)
     "teagent [options] TASK...";
@@ -77,22 +80,43 @@ let () =
     | header :: lines -> (
         match
           match Yojson.Safe.from_string header with
-          | `Assoc [ ("task", `String task) ] ->
-              Result.map
-                (fun events -> (task, events))
-                (List.fold_right
-                   (fun line collected ->
-                     Result.bind collected (fun rest ->
-                         match Yojson.Safe.from_string line with
-                         | json ->
-                             Result.map (fun event -> event :: rest) (Driver.event_of_json json)
-                         | exception Yojson.Json_error reason -> Error reason))
-                   lines (Ok []))
+          | `Assoc fields -> (
+              match (List.assoc_opt "task" fields, List.assoc_opt "directory" fields) with
+              | Some (`String task), place ->
+                  Result.map
+                    (fun events ->
+                      ( task,
+                        (match place with Some (`String place) -> Some place | _ -> None),
+                        events ))
+                    (List.fold_right
+                       (fun line collected ->
+                         Result.bind collected (fun rest ->
+                             match Yojson.Safe.from_string line with
+                             | json ->
+                                 Result.map (fun event -> event :: rest)
+                                   (Driver.event_of_json json)
+                             | exception Yojson.Json_error reason -> Error reason))
+                       lines (Ok []))
+              | _ -> Error "the first line does not name the task")
           | _ -> Error "the first line does not name the task"
           | exception Yojson.Json_error reason -> Error reason
         with
         | Ok loaded -> loaded
         | Error reason -> failed (file ^ ": " ^ reason))
+  in
+  let approved _ =
+    match !approval with
+    | `Auto -> Lwt.return Driver.Apply
+    | `Dry -> Lwt.return Driver.Discard
+    | `Ask -> (
+        print_string "Apply these changes? [y/N] ";
+        flush stdout;
+        match
+          String.lowercase_ascii
+            (String.trim (Option.value ~default:"" (In_channel.input_line stdin)))
+        with
+        | "y" | "yes" -> Lwt.return Driver.Apply
+        | _ -> Lwt.return Driver.Discard)
   in
   let live () =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
@@ -101,19 +125,7 @@ let () =
         let workspace = Tools.at !directory in
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
-          approve =
-            (fun _ ->
-              match !approval with
-              | `Always -> Lwt.return Driver.Apply
-              | `Ask -> (
-                  print_string "Apply these changes? [y/N] ";
-                  flush stdout;
-                  match
-                    String.lowercase_ascii
-                      (String.trim (Option.value ~default:"" (In_channel.input_line stdin)))
-                  with
-                  | "y" | "yes" -> Lwt.return Driver.Apply
-                  | _ -> Lwt.return Driver.Discard));
+          approve = approved;
           handler = Handler.staged workspace !shell;
           commit = Tools.commit workspace;
         }
@@ -150,19 +162,43 @@ let () =
     Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_excl; Open_text ] 0o600 log
       (fun channel ->
         Out_channel.output_string channel
-          (Yojson.Safe.to_string (`Assoc [ ("task", `String task) ]) ^ "\n"));
+          (Yojson.Safe.to_string
+             (`Assoc [ ("task", `String task); ("directory", `String !directory) ])
+          ^ "\n"));
     log
   in
   let finished (report : Driver.report) =
     match report.ending with
     | Ok _ -> ()
+    | Error Discarded when !approval = `Dry ->
+        print_endline "\nNothing was written: this was a dry run."
     | Error stop ->
         prerr_endline (Driver.explained stop);
         exit 1
   in
   match !mode with
+  | `Undo file -> (
+      let _, place, recorded = loaded file in
+      let workspace = Option.value ~default:!directory place in
+      match Driver.undone recorded with
+      | [] -> print_endline "The session changed nothing, so there is nothing to undo."
+      | changes -> (
+          match Lwt_main.run (Tools.commit (Tools.at workspace) changes) with
+          | Ok () ->
+              Printf.printf "Put back %d file(s) in %s:\n%s\n" (List.length changes) workspace
+                (String.concat "\n"
+                   (List.map
+                      (fun (change : Tools.change) ->
+                        (match change.after with Some _ -> "  restored " | None -> "  removed ")
+                        ^ (change.path :> string))
+                      changes))
+          | Error (`Tools (Not_found reason | Denied reason | Conflict reason)) ->
+              prerr_endline
+                ("Nothing was undone, so none of your own edits are lost. " ^ reason
+               ^ "\nThese files changed after the session; undo them by hand, or keep them.");
+              exit 1))
   | `Replay file -> (
-      let task, recorded = loaded file in
+      let task, _, recorded = loaded file in
       let replayed = ref [] in
       let _report =
         Lwt_main.run
@@ -193,7 +229,8 @@ let () =
             (shown logged) (shown again);
           exit 1)
   | `Resume file ->
-      let task, recorded = loaded file in
+      let task, place, recorded = loaded file in
+      Option.iter (fun place -> directory := place) place;
       finished
         (logged file ~skipped:(List.length recorded) (Driver.resumed recorded (live ())) task)
   | `Exec file -> (
@@ -206,33 +243,25 @@ let () =
       | Error report ->
           print_endline report;
           exit 1
-      | Ok _ -> (
+      | Ok _ ->
           let workspace = Tools.at !directory in
           let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
-          let report =
-            logged (started task) ~skipped:0
-              {
-                ask =
-                  (fun ~system:_ _ ->
-                    match !replies with
-                    | reply :: rest ->
-                        replies := rest;
-                        Lwt.return (Ok reply)
-                    | [] -> Lwt.return (Ok "Done."));
-                approve =
-                  (fun _ ->
-                    match !approval with
-                    | `Always -> Lwt.return Driver.Apply
-                    | `Ask -> Lwt.return Driver.Discard);
-                handler = Handler.staged workspace !shell;
-                commit = Tools.commit workspace;
-              }
-              task
-          in
-          match report.ending with
-          | Error Discarded -> print_endline "\nNothing was written. Run again with --yes to apply."
-          | Ok _ | Error (Llm_failed _ | Never_compiled _ | Too_many_programs) -> finished report))
+          finished
+            (logged (started task) ~skipped:0
+               {
+                 ask =
+                   (fun ~system:_ _ ->
+                     match !replies with
+                     | reply :: rest ->
+                         replies := rest;
+                         Lwt.return (Ok reply)
+                     | [] -> Lwt.return (Ok "Done."));
+                 approve = approved;
+                 handler = Handler.staged workspace !shell;
+                 commit = Tools.commit workspace;
+               }
+               task))
   | `Fresh -> (
       match String.concat " " (List.rev !words) with
       | "" -> failed "Say what to do: teagent [options] TASK..."

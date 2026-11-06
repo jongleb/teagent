@@ -36,6 +36,10 @@ let () =
       ( "--resume",
         Arg.String (fun file -> mode := `Resume file),
         "FILE  Continue a session from its log: replay what it holds, then go on live" );
+      ( "--exec",
+        Arg.String (fun file -> mode := `Exec file),
+        "FILE  Run a Dartea program you wrote, with no model: show the result and the diff, \
+         apply only with --yes" );
     ]
     (fun word -> words := word :: !words)
     "teagent [options] TASK...";
@@ -48,7 +52,12 @@ let () =
     match event with
     | Wrote reply -> section "program" reply
     | Refused report -> section "compiler" report
-    | Performed { tool; _ } -> section "tool" (Yojson.Safe.to_string (Value.tool_to_json tool))
+    | Performed { tool; result; _ } ->
+        let shown = Value.to_elm (Result.fold ~ok:Fun.id ~error:Fun.id result) in
+        section
+          (Yojson.Safe.to_string (Value.tool_to_json tool))
+          (if String.length shown <= 2_000 then shown
+           else String.sub shown 0 2_000 ^ "… (cut)")
     | Deferred tool ->
         section "deferred until the changes are settled"
           (Yojson.Safe.to_string (Value.tool_to_json tool))
@@ -109,8 +118,8 @@ let () =
           commit = Tools.commit workspace;
         }
   in
-  let logged ~flags log ~skipped world task =
-    Out_channel.with_open_gen flags 0o600 log (fun channel ->
+  let logged log ~skipped world task =
+    Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
         let written json =
           Out_channel.output_string channel (Yojson.Safe.to_string json ^ "\n");
           Out_channel.flush channel
@@ -128,11 +137,28 @@ let () =
         Printf.printf "\ncompile rounds per program: %s\nsession log: %s\n"
           (String.concat ", " (List.map string_of_int report.rounds))
           log;
-        match report.ending with
-        | Ok _ -> ()
-        | Error stop ->
-            prerr_endline (Driver.explained stop);
-            exit 1)
+        report)
+  in
+  let started task =
+    let sessions = List.fold_left Filename.concat (Sys.getenv "HOME") [ ".teagent"; "sessions" ] in
+    List.iter
+      (fun directory -> if not (Sys.file_exists directory) then Sys.mkdir directory 0o700)
+      [ Filename.dirname sessions; sessions ];
+    let log =
+      Filename.concat sessions (Printf.sprintf "%04d.jsonl" (Array.length (Sys.readdir sessions) + 1))
+    in
+    Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_excl; Open_text ] 0o600 log
+      (fun channel ->
+        Out_channel.output_string channel
+          (Yojson.Safe.to_string (`Assoc [ ("task", `String task) ]) ^ "\n"));
+    log
+  in
+  let finished (report : Driver.report) =
+    match report.ending with
+    | Ok _ -> ()
+    | Error stop ->
+        prerr_endline (Driver.explained stop);
+        exit 1
   in
   match !mode with
   | `Replay file -> (
@@ -168,26 +194,48 @@ let () =
           exit 1)
   | `Resume file ->
       let task, recorded = loaded file in
-      logged ~flags:[ Open_wronly; Open_append; Open_text ] file ~skipped:(List.length recorded)
-        (Driver.resumed recorded (live ()))
-        task
+      finished
+        (logged file ~skipped:(List.length recorded) (Driver.resumed recorded (live ())) task)
+  | `Exec file -> (
+      let source =
+        match In_channel.with_open_text file In_channel.input_all with
+        | exception Sys_error reason -> failed reason
+        | source -> source
+      in
+      match Lang.compile source with
+      | Error report ->
+          print_endline report;
+          exit 1
+      | Ok _ -> (
+          let workspace = Tools.at !directory in
+          let replies = ref [ "```elm\n" ^ source ^ "```" ] in
+          let task = "Run the program in " ^ file in
+          let report =
+            logged (started task) ~skipped:0
+              {
+                ask =
+                  (fun ~system:_ _ ->
+                    match !replies with
+                    | reply :: rest ->
+                        replies := rest;
+                        Lwt.return (Ok reply)
+                    | [] -> Lwt.return (Ok "Done."));
+                approve =
+                  (fun _ ->
+                    match !approval with
+                    | `Always -> Lwt.return Driver.Apply
+                    | `Ask -> Lwt.return Driver.Discard);
+                handler = Handler.staged workspace !shell;
+                commit = Tools.commit workspace;
+              }
+              task
+          in
+          match report.ending with
+          | Error Discarded -> print_endline "\nNothing was written. Run again with --yes to apply."
+          | Ok _ | Error (Llm_failed _ | Never_compiled _ | Too_many_programs) -> finished report))
   | `Fresh -> (
       match String.concat " " (List.rev !words) with
       | "" -> failed "Say what to do: teagent [options] TASK..."
       | task ->
           let world = live () in
-          let sessions =
-            List.fold_left Filename.concat (Sys.getenv "HOME") [ ".teagent"; "sessions" ]
-          in
-          List.iter
-            (fun directory -> if not (Sys.file_exists directory) then Sys.mkdir directory 0o700)
-            [ Filename.dirname sessions; sessions ];
-          let log =
-            Filename.concat sessions
-              (Printf.sprintf "%04d.jsonl" (Array.length (Sys.readdir sessions) + 1))
-          in
-          Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_excl; Open_text ] 0o600 log
-            (fun channel ->
-              Out_channel.output_string channel
-                (Yojson.Safe.to_string (`Assoc [ ("task", `String task) ]) ^ "\n"));
-          logged ~flags:[ Open_wronly; Open_append; Open_text ] log ~skipped:0 world task)
+          finished (logged (started task) ~skipped:0 world task))

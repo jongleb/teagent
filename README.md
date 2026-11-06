@@ -225,6 +225,20 @@ $ teagent --resume ~/.teagent/sessions/0001.jsonl                               
 | `--openai URL` | an OpenAI-compatible `/chat/completions` server |
 | `--shell MODE` | `contained` (default), `open`, `off` |
 | `--yes` | apply changes without asking |
+| `--exec FILE` | run a program you wrote, with no model inside |
+
+### From another agent
+
+Any agent that can write a file and run a command can use teagent as its executor: Claude
+Code, Codex, a script. It writes the Dartea program, teagent checks and runs it.
+
+```console
+$ teagent -C ~/code/app --exec plan.elm         # typecheck, run contained, print results and diff; writes nothing
+$ teagent -C ~/code/app --exec plan.elm --yes   # the same, then commit
+```
+
+A program that does not compile prints the report with its hints and exits with 1. These runs
+are logged like any session, so `--replay` works on them too.
 
 The bench:
 

@@ -53,6 +53,69 @@ let () =
     prerr_endline reason;
     exit 2
   in
+  let profiled () =
+    let file = List.fold_left Filename.concat !directory [ ".teagent"; "profile.json" ] in
+    let listed key fields ~expected parse =
+      match List.assoc_opt key fields with
+      | None -> Ok None
+      | Some (`List items) ->
+          Result.map Option.some
+            (List.fold_right
+               (fun item collected ->
+                 Result.bind collected (fun rest ->
+                     match item with
+                     | `String text ->
+                         Result.map
+                           (fun parsed -> parsed :: rest)
+                           (Option.to_result ~none:(key ^ ": " ^ text ^ " is not " ^ expected) (parse text))
+                     | _ -> Error (key ^ " holds something that is not text")))
+               items (Ok []))
+      | Some _ -> Error (key ^ " is not a list")
+    in
+    let inside text = Result.to_option (Tools.Path.of_string text) in
+    let home = Option.value ~default:"/var/empty" (Sys.getenv_opt "HOME") in
+    let absolute text =
+      match String.split_on_char '/' text with
+      | "~" :: rest -> Some (String.concat "/" (home :: rest))
+      | "" :: _ -> Some text
+      | _ -> None
+    in
+    let read =
+      match Sys.file_exists file with
+      | false -> Ok (Tools.at !directory, List.map snd Mcp.tools)
+      | true -> (
+          match Yojson.Safe.from_file file with
+          | exception Yojson.Json_error reason -> Error reason
+          | `Assoc fields -> (
+              match
+                List.find_opt
+                  (fun (key, _) -> not (List.mem key [ "tools"; "hidden"; "readonly"; "reads" ]))
+                  fields
+              with
+              | Some (key, _) -> Error ("there is no setting called " ^ key)
+              | None ->
+                  Result.bind (listed "hidden" fields ~expected:"a path in the project" inside) (fun hidden ->
+                      Result.bind (listed "readonly" fields ~expected:"a path in the project" inside) (fun readonly ->
+                          Result.bind (listed "reads" fields ~expected:"an absolute path or one under ~/" absolute) (fun reads ->
+                              Result.map
+                                (fun serves ->
+                                  ( Tools.limited
+                                      {
+                                        hidden = Option.value ~default:[] hidden;
+                                        readonly = Option.value ~default:[] readonly;
+                                        reads =
+                                          Option.fold ~none:Tools.Anywhere
+                                            ~some:(fun within -> Tools.Within within)
+                                            reads;
+                                      }
+                                      (Tools.at !directory),
+                                    Option.value ~default:(List.map snd Mcp.tools) serves ))
+                                (listed "tools" fields ~expected:"bash, read, write, edit or grep" (fun name ->
+                                     List.assoc_opt name Mcp.tools))))))
+          | _ -> Error "it is not a JSON object")
+    in
+    Result.fold ~ok:Fun.id ~error:(fun reason -> failed (file ^ ": " ^ reason)) read
+  in
   let section title body = Lwt.return (Printf.printf "\n── %s ──\n%s\n%!" title body) in
   let printed (event : Driver.event) =
     match event with
@@ -125,7 +188,7 @@ let () =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
     | Error reason -> failed reason
     | Ok provider ->
-        let workspace = Tools.at !directory in
+        let workspace, _ = profiled () in
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
@@ -184,8 +247,9 @@ let () =
       let log = started "MCP session" in
       prerr_endline ("teagent MCP server in " ^ !directory ^ ", logging to " ^ log);
       Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
+          let workspace, serves = profiled () in
           let program =
-            Mcp.start (Tools.at !directory) !shell ~on:(fun event ->
+            Mcp.start workspace !shell ~serves ~on:(fun event ->
                 Out_channel.output_string channel
                   (Yojson.Safe.to_string (Driver.event_to_json event) ^ "\n");
                 Out_channel.flush channel;
@@ -283,7 +347,7 @@ let () =
           print_endline report;
           exit 1
       | Ok _ ->
-          let workspace = Tools.at !directory in
+          let workspace, _ = profiled () in
           let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
           finished

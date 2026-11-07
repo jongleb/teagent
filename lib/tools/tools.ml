@@ -1,9 +1,5 @@
 open Lwt.Syntax
 
-type t = { root : string }
-
-let at root = { root }
-
 type error = Not_found of string | Denied of string | Conflict of string
 
 module Path = struct
@@ -30,7 +26,14 @@ module Path = struct
     | _, _, _ -> Error (`Tools (Denied written))
 end
 
-let located workspace (path : Path.t) =
+type reads = Anywhere | Within of string list
+type limits = { hidden : Path.t list; readonly : Path.t list; reads : reads }
+type t = { root : string; limits : limits }
+
+let at root = { root; limits = { hidden = []; readonly = []; reads = Anywhere } }
+let limited limits workspace = { workspace with limits }
+
+let located workspace access (path : Path.t) =
   let denied = Error (`Tools (Denied (path :> string))) in
   match Unix.realpath workspace.root with
   | exception Unix.Unix_error _ -> Error (`Tools (Not_found (path :> string)))
@@ -50,7 +53,23 @@ let located workspace (path : Path.t) =
           | false -> denied
           | true ->
               Result.fold
-                ~ok:(fun (inside : Path.t) -> Ok (Filename.concat root (inside :> string)))
+                ~ok:(fun (inside : Path.t) ->
+                  let covering entries =
+                    List.find_opt
+                      (fun (entry : Path.t) ->
+                        let entry = String.lowercase_ascii (entry :> string)
+                        and inside = String.lowercase_ascii (inside :> string) in
+                        String.equal inside entry || String.starts_with ~prefix:(entry ^ "/") inside)
+                      entries
+                  in
+                  match
+                    ( access,
+                      covering workspace.limits.hidden,
+                      covering workspace.limits.readonly )
+                  with
+                  | _, Some _, _ | `Writing, None, Some _ -> denied
+                  | `Reading, None, _ | `Writing, None, None ->
+                      Ok (Filename.concat root (inside :> string)))
                 ~error:(fun _ -> denied)
                 (Path.of_string
                    (String.sub real (String.length root + 1)
@@ -69,7 +88,7 @@ let failed path = function
   | problem -> `Tools (Conflict (path ^ ": " ^ Printexc.to_string problem))
 
 let read workspace (path : Path.t) =
-  match located workspace path with
+  match located workspace `Reading path with
   | Error _ as denied -> Lwt.return denied
   | Ok file ->
       Lwt.catch
@@ -77,7 +96,7 @@ let read workspace (path : Path.t) =
         (fun problem -> Lwt.return (Error (failed path problem)))
 
 let write workspace (path : Path.t) content =
-  match located workspace path with
+  match located workspace `Writing path with
   | Error _ as denied -> Lwt.return denied
   | Ok file ->
       let staging =
@@ -108,7 +127,7 @@ let placed workspace change =
   match change.after with
   | Some text -> write workspace change.path text
   | None -> (
-      match located workspace change.path with
+      match located workspace `Writing change.path with
       | Error _ as denied -> Lwt.return denied
       | Ok file ->
           Lwt.catch
@@ -264,7 +283,39 @@ let contained workspace staged command =
   | true ->
       let base = Unix.realpath (Filename.temp_dir "teagent-shadow" "") in
       let clone = Filename.concat base "work" and scratch = Filename.concat base "tmp" in
-      let shadow = { root = clone } in
+      let shadow = at clone in
+      let subpaths paths =
+        String.concat " "
+          (List.filter_map
+             (fun path ->
+               match Unix.realpath path with
+               | real -> Some (Printf.sprintf "(subpath %S)" real)
+               | exception Unix.Unix_error _ -> None)
+             paths)
+      in
+      let home names =
+        List.map
+          (Filename.concat (Option.value ~default:"/var/empty" (Sys.getenv_opt "HOME")))
+          names
+      in
+      let reading =
+        (match workspace.limits.reads with
+        | Anywhere -> ""
+        | Within extra ->
+            Printf.sprintf "(deny file-read-data)\n(allow file-read-data (literal \"/\") %s)\n"
+              (subpaths
+                 ([ "/usr"; "/bin"; "/sbin"; "/System"; "/Library"; "/private/etc";
+                    "/private/var/select"; "/private/var/db"; "/dev"; "/opt"; "/Applications"; base ]
+                 @ home [ ".gitconfig"; ".config/git" ]
+                 @ extra)))
+        ^ Printf.sprintf "(deny file-read* %s)\n"
+            (subpaths
+               (workspace.root
+               :: home
+                    [ ".ssh"; ".aws"; ".gnupg"; ".netrc"; ".config/gh"; ".docker"; ".kube";
+                      ".git-credentials"; ".npmrc"; ".pypirc"; ".teagent"; ".claude"; ".codex";
+                      "Library/Keychains" ]))
+      in
       Lwt.finalize
         (fun () ->
           Lwt.catch
@@ -276,6 +327,15 @@ let contained workspace staged command =
               in
               match copied.code with
               | 0 ->
+                  let* () =
+                    Lwt_list.iter_s
+                      (fun hidden ->
+                        Result.fold
+                          ~ok:(fun file -> Lwt.catch (fun () -> removed file) (fun _ -> Lwt.return_unit))
+                          ~error:(fun _ -> Lwt.return_unit)
+                          (located shadow `Writing hidden))
+                      workspace.limits.hidden
+                  in
                   let* () =
                     Lwt_list.iter_s (fun change -> Lwt.map ignore (placed shadow change)) staged
                   in
@@ -294,10 +354,10 @@ let contained workspace staged command =
                         "sandbox-exec";
                         "-p";
                         Printf.sprintf
-                          "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n\
+                          "(version 1)\n(allow default)\n(deny network*)\n%s(deny file-write*)\n\
                            (allow file-write* (subpath %S) (literal \"/dev/null\") \
                            (literal \"/dev/zero\") (regex #\"^/dev/fd/\") (regex #\"^/dev/tty\"))\n"
-                          base;
+                          reading base;
                         "/bin/sh";
                         "-c";
                         "exec 2>&1\n" ^ command;
@@ -347,7 +407,12 @@ let commit workspace changes =
   let* checked =
     Lwt_list.filter_map_s
       (fun change ->
-        let+ now = read workspace change.path in
+        let+ now =
+          Result.fold
+            ~ok:(fun _ -> read workspace change.path)
+            ~error:(fun denied -> Lwt.return (Error denied))
+            (located workspace `Writing change.path)
+        in
         match (now, change.before) with
         | Ok text, _ when Option.equal String.equal (Some text) change.after -> None
         | Error (`Tools (Not_found _)), _ when Option.is_none change.after -> None

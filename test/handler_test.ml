@@ -188,6 +188,66 @@ let () =
                  | _ -> Some "escapes: a commit wrote through a symlink")
              | Finished (Ok _), _ -> Some "escapes: a path left the workspace or reached its tooling"
              | _ -> Some "escapes: the program did not finish"));
+        (let workspace = fresh () and outside = Filename.temp_dir "teagent-outside" "" in
+         workspaces := outside :: !workspaces;
+         let placed directory path content =
+           let file = Filename.concat directory path in
+           if not (Sys.file_exists (Filename.dirname file)) then
+             Sys.mkdir (Filename.dirname file) 0o755;
+           Out_channel.with_open_text file (fun channel ->
+               Out_channel.output_string channel content)
+         in
+         placed workspace "secrets/prod.env" "PROD_VALUE\n";
+         placed workspace "vendor/lib.ml" "let v = 1\n";
+         placed outside "secret" "OUT_VALUE\n";
+         let paths names =
+           List.filter_map (fun name -> Result.to_option (Tools.Path.of_string name)) names
+         in
+         let limited =
+           Tools.limited
+             { hidden = paths [ "Secrets" ]; readonly = paths [ "vendor" ]; reads = Within [] }
+             (Tools.at workspace)
+         in
+         match
+           started
+             (Printf.sprintf
+                "module Main exposing (main)\n\n\
+                 import Agent exposing (..)\n\n\n\
+                 main : Task IoErr (List String)\n\
+                 main =\n\
+                \    batch\n\
+                \        [ read \"secrets/prod.env\" |> onError (\\_ -> succeed \"denied\")\n\
+                \        , write \"vendor/lib.ml\" \"x\" |> map (\\_ -> \"staged\")\n\
+                \        , shell \"cat secrets/prod.env; cat %s/secrets/prod.env; cat %s/secret; wc -l lib/c.ml\" |> map .out\n\
+                \        ]\n"
+                (Unix.realpath workspace) (Unix.realpath outside))
+         with
+         | Error error -> explained "limits" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged limited Handler.Contained)
+                    program Handler.Overlay.empty task)
+             with
+             | Finished (Ok (V_list [ V_string "denied"; V_string "staged"; V_string out ])), overlay
+               -> (
+                 let leaked secret =
+                   List.exists
+                     (fun at -> String.equal (String.sub out at (String.length secret)) secret)
+                     (List.init (max 0 (String.length out - String.length secret + 1)) Fun.id)
+                 in
+                 match
+                   ( leaked "PROD_VALUE",
+                     leaked "OUT_VALUE",
+                     leaked "1 lib/c.ml",
+                     Lwt_main.run (Tools.commit limited (Handler.Overlay.changes overlay)) )
+                 with
+                 | false, false, true, Error (`Tools (Tools.Denied _))
+                   when String.equal (contents workspace "vendor/lib.ml") "let v = 1\n" ->
+                     None
+                 | _ -> Some ("limits: the shell or a commit went past the profile\n" ^ out))
+             | _ -> Some "limits: another result"));
         (let workspace = fresh () in
          match started rename with
          | Error error -> explained "staged 01_rename" error

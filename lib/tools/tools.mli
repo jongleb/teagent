@@ -1,7 +1,5 @@
-(** The directory the agent works in; every path is relative to it. *)
+(** The directory the agent works in, with what it may not touch; every path is relative to it. *)
 type t
-
-val at : string -> t
 
 type error =
   | Not_found of string  (** No such file. *)
@@ -14,6 +12,21 @@ module Path : sig
 
   val of_string : string -> (t, [> `Tools of error ]) result
 end
+
+(** Where a contained shell may read files, besides the system and its own copy. *)
+type reads =
+  | Anywhere  (** Every file the user can, except the project itself and well-known secrets. *)
+  | Within of string list  (** Only under these absolute paths. *)
+
+(** What the user keeps from the agent; it only ever narrows what the agent can do. *)
+type limits = {
+  hidden : Path.t list;  (** Neither readable nor writable, and absent from the shell's copy. *)
+  readonly : Path.t list;  (** Readable, never written. *)
+  reads : reads;
+}
+
+val at : string -> t
+val limited : limits -> t -> t
 
 (** One line that matched a search. *)
 type found = { path : string; line : int; text : string }

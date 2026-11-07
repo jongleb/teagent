@@ -63,8 +63,9 @@ teagent only accepts forms.
    `teagent "Rename Foo.bar to Foo.baz"`. The model has no other way to act.
 2. **As an executor for another agent.** Claude Code, Codex or a script writes the Dartea
    program into a file; teagent checks and runs it. `teagent --exec plan.elm`. No model inside.
-3. **As an MCP server for another agent** (planned, not built yet). The other agent gets three
-   tools from teagent, `check`, `plan` and `apply`, and has its own shell switched off.
+3. **As an MCP server for another agent.** `teagent --mcp` gives Claude Code or Codex five
+   tools, `bash`, `read`, `write`, `edit` and `grep`, with its own shell and editing switched
+   off. This is the main way to use teagent.
 
 ## What happens when you run a task
 
@@ -207,6 +208,38 @@ run outside the sandbox, and often secrets. Such a path gets `Denied` and nothin
 `grep` uses Emacs-style patterns: write `a\|b` for "a or b"; there is no `\d`. It skips folders
 whose name starts with `.`, and `_build` and `node_modules`.
 
+## The profile
+
+The user can narrow what the agent may do with `.teagent/profile.json` in the project. teagent
+reads it at start; the agent can neither read nor write it. Every setting is optional, and a
+profile can only take rights away, so one that comes with a cloned repository cannot open
+anything.
+
+```json
+{
+  "tools": ["read", "grep", "edit", "bash"],
+  "hidden": ["secrets", ".env.local"],
+  "readonly": ["vendor"],
+  "reads": ["~/.opam"]
+}
+```
+
+| Setting | What it does |
+| --- | --- |
+| `tools` | The tools served over MCP; the others do not exist for the agent. All five by default. |
+| `hidden` | Paths the agent can neither read nor write. They are also removed from the shell's copy. |
+| `readonly` | Paths the agent can read but not change, by a tool or by a command. |
+| `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |
+
+With or without a profile, a contained command can never read the project itself (it has its
+own copy) or well-known secrets in your home folder: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`,
+`~/.config/gh`, `~/.docker`, `~/.kube`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`,
+`~/.teagent`, `~/.claude`, `~/.codex` and `~/Library/Keychains`.
+
+`demo/escape.py` shows all of it: a scripted agent tries twelve ways out of a project with a
+profile, and teagent stops each one. `demo/escape.py --live` prepares the same project for a real
+Claude Code session.
+
 ## Logs, replay and resume
 
 Every session writes `~/.teagent/sessions/NNNN.jsonl`: the task on the first line, then one
@@ -279,8 +312,9 @@ close those doors in Claude Code.
 
 - **`--yes`.** It removes your review. The sandbox and the typecheck still apply.
 - **`--shell open`.** The command runs in your real folder, as you.
-- **Reading.** A contained command may read any file you can read, for example `~/.ssh`. It
-  cannot send it anywhere, but it could copy it into your folder; you would see that in the diff.
+- **Reading, without `reads` in the profile.** A contained command may read any file you can,
+  except the project and the secrets listed under [the profile](#the-profile). It cannot send it
+  anywhere, but it could copy it into your folder; you would see that in the diff.
 - **Linux, today.** The contained shell needs macOS. Elsewhere, use `--shell off` or accept
   `--shell open`.
 - **Another agent that has its own terminal.** teagent only guards what goes through it.

@@ -1,15 +1,21 @@
 open Lwt.Syntax
 
+type tool = Bash | Read | Write | Edit | Grep
+
+let tools = [ ("bash", Bash); ("read", Read); ("write", Write); ("edit", Edit); ("grep", Grep) ]
+
 type t = {
   workspace : Tools.t;
   handler : Handler.Overlay.t Handler.t;
+  serves : tool list;
   on : Driver.event -> unit Lwt.t;
 }
 
-let start workspace shell ~on = { workspace; handler = Handler.staged workspace shell; on }
+let start workspace shell ~serves ~on =
+  { workspace; handler = Handler.staged workspace shell; serves; on }
 
 let handled program json =
-  let tools =
+  let listed =
     let schema properties required =
       `Assoc
         [
@@ -25,9 +31,11 @@ let handled program json =
         ]
     in
     let tool name description input =
-      `Assoc [ ("name", `String name); ("description", `String description); ("inputSchema", input) ]
+      ( List.assoc name tools,
+        `Assoc [ ("name", `String name); ("description", `String description); ("inputSchema", input) ] )
     in
-    `List
+    List.filter_map
+      (fun (kind, listed) -> Option.map (fun _ -> listed) (List.find_opt (( = ) kind) program.serves))
       [
         tool "bash"
           "Run a shell command with /bin/sh in a sandboxed copy of the project: no network, no \
@@ -78,22 +86,25 @@ let handled program json =
       | Some _ | None -> Error ("The argument " ^ key ^ " is missing or not text.")
     in
     let requested : (Value.tool, string) result =
-      match name with
-      | "bash" -> Result.map (fun command -> Value.Shell command) (field "command")
-      | "read" -> Result.map (fun path -> Value.Read path) (field "path")
-      | "write" ->
+      match
+        Option.bind (List.assoc_opt name tools) (fun kind ->
+            List.find_opt (( = ) kind) program.serves)
+      with
+      | Some Bash -> Result.map (fun command -> Value.Shell command) (field "command")
+      | Some Read -> Result.map (fun path -> Value.Read path) (field "path")
+      | Some Write ->
           Result.bind (field "path") (fun path ->
               Result.map (fun content -> Value.Write { path; content }) (field "content"))
-      | "edit" ->
+      | Some Edit ->
           Result.bind (field "path") (fun path ->
               Result.bind (field "old_string") (fun old ->
                   Result.map (fun new_ -> Value.Edit { path; old; new_ }) (field "new_string")))
-      | "grep" ->
+      | Some Grep ->
           Result.map
             (fun pattern ->
               Value.Grep { pattern; glob = Result.value ~default:"**" (field "glob") })
             (field "pattern")
-      | other -> Error ("There is no tool called " ^ other ^ ".")
+      | None -> Error ("There is no tool called " ^ name ^ ".")
     in
     match requested with
     | Error reason -> Lwt.return (text reason true)
@@ -111,8 +122,9 @@ let handled program json =
                   let* committed = Tools.commit program.workspace staged in
                   let applied =
                     Result.map_error
-                      (fun (`Tools (Tools.Not_found reason | Denied reason | Conflict reason)) ->
-                        reason)
+                      (function
+                        | `Tools (Tools.Denied path) -> path ^ " is off limits"
+                        | `Tools (Tools.Not_found reason | Conflict reason) -> reason)
                       committed
                   in
                   let* () = program.on (Committed applied) in
@@ -177,7 +189,7 @@ let handled program json =
                     ])))
       | Some (`String "ping"), Some id -> Lwt.return (Some (reply id (`Assoc [])))
       | Some (`String "tools/list"), Some id ->
-          Lwt.return (Some (reply id (`Assoc [ ("tools", tools) ])))
+          Lwt.return (Some (reply id (`Assoc [ ("tools", `List listed) ])))
       | Some (`String "tools/call"), Some id ->
           let name, arguments =
             match List.assoc_opt "params" fields with

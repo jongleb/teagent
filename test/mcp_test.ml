@@ -12,7 +12,7 @@ let () =
   placed "lib/c.ml" "let z = 3\n";
   let events = ref [] in
   let program =
-    Mcp.start (Tools.at workspace) Handler.Contained ~on:(fun event ->
+    Mcp.start (Tools.at workspace) Handler.Contained ~serves:(List.map snd Mcp.tools) ~on:(fun event ->
         events := event :: !events;
         Lwt.return_unit)
   in

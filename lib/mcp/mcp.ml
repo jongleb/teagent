@@ -1,18 +1,19 @@
 open Lwt.Syntax
 
-type tool = Bash | Read | Write | Edit | Grep
-
-let tools = [ ("bash", Bash); ("read", Read); ("write", Write); ("edit", Edit); ("grep", Grep) ]
-
 type t = {
   workspace : Tools.t;
   handler : Handler.Overlay.t Handler.t;
-  serves : tool list;
+  serves : Os.call list;
   on : Driver.event -> unit Lwt.t;
 }
 
-let start workspace shell ~serves ~on =
-  { workspace; handler = Handler.staged workspace shell; serves; on }
+let start os shell ~on =
+  {
+    workspace = Os.workspace os;
+    handler = Handler.staged (Os.workspace os) shell;
+    serves = (Os.view os).offers;
+    on;
+  }
 
 let handled program json =
   let listed =
@@ -31,7 +32,7 @@ let handled program json =
         ]
     in
     let tool name description input =
-      ( List.assoc name tools,
+      ( List.assoc name Os.calls,
         `Assoc [ ("name", `String name); ("description", `String description); ("inputSchema", input) ] )
     in
     List.filter_map
@@ -87,10 +88,10 @@ let handled program json =
     in
     let requested : (Value.tool, string) result =
       match
-        Option.bind (List.assoc_opt name tools) (fun kind ->
+        Option.bind (List.assoc_opt name Os.calls) (fun kind ->
             List.find_opt (( = ) kind) program.serves)
       with
-      | Some Bash -> Result.map (fun command -> Value.Shell command) (field "command")
+      | Some Os.Bash -> Result.map (fun command -> Value.Shell command) (field "command")
       | Some Read -> Result.map (fun path -> Value.Read path) (field "path")
       | Some Write ->
           Result.bind (field "path") (fun path ->

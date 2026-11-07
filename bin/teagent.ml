@@ -7,6 +7,7 @@ let () =
   let shell = ref Handler.Contained in
   let mode = ref `Fresh in
   let words = ref [] in
+  let net = ref [] in
   Arg.parse
     [
       ("-C", Arg.Set_string directory, "DIR  Work in DIR (default: the current directory)");
@@ -43,6 +44,9 @@ let () =
       ( "--exec",
         Arg.String (fun file -> mode := `Exec file),
         "FILE  Run a Dartea program you wrote, with no model" );
+      ( "--net",
+        Arg.String (fun host -> net := String.lowercase_ascii host :: !net),
+        "HOST  Let contained commands reach HOST, or every name under it as *.HOST; repeat it" );
       ( "--mcp",
         Arg.Unit (fun () -> mode := `Mcp),
         "  Serve bash, read, write, edit and grep to another agent over MCP (stdio)" );
@@ -55,86 +59,15 @@ let () =
   in
   let profiled () =
     let file = List.fold_left Filename.concat !directory [ ".teagent"; "profile.json" ] in
-    let listed key fields ~expected parse =
-      match List.assoc_opt key fields with
-      | None -> Ok None
-      | Some (`List items) ->
-          Result.map Option.some
-            (List.fold_right
-               (fun item collected ->
-                 Result.bind collected (fun rest ->
-                     match item with
-                     | `String text ->
-                         Result.map
-                           (fun parsed -> parsed :: rest)
-                           (Option.to_result ~none:(key ^ ": " ^ text ^ " is not " ^ expected) (parse text))
-                     | _ -> Error (key ^ " holds something that is not text")))
-               items (Ok []))
-      | Some _ -> Error (key ^ " is not a list")
-    in
-    let inside text = Result.to_option (Tools.Path.of_string text) in
-    let home = Option.value ~default:"/var/empty" (Sys.getenv_opt "HOME") in
-    let absolute text =
-      match String.split_on_char '/' text with
-      | "~" :: rest -> Some (String.concat "/" (home :: rest))
-      | "" :: _ -> Some text
-      | _ -> None
-    in
-    let host text =
-      let name = String.lowercase_ascii text in
-      let labels =
-        match String.split_on_char '.' name with "*" :: rest -> rest | labels -> labels
-      in
-      match
-        ( List.for_all
-            (fun label ->
-              String.length label > 0
-              && String.for_all
-                   (function 'a' .. 'z' | '0' .. '9' | '-' -> true | _ -> false)
-                   label)
-            labels,
-          labels )
-      with
-      | true, _ :: _ -> Some name
-      | _, _ -> None
-    in
-    let read =
-      match Sys.file_exists file with
-      | false -> Ok (Tools.at !directory, List.map snd Mcp.tools)
-      | true -> (
-          match Yojson.Safe.from_file file with
-          | exception Yojson.Json_error reason -> Error reason
-          | `Assoc fields -> (
-              match
-                List.find_opt
-                  (fun (key, _) -> not (List.mem key [ "tools"; "hidden"; "readonly"; "reads"; "net" ]))
-                  fields
-              with
-              | Some (key, _) -> Error ("there is no setting called " ^ key)
-              | None ->
-                  Result.bind (listed "hidden" fields ~expected:"a path in the project" inside) (fun hidden ->
-                      Result.bind (listed "readonly" fields ~expected:"a path in the project" inside) (fun readonly ->
-                          Result.bind (listed "reads" fields ~expected:"an absolute path or one under ~/" absolute) (fun reads ->
-                              Result.bind (listed "net" fields ~expected:"a host such as registry.npmjs.org or *.crates.io" host) (fun net ->
-                              Result.map
-                                (fun serves ->
-                                  ( Tools.limited
-                                      {
-                                        hidden = Option.value ~default:[] hidden;
-                                        readonly = Option.value ~default:[] readonly;
-                                        reads =
-                                          Option.fold ~none:Tools.Anywhere
-                                            ~some:(fun within -> Tools.Within within)
-                                            reads;
-                                        net = Option.value ~default:[] net;
-                                      }
-                                      (Tools.at !directory),
-                                    Option.value ~default:(List.map snd Mcp.tools) serves ))
-                                (listed "tools" fields ~expected:"bash, read, write, edit or grep" (fun name ->
-                                     List.assoc_opt name Mcp.tools)))))))
-          | _ -> Error "it is not a JSON object")
-    in
-    Result.fold ~ok:Fun.id ~error:(fun reason -> failed (file ^ ": " ^ reason)) read
+    let granted = Os.granted !directory ~net:(List.rev !net) in
+    match Sys.file_exists file with
+    | false -> granted
+    | true ->
+        Result.fold ~ok:Fun.id
+          ~error:(fun reason -> failed (file ^ ": " ^ reason))
+          (match Yojson.Safe.from_file file with
+          | json -> Os.narrowed json granted
+          | exception Yojson.Json_error reason -> Error reason)
   in
   let section title body = Lwt.return (Printf.printf "\n── %s ──\n%s\n%!" title body) in
   let printed (event : Driver.event) =
@@ -208,7 +141,7 @@ let () =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
     | Error reason -> failed reason
     | Ok provider ->
-        let workspace, _ = profiled () in
+        let workspace = Os.workspace (profiled ()) in
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
@@ -267,9 +200,8 @@ let () =
       let log = started "MCP session" in
       prerr_endline ("teagent MCP server in " ^ !directory ^ ", logging to " ^ log);
       Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
-          let workspace, serves = profiled () in
           let program =
-            Mcp.start workspace !shell ~serves ~on:(fun event ->
+            Mcp.start (profiled ()) !shell ~on:(fun event ->
                 Out_channel.output_string channel
                   (Yojson.Safe.to_string (Driver.event_to_json event) ^ "\n");
                 Out_channel.flush channel;
@@ -367,7 +299,7 @@ let () =
           print_endline report;
           exit 1
       | Ok _ ->
-          let workspace, _ = profiled () in
+          let workspace = Os.workspace (profiled ()) in
           let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
           finished

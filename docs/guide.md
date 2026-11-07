@@ -234,9 +234,14 @@ anything.
 | `hidden` | Paths the agent can neither read nor write. They are also removed from the shell's copy. |
 | `readonly` | Paths the agent can read but not change, by a tool or by a command. |
 | `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |
-| `net` | The hosts a contained command may reach. `*.crates.io` covers every name under `crates.io`. Without it, commands have no network at all. |
+| `net` | Which of the hosts you granted with `--net` commands may reach here. It can drop hosts, never add them. |
 
-With `net`, teagent starts a small proxy for each command and points `HTTP_PROXY` and
+Network is the one right a profile cannot give: you grant hosts on the command line, with
+`--net registry.npmjs.org` or `--net '*.crates.io'` (every name under `crates.io`), repeated as
+needed. Without `--net`, commands have no network at all, whatever the profile says. A profile
+in a cloned repository that lists its own server therefore opens nothing.
+
+With granted hosts, teagent starts a small proxy for each command and points `HTTP_PROXY` and
 `HTTPS_PROXY` at it; the sandbox lets the command reach that proxy and nothing else. The proxy
 lets a connection through only to a listed host, and every refused host is named at the end of
 the command's output, for example `teagent: blocked connections to pypi.org:443, which the
@@ -360,6 +365,7 @@ $ teagent --resume ~/.teagent/sessions/0001.jsonl
 | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh`, `max` | `high` |
 | `--openai URL` | an OpenAI-compatible server instead of Anthropic | off |
 | `--shell MODE` | `contained`, `open`, `off` | `contained` |
+| `--net HOST` | let contained commands reach `HOST`, or every name under it as `*.HOST`; repeat it | no network |
 | `--yes` | apply without asking | off |
 | `--exec FILE` | run a program you wrote, no model | off |
 | `--replay FILE` | replay a log, no model, no disk | off |

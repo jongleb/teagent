@@ -144,14 +144,14 @@ compile after 4 rounds."
   <img src="../assets/shell.svg" alt="The workspace is cloned with the staged edits into a sandbox with no network; files the command writes or deletes come back as staged changes" width="100%">
 </picture>
 
-**`--shell contained` (the default, macOS only).**
+**`--shell contained` (the default, macOS and Linux).**
 
-1. teagent makes a copy of your folder. On macOS this is an APFS clone: instant, no extra
-   disk space until something changes.
+1. teagent makes a copy of your folder. On macOS this is an APFS clone, and on Linux a reflink
+   copy where the file system has them: instant, no extra disk space until something changes.
 2. It writes the staged changes into the copy, so the command sees the program's edits.
-3. It runs the command inside the macOS sandbox (Seatbelt) with these rules: **no network at
-   all**, and **writing only inside the copy** and its own temporary folder. Reading is not
-   limited.
+3. It runs the command in a sandbox, Seatbelt on macOS and bubblewrap on Linux, with these
+   rules: **no network at all**, **writing only inside the copy** and its own temporary
+   folder, and reading as [the profile](#the-profile) allows.
 4. When the command ends, teagent looks at which files in the copy were written or deleted.
    Each one becomes a staged change, exactly like an edit by the program.
 5. The copy is deleted.
@@ -161,8 +161,9 @@ file they touched in the diff before anything reaches your disk. Changes inside 
 name starts with `.`, and inside `_build` and `node_modules`, are not collected: they are build
 leftovers and stay in the copy.
 
-If `sandbox-exec` is not on the machine (Linux, for example), the command does not run and
-the program sees exit code 126 with a message to use `--shell open`.
+If neither `sandbox-exec` nor `bwrap` is on the machine, the command does not run and the
+program sees exit code 126 with a message to use `--shell open`. On Linux, install the
+`bubblewrap` package; it needs unprivileged user namespaces, which some distributions limit.
 
 **`--shell open`.** The command runs in your real folder, as you. To keep the command from
 seeing a different folder than the program, teagent first pauses: it shows the diff of the
@@ -315,8 +316,8 @@ close those doors in Claude Code.
 - **Reading, without `reads` in the profile.** A contained command may read any file you can,
   except the project and the secrets listed under [the profile](#the-profile). It cannot send it
   anywhere, but it could copy it into your folder; you would see that in the diff.
-- **Linux, today.** The contained shell needs macOS. Elsewhere, use `--shell off` or accept
-  `--shell open`.
+- **Other systems.** The contained shell needs macOS or Linux with bubblewrap. Elsewhere, use
+  `--shell off` or accept `--shell open`.
 - **Another agent that has its own terminal.** teagent only guards what goes through it.
 - **A wrong but well-formed program.** The typecheck does not know what you wanted. The diff is
   there so you can see that before it is written.

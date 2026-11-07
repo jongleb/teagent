@@ -123,7 +123,7 @@ has looked at anything.
   <img src="assets/shell.svg" alt="The workspace is cloned with the staged edits into a Seatbelt sandbox with no network; files the command writes or deletes come back as staged changes" width="100%">
 </picture>
 
-`--shell contained` is the default on macOS. `--shell open` runs in the workspace itself, and
+`--shell contained` is the default, on macOS and on Linux with bubblewrap. `--shell open` runs in the workspace itself, and
 only when nothing is staged, so a command never sees a different tree than the program.
 `--shell off` answers every command with exit code 126.
 
@@ -194,7 +194,7 @@ the question it exists to answer is still open.
 | Bench, reference programs | 20 of 20 tasks: reading, single-file edits, multi-file refactors, shell |
 | Gate of stage 0 | median compile rounds per task ≤ 2 on a frontier model: **not measured yet** |
 | Local `qwen2.5-coder:7b` | 2 to 3 of 6–11 tasks; it copies examples and reaches for missing APIs |
-| Contained shell | macOS (Seatbelt + APFS clone); Linux (bubblewrap) is next |
+| Contained shell | macOS (Seatbelt + APFS clone); Linux (bubblewrap + reflink copy) |
 | Network for commands | off; an allowlist proxy is planned |
 
 The sandbox design and the roadmap behind it: [docs/research/sandboxing.md](docs/research/sandboxing.md).

@@ -278,43 +278,89 @@ let contained workspace staged command =
         Lwt_unix.rmdir path
     | S_REG | S_CHR | S_BLK | S_LNK | S_FIFO | S_SOCK -> Lwt_unix.unlink path
   in
-  match Sys.file_exists "/usr/bin/sandbox-exec" with
-  | false -> refused "A contained shell needs macOS sandbox-exec; run with --shell open."
-  | true ->
+  match
+    List.find_opt
+      (fun (program, _) -> Sys.file_exists program)
+      [ ("/usr/bin/sandbox-exec", `Seatbelt); ("/usr/bin/bwrap", `Bubblewrap) ]
+  with
+  | None ->
+      refused
+        "A contained shell needs sandbox-exec (macOS) or bwrap (Linux); run with --shell open."
+  | Some (program, sandbox) ->
       let base = Unix.realpath (Filename.temp_dir "teagent-shadow" "") in
       let clone = Filename.concat base "work" and scratch = Filename.concat base "tmp" in
       let shadow = at clone in
-      let subpaths paths =
-        String.concat " "
-          (List.filter_map
-             (fun path ->
-               match Unix.realpath path with
-               | real -> Some (Printf.sprintf "(subpath %S)" real)
-               | exception Unix.Unix_error _ -> None)
-             paths)
+      let existing paths =
+        List.filter_map
+          (fun path ->
+            match Unix.realpath path with
+            | real -> Some (path, real)
+            | exception Unix.Unix_error _ -> None)
+          paths
       in
       let home names =
         List.map
           (Filename.concat (Option.value ~default:"/var/empty" (Sys.getenv_opt "HOME")))
           names
       in
-      let reading =
-        (match workspace.limits.reads with
-        | Anywhere -> ""
-        | Within extra ->
-            Printf.sprintf "(deny file-read-data)\n(allow file-read-data (literal \"/\") %s)\n"
-              (subpaths
-                 ([ "/usr"; "/bin"; "/sbin"; "/System"; "/Library"; "/private/etc";
-                    "/private/var/select"; "/private/var/db"; "/dev"; "/opt"; "/Applications"; base ]
-                 @ home [ ".gitconfig"; ".config/git" ]
-                 @ extra)))
-        ^ Printf.sprintf "(deny file-read* %s)\n"
-            (subpaths
-               (workspace.root
-               :: home
-                    [ ".ssh"; ".aws"; ".gnupg"; ".netrc"; ".config/gh"; ".docker"; ".kube";
-                      ".git-credentials"; ".npmrc"; ".pypirc"; ".teagent"; ".claude"; ".codex";
-                      "Library/Keychains" ]))
+      let secrets =
+        existing
+          (workspace.root
+          :: home
+               [ ".ssh"; ".aws"; ".gnupg"; ".netrc"; ".config/gh"; ".docker"; ".kube";
+                 ".git-credentials"; ".npmrc"; ".pypirc"; ".teagent"; ".claude"; ".codex";
+                 "Library/Keychains" ])
+      in
+      let readable system =
+        match workspace.limits.reads with
+        | Anywhere -> None
+        | Within extra -> Some (existing (system @ home [ ".gitconfig"; ".config/git" ] @ extra))
+      in
+      let copying, arguments =
+        match sandbox with
+        | `Seatbelt ->
+            let subpaths paths =
+              String.concat " " (List.map (fun (_, real) -> Printf.sprintf "(subpath %S)" real) paths)
+            in
+            ( [| "cp"; "-cR"; workspace.root ^ "/."; clone |],
+              [|
+                "sandbox-exec";
+                "-p";
+                Printf.sprintf
+                  "(version 1)\n(allow default)\n(deny network*)\n%s(deny file-read* %s)\n\
+                   (deny file-write*)\n\
+                   (allow file-write* (subpath %S) (literal \"/dev/null\") \
+                   (literal \"/dev/zero\") (regex #\"^/dev/fd/\") (regex #\"^/dev/tty\"))\n"
+                  (Option.fold ~none:""
+                     ~some:(fun paths ->
+                       Printf.sprintf
+                         "(deny file-read-data)\n(allow file-read-data (literal \"/\") %s)\n"
+                         (subpaths paths))
+                     (readable
+                        [ "/usr"; "/bin"; "/sbin"; "/System"; "/Library"; "/private/etc";
+                          "/private/var/select"; "/private/var/db"; "/dev"; "/opt";
+                          "/Applications"; base ]))
+                  (subpaths secrets) base;
+                "/bin/sh";
+                "-c";
+                "exec 2>&1\n" ^ command;
+              |] )
+        | `Bubblewrap ->
+            ( [| "cp"; "-a"; "--reflink=auto"; workspace.root ^ "/."; clone |],
+              Array.of_list
+                ([ "bwrap" ]
+                @ Option.fold ~none:[ "--ro-bind"; "/"; "/" ]
+                    ~some:(List.concat_map (fun (path, real) -> [ "--ro-bind"; real; path ]))
+                    (readable [ "/usr"; "/bin"; "/sbin"; "/lib"; "/lib64"; "/lib32"; "/etc"; "/opt" ])
+                @ [ "--dev"; "/dev"; "--proc"; "/proc"; "--tmpfs"; "/tmp" ]
+                @ List.concat_map
+                    (fun (_, real) ->
+                      match Sys.is_directory real with
+                      | true -> [ "--tmpfs"; real ]
+                      | false -> [ "--ro-bind"; "/dev/null"; real ])
+                    secrets
+                @ [ "--bind"; base; base; "--chdir"; clone; "--unshare-all"; "--die-with-parent";
+                    "--new-session"; "/bin/sh"; "-c"; "exec 2>&1\n" ^ command ]) )
       in
       Lwt.finalize
         (fun () ->
@@ -323,17 +369,43 @@ let contained workspace staged command =
               let* () = Lwt_unix.mkdir clone 0o700 in
               let* () = Lwt_unix.mkdir scratch 0o700 in
               let* copied =
-                ran_in ~cwd:base "/bin/cp" [| "cp"; "-cR"; workspace.root ^ "/."; clone |]
+                ran_in ~cwd:base "/bin/cp" copying
               in
               match copied.code with
               | 0 ->
+                  let rec matching directory = function
+                    | [] -> Lwt.return []
+                    | part :: rest ->
+                        let* names =
+                          Lwt.catch
+                            (fun () -> Lwt_stream.to_list (Lwt_unix.files_of_directory directory))
+                            (fun _ -> Lwt.return [])
+                        in
+                        Lwt.map List.concat
+                          (Lwt_list.map_s
+                             (fun name ->
+                               let path = Filename.concat directory name in
+                               match
+                                 ( String.equal (String.lowercase_ascii name)
+                                     (String.lowercase_ascii part),
+                                   rest )
+                               with
+                               | false, _ -> Lwt.return []
+                               | true, [] -> Lwt.return [ path ]
+                               | true, _ :: _ -> (
+                                   let* stats = Lwt_unix.lstat path in
+                                   match stats.st_kind with
+                                   | S_DIR -> matching path rest
+                                   | S_REG | S_CHR | S_BLK | S_LNK | S_FIFO | S_SOCK -> Lwt.return []))
+                             names)
+                  in
                   let* () =
                     Lwt_list.iter_s
-                      (fun hidden ->
-                        Result.fold
-                          ~ok:(fun file -> Lwt.catch (fun () -> removed file) (fun _ -> Lwt.return_unit))
-                          ~error:(fun _ -> Lwt.return_unit)
-                          (located shadow `Writing hidden))
+                      (fun (hidden : Path.t) ->
+                        let* found = matching clone (String.split_on_char '/' (hidden :> string)) in
+                        Lwt_list.iter_s
+                          (fun path -> Lwt.catch (fun () -> removed path) (fun _ -> Lwt.return_unit))
+                          found)
                       workspace.limits.hidden
                   in
                   let* () =
@@ -349,19 +421,7 @@ let contained workspace staged command =
                               (List.filter
                                  (fun binding -> not (String.starts_with ~prefix:"TMPDIR=" binding))
                                  (Array.to_list (Unix.environment ())))))
-                      "/usr/bin/sandbox-exec"
-                      [|
-                        "sandbox-exec";
-                        "-p";
-                        Printf.sprintf
-                          "(version 1)\n(allow default)\n(deny network*)\n%s(deny file-write*)\n\
-                           (allow file-write* (subpath %S) (literal \"/dev/null\") \
-                           (literal \"/dev/zero\") (regex #\"^/dev/fd/\") (regex #\"^/dev/tty\"))\n"
-                          reading base;
-                        "/bin/sh";
-                        "-c";
-                        "exec 2>&1\n" ^ command;
-                      |]
+                      program arguments
                   in
                   let* touched = walked clone "" in
                   let* written =

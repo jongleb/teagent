@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 root = pathlib.Path(__file__).resolve().parent.parent
-binary = root / "_build" / "default" / "bin" / "teagent.exe"
+binary = root / os.environ.get("DUNE_BUILD_DIR", "_build") / "default" / "bin" / "teagent.exe"
 colored = sys.stdout.isatty()
 
 

@@ -16,11 +16,46 @@ module Path = struct
         (String.split_on_char '/' written)
     in
     match
-      (Filename.is_relative written, List.exists (String.equal "..") parts, parts)
+      ( Filename.is_relative written,
+        List.exists (String.equal "..") parts,
+        List.map String.lowercase_ascii parts )
     with
+    | ( true,
+        false,
+        (".git" | ".claude" | ".codex" | ".cursor" | ".mcp.json" | ".teagent" | ".envrc"
+        | ".vscode")
+        :: _ ) ->
+        Error (`Tools (Denied written))
     | true, false, _ :: _ -> Ok (String.concat "/" parts)
     | _, _, _ -> Error (`Tools (Denied written))
 end
+
+let located workspace (path : Path.t) =
+  let denied = Error (`Tools (Denied (path :> string))) in
+  match Unix.realpath workspace.root with
+  | exception Unix.Unix_error _ -> Error (`Tools (Not_found (path :> string)))
+  | root ->
+      let parts = String.split_on_char '/' (path :> string) in
+      let count = List.length parts in
+      let resolved kept =
+        match
+          Unix.realpath (String.concat "/" (root :: List.filteri (fun index _ -> index < kept) parts))
+        with
+        | exception Unix.Unix_error _ -> None
+        | real -> Some (String.concat "/" (real :: List.filteri (fun index _ -> index >= kept) parts))
+      in
+      Option.fold ~none:denied
+        ~some:(fun real ->
+          match String.starts_with ~prefix:(root ^ "/") real with
+          | false -> denied
+          | true ->
+              Result.fold
+                ~ok:(fun (inside : Path.t) -> Ok (Filename.concat root (inside :> string)))
+                ~error:(fun _ -> denied)
+                (Path.of_string
+                   (String.sub real (String.length root + 1)
+                      (String.length real - String.length root - 1))))
+        (List.find_map resolved (List.init (count + 1) (fun index -> count - index)))
 
 type found = { path : string; line : int; text : string }
 type ran = { out : string; code : int }
@@ -34,51 +69,55 @@ let failed path = function
   | problem -> `Tools (Conflict (path ^ ": " ^ Printexc.to_string problem))
 
 let read workspace (path : Path.t) =
-  Lwt.catch
-    (fun () ->
-      Lwt.map Result.ok
-        (Lwt_io.with_file ~mode:Lwt_io.Input
-           (Filename.concat workspace.root path)
-           Lwt_io.read))
-    (fun problem -> Lwt.return (Error (failed path problem)))
+  match located workspace path with
+  | Error _ as denied -> Lwt.return denied
+  | Ok file ->
+      Lwt.catch
+        (fun () -> Lwt.map Result.ok (Lwt_io.with_file ~mode:Lwt_io.Input file Lwt_io.read))
+        (fun problem -> Lwt.return (Error (failed path problem)))
 
 let write workspace (path : Path.t) content =
-  let file = Filename.concat workspace.root path in
-  let staging =
-    Filename.concat (Filename.dirname file) ("." ^ Filename.basename file ^ ".teagent")
-  in
-  let rec made directory =
-    Lwt.catch
-      (fun () -> Lwt_unix.mkdir directory 0o755)
-      (function
-        | Unix.Unix_error (EEXIST, _, _) -> Lwt.return_unit
-        | Unix.Unix_error (ENOENT, _, _) ->
-            let* () = made (Filename.dirname directory) in
-            Lwt_unix.mkdir directory 0o755
-        | problem -> Lwt.fail problem)
-  in
-  Lwt.catch
-    (fun () ->
-      let* () = made (Filename.dirname file) in
-      let* () =
-        Lwt_io.with_file ~mode:Lwt_io.Output staging (fun channel ->
-            Lwt_io.write channel content)
+  match located workspace path with
+  | Error _ as denied -> Lwt.return denied
+  | Ok file ->
+      let staging =
+        Filename.concat (Filename.dirname file) ("." ^ Filename.basename file ^ ".teagent")
       in
-      let* () = Lwt_unix.rename staging file in
-      Lwt.return (Ok ()))
-    (fun problem -> Lwt.return (Error (failed path problem)))
+      let rec made directory =
+        Lwt.catch
+          (fun () -> Lwt_unix.mkdir directory 0o755)
+          (function
+            | Unix.Unix_error (EEXIST, _, _) -> Lwt.return_unit
+            | Unix.Unix_error (ENOENT, _, _) ->
+                let* () = made (Filename.dirname directory) in
+                Lwt_unix.mkdir directory 0o755
+            | problem -> Lwt.fail problem)
+      in
+      Lwt.catch
+        (fun () ->
+          let* () = made (Filename.dirname file) in
+          let* () =
+            Lwt_io.with_file ~mode:Lwt_io.Output staging (fun channel ->
+                Lwt_io.write channel content)
+          in
+          let* () = Lwt_unix.rename staging file in
+          Lwt.return (Ok ()))
+        (fun problem -> Lwt.return (Error (failed path problem)))
 
 let placed workspace change =
   match change.after with
   | Some text -> write workspace change.path text
-  | None ->
-      Lwt.catch
-        (fun () ->
-          let* () = Lwt_unix.unlink (Filename.concat workspace.root change.path) in
-          Lwt.return (Ok ()))
-        (function
-          | Unix.Unix_error (ENOENT, _, _) -> Lwt.return (Ok ())
-          | problem -> Lwt.return (Error (failed change.path problem)))
+  | None -> (
+      match located workspace change.path with
+      | Error _ as denied -> Lwt.return denied
+      | Ok file ->
+          Lwt.catch
+            (fun () ->
+              let* () = Lwt_unix.unlink file in
+              Lwt.return (Ok ()))
+            (function
+              | Unix.Unix_error (ENOENT, _, _) -> Lwt.return (Ok ())
+              | problem -> Lwt.return (Error (failed change.path problem))))
 
 let replaced (path : Path.t) ~old ~new_ text =
   let rec occurrences from found =
@@ -305,7 +344,7 @@ let contained workspace staged command =
         (fun () -> Lwt.catch (fun () -> removed base) (fun _ -> Lwt.return_unit))
 
 let commit workspace changes =
-  let* moved =
+  let* checked =
     Lwt_list.filter_map_s
       (fun change ->
         let+ now = read workspace change.path in
@@ -314,16 +353,23 @@ let commit workspace changes =
         | Error (`Tools (Not_found _)), _ when Option.is_none change.after -> None
         | Ok text, Some before when String.equal text before -> None
         | Error (`Tools (Not_found _)), None -> None
-        | Ok _, (Some _ | None) | Error _, _ -> Some (change.path :> string))
+        | Error (`Tools (Denied _) as denied), _ -> Some (`Denied denied)
+        | Ok _, (Some _ | None) | Error _, _ -> Some (`Moved (change.path :> string)))
       changes
   in
-  match moved with
-  | _ :: _ ->
+  let moved =
+    List.filter_map (function `Moved path -> Some path | `Denied _ -> None) checked
+  in
+  match
+    (List.find_map (function `Denied denied -> Some denied | `Moved _ -> None) checked, moved)
+  with
+  | Some denied, _ -> Lwt.return (Error denied)
+  | None, _ :: _ ->
       Lwt.return
         (Error
            (`Tools
              (Conflict ("changed on disk since staged: " ^ String.concat ", " moved))))
-  | [] ->
+  | None, [] ->
       let rec applied = function
         | [] -> Lwt.return (Ok ())
         | change :: rest -> (

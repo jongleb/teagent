@@ -116,6 +116,78 @@ let () =
                      None
                  | _ -> Some "run tools: another result")
                outcome);
+        (let workspace = fresh () and outside = Filename.temp_dir "teagent-outside" "" in
+         workspaces := outside :: !workspaces;
+         Out_channel.with_open_text (Filename.concat outside "secret") (fun channel ->
+             Out_channel.output_string channel "key\n");
+         Sys.mkdir (Filename.concat workspace ".git") 0o755;
+         Unix.symlink (Filename.concat outside "secret") (Filename.concat workspace "key");
+         Unix.symlink outside (Filename.concat workspace "out");
+         Unix.symlink "lib/c.ml" (Filename.concat workspace "inner");
+         Unix.symlink ".git" (Filename.concat workspace "hooks");
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\n\n\
+              recovered : Task IoErr String -> Task IoErr String\n\
+              recovered task =\n\
+             \    task\n\
+             \        |> onError\n\
+             \            (\\problem ->\n\
+             \                case problem of\n\
+             \                    Denied path ->\n\
+             \                        succeed (\"denied \" ++ path)\n\n\
+             \                    NotFound path ->\n\
+             \                        succeed (\"missing \" ++ path)\n\n\
+             \                    Conflict _ ->\n\
+             \                        succeed \"conflict\"\n\
+             \            )\n\n\n\
+              written : Task IoErr () -> Task IoErr String\n\
+              written task =\n\
+             \    recovered (task |> map (\\_ -> \"written\"))\n\n\n\
+              main : Task IoErr (List String)\n\
+              main =\n\
+             \    batch\n\
+             \        [ recovered (read \"key\")\n\
+             \        , recovered (read \"inner\")\n\
+             \        , written (write \"out/planted.txt\" \"x\")\n\
+             \        , written (write \".git/hooks/pre-commit\" \"x\")\n\
+             \        , written (write \".Claude/settings.json\" \"{}\")\n\
+             \        , written (write \"hooks/config\" \"x\")\n\
+             \        ]\n"
+         with
+         | Error error -> explained "escapes" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged (Tools.at workspace) Handler.Disabled)
+                    program Handler.Overlay.empty task)
+             with
+             | ( Finished
+                   (Ok
+                      (V_list
+                         [
+                           V_string "denied key";
+                           V_string "let z = 3\n";
+                           V_string "denied out/planted.txt";
+                           V_string "denied .git/hooks/pre-commit";
+                           V_string "denied .Claude/settings.json";
+                           V_string "denied hooks/config";
+                         ])),
+                 _ ) -> (
+                 match
+                   Result.bind (Tools.Path.of_string "out/planted.txt") (fun path ->
+                       Lwt_main.run
+                         (Tools.commit (Tools.at workspace)
+                            [ { Tools.path; before = None; after = Some "x" } ]))
+                 with
+                 | Error (`Tools (Tools.Denied _))
+                   when not (Sys.file_exists (Filename.concat outside "planted.txt")) ->
+                     None
+                 | _ -> Some "escapes: a commit wrote through a symlink")
+             | Finished (Ok _), _ -> Some "escapes: a path left the workspace or reached its tooling"
+             | _ -> Some "escapes: the program did not finish"));
         (let workspace = fresh () in
          match started rename with
          | Error error -> explained "staged 01_rename" error
@@ -303,11 +375,11 @@ let () =
       ]
   in
   let rec removed path =
-    match Sys.is_directory path with
-    | true ->
+    match (Unix.lstat path).st_kind with
+    | S_DIR ->
         Array.iter (fun name -> removed (Filename.concat path name)) (Sys.readdir path);
         Sys.rmdir path
-    | false -> Sys.remove path
+    | S_REG | S_LNK | S_CHR | S_BLK | S_FIFO | S_SOCK -> Sys.remove path
   in
   List.iter removed !workspaces;
   match failures with

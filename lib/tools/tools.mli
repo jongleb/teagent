@@ -5,10 +5,10 @@ val at : string -> t
 
 type error =
   | Not_found of string  (** No such file. *)
-  | Denied of string  (** The path leaves the workspace or is not readable. *)
+  | Denied of string  (** The path leaves the workspace, belongs to its tooling, or is not readable. *)
   | Conflict of string  (** The file is there, but the change does not fit it. *)
 
-(** A relative, normalized path that stays inside the workspace. *)
+(** A relative, normalized path inside the workspace and outside its tooling folders. *)
 module Path : sig
   type t = private string
 

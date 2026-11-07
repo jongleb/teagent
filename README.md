@@ -305,3 +305,7 @@ $ dune exec bench/bench.exe -- --root bench --model … 04_count_lines    # some
 | `bin/teagent.ml` | the CLI |
 | `bench/` | 20 tasks with fixtures, expected files and reference programs |
 | `vendor/dartea` | the compiler, on its `rune-agent` branch |
+
+## License
+
+BSD-3-Clause, see [LICENSE](LICENSE). Dartea, in `vendor/dartea`, has its own [license](https://github.com/jongleb/dartea/blob/main/LICENSE).

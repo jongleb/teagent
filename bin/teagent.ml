@@ -80,6 +80,24 @@ let () =
       | "" :: _ -> Some text
       | _ -> None
     in
+    let host text =
+      let name = String.lowercase_ascii text in
+      let labels =
+        match String.split_on_char '.' name with "*" :: rest -> rest | labels -> labels
+      in
+      match
+        ( List.for_all
+            (fun label ->
+              String.length label > 0
+              && String.for_all
+                   (function 'a' .. 'z' | '0' .. '9' | '-' -> true | _ -> false)
+                   label)
+            labels,
+          labels )
+      with
+      | true, _ :: _ -> Some name
+      | _, _ -> None
+    in
     let read =
       match Sys.file_exists file with
       | false -> Ok (Tools.at !directory, List.map snd Mcp.tools)
@@ -89,7 +107,7 @@ let () =
           | `Assoc fields -> (
               match
                 List.find_opt
-                  (fun (key, _) -> not (List.mem key [ "tools"; "hidden"; "readonly"; "reads" ]))
+                  (fun (key, _) -> not (List.mem key [ "tools"; "hidden"; "readonly"; "reads"; "net" ]))
                   fields
               with
               | Some (key, _) -> Error ("there is no setting called " ^ key)
@@ -97,6 +115,7 @@ let () =
                   Result.bind (listed "hidden" fields ~expected:"a path in the project" inside) (fun hidden ->
                       Result.bind (listed "readonly" fields ~expected:"a path in the project" inside) (fun readonly ->
                           Result.bind (listed "reads" fields ~expected:"an absolute path or one under ~/" absolute) (fun reads ->
+                              Result.bind (listed "net" fields ~expected:"a host such as registry.npmjs.org or *.crates.io" host) (fun net ->
                               Result.map
                                 (fun serves ->
                                   ( Tools.limited
@@ -107,11 +126,12 @@ let () =
                                           Option.fold ~none:Tools.Anywhere
                                             ~some:(fun within -> Tools.Within within)
                                             reads;
+                                        net = Option.value ~default:[] net;
                                       }
                                       (Tools.at !directory),
                                     Option.value ~default:(List.map snd Mcp.tools) serves ))
                                 (listed "tools" fields ~expected:"bash, read, write, edit or grep" (fun name ->
-                                     List.assoc_opt name Mcp.tools))))))
+                                     List.assoc_opt name Mcp.tools)))))))
           | _ -> Error "it is not a JSON object")
     in
     Result.fold ~ok:Fun.id ~error:(fun reason -> failed (file ^ ": " ^ reason)) read

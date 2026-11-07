@@ -150,8 +150,10 @@ compile after 4 rounds."
    copy where the file system has them: instant, no extra disk space until something changes.
 2. It writes the staged changes into the copy, so the command sees the program's edits.
 3. It runs the command in a sandbox, Seatbelt on macOS and bubblewrap on Linux, with these
-   rules: **no network at all**, **writing only inside the copy** and its own temporary
-   folder, and reading as [the profile](#the-profile) allows.
+   rules: **no network** except through teagent's proxy to the hosts the profile lists,
+   **writing only inside the copy** and its own temporary folder, and reading as
+   [the profile](#the-profile) allows. Package managers keep their caches in that temporary
+   folder, so `npm install` and `pip download` work; the caches go when the command ends.
 4. When the command ends, teagent looks at which files in the copy were written or deleted.
    Each one becomes a staged change, exactly like an edit by the program.
 5. The copy is deleted.
@@ -221,7 +223,8 @@ anything.
   "tools": ["read", "grep", "edit", "bash"],
   "hidden": ["secrets", ".env.local"],
   "readonly": ["vendor"],
-  "reads": ["~/.opam"]
+  "reads": ["~/.opam"],
+  "net": ["registry.npmjs.org", "*.crates.io"]
 }
 ```
 
@@ -231,13 +234,21 @@ anything.
 | `hidden` | Paths the agent can neither read nor write. They are also removed from the shell's copy. |
 | `readonly` | Paths the agent can read but not change, by a tool or by a command. |
 | `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |
+| `net` | The hosts a contained command may reach. `*.crates.io` covers every name under `crates.io`. Without it, commands have no network at all. |
+
+With `net`, teagent starts a small proxy for each command and points `HTTP_PROXY` and
+`HTTPS_PROXY` at it; the sandbox lets the command reach that proxy and nothing else. The proxy
+lets a connection through only to a listed host, and every refused host is named at the end of
+the command's output, for example `teagent: blocked connections to pypi.org:443, which the
+profile's net does not list`. A listed host can still receive whatever the command sends it, so
+list only the hosts you trust with your code.
 
 With or without a profile, a contained command can never read the project itself (it has its
 own copy) or well-known secrets in your home folder: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`,
 `~/.config/gh`, `~/.docker`, `~/.kube`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`,
 `~/.teagent`, `~/.claude`, `~/.codex` and `~/Library/Keychains`.
 
-`demo/escape.py` shows all of it: a scripted agent tries twelve ways out of a project with a
+`demo/escape.py` shows all of it: a scripted agent tries thirteen ways out of a project with a
 profile, and teagent stops each one. `demo/escape.py --live` prepares the same project for a real
 Claude Code session.
 

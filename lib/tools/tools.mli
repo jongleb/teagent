@@ -23,6 +23,7 @@ type limits = {
   hidden : Path.t list;  (** Neither readable nor writable, and absent from the shell's copy. *)
   readonly : Path.t list;  (** Readable, never written. *)
   reads : reads;
+  net : string list;  (** Hosts a contained command may reach through the proxy, such as [*.npmjs.org]. *)
 }
 
 val at : string -> t

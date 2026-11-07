@@ -205,7 +205,7 @@ let () =
          in
          let limited =
            Tools.limited
-             { hidden = paths [ "Secrets" ]; readonly = paths [ "vendor" ]; reads = Within [] }
+             { hidden = paths [ "Secrets" ]; readonly = paths [ "vendor" ]; reads = Within []; net = [] }
              (Tools.at workspace)
          in
          match
@@ -248,6 +248,67 @@ let () =
                      None
                  | _ -> Some ("limits: the shell or a commit went past the profile\n" ^ out))
              | _ -> Some "limits: another result"));
+        (let workspace = fresh () in
+         let listening = Lwt_unix.socket PF_INET SOCK_STREAM 0 in
+         Lwt_main.run (Lwt_unix.bind listening (ADDR_INET (Unix.inet_addr_loopback, 0)));
+         Lwt_unix.listen listening 16;
+         let port =
+           match Lwt_unix.getsockname listening with ADDR_INET (_, port) -> port | ADDR_UNIX _ -> 0
+         in
+         let rec served () =
+           Lwt.bind (Lwt_unix.accept listening) (fun (client, _) ->
+               let input = Lwt_io.of_fd ~mode:Lwt_io.Input client
+               and output = Lwt_io.of_fd ~mode:Lwt_io.Output client in
+               let rec skipped () =
+                 Lwt.bind (Lwt_io.read_line input) (fun line ->
+                     match String.trim line with "" -> Lwt.return_unit | _ -> skipped ())
+               in
+               Lwt.async (fun () ->
+                   Lwt.catch
+                     (fun () ->
+                       Lwt.bind (skipped ()) (fun () ->
+                           Lwt.bind
+                             (Lwt_io.write output
+                                "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+                             (fun () -> Lwt_io.close output)))
+                     (fun _ -> Lwt.return_unit));
+               served ())
+         in
+         Lwt.async (fun () -> Lwt.catch served (fun _ -> Lwt.return_unit));
+         let limited =
+           Tools.limited
+             { hidden = []; readonly = []; reads = Anywhere; net = [ "127.0.0.1" ] }
+             (Tools.at workspace)
+         in
+         match
+           started
+             (Printf.sprintf
+                "module Main exposing (main)\n\n\
+                 import Agent exposing (..)\n\n\n\
+                 main : Task IoErr String\n\
+                 main =\n\
+                \    shell \"curl -s -m 5 -x $HTTP_PROXY http://127.0.0.1:%d/; echo; curl -s -m 5 -p -x $HTTP_PROXY http://127.0.0.1:%d/; echo; curl -s -m 5 -o /dev/null -w 'code %%{http_code}' -x $HTTP_PROXY http://localhost:%d/; echo; curl -s -m 3 --noproxy '*' http://127.0.0.1:%d/ || echo direct-failed\" |> map .out\n"
+                port port port port)
+         with
+         | Error error -> explained "net" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged limited Handler.Contained)
+                    program Handler.Overlay.empty task)
+             with
+             | Finished (Ok (V_string out)), _ -> (
+                 match String.split_on_char '\n' out with
+                 | "hello" :: "hello" :: "code 403" :: "direct-failed" :: _ :: note :: _
+                   when String.equal note
+                          (Printf.sprintf
+                             "teagent: blocked connections to localhost:%d, which the profile's net \
+                              does not list"
+                             port) ->
+                     None
+                 | _ -> Some ("net: the proxy let through or blocked the wrong thing\n" ^ out))
+             | _ -> Some "net: another result"));
         (let workspace = fresh () in
          match started rename with
          | Error error -> explained "staged 01_rename" error

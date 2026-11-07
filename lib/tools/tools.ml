@@ -27,10 +27,10 @@ module Path = struct
 end
 
 type reads = Anywhere | Within of string list
-type limits = { hidden : Path.t list; readonly : Path.t list; reads : reads }
+type limits = { hidden : Path.t list; readonly : Path.t list; reads : reads; net : string list }
 type t = { root : string; limits : limits }
 
-let at root = { root; limits = { hidden = []; readonly = []; reads = Anywhere } }
+let at root = { root; limits = { hidden = []; readonly = []; reads = Anywhere; net = [] } }
 let limited limits workspace = { workspace with limits }
 
 let located workspace access (path : Path.t) =
@@ -260,6 +260,61 @@ let ran_in ~cwd ?env program arguments =
 let shell workspace command =
   ran_in ~cwd:workspace.root "/bin/sh" [| "/bin/sh"; "-c"; "exec 2>&1\n" ^ command |]
 
+let bridged = 3128
+
+let joined (client_in, client_out) (server_in, server_out) =
+  let rec copied input output =
+    let* chunk = Lwt_io.read ~count:65536 input in
+    match chunk with
+    | "" -> Lwt.return_unit
+    | _ ->
+        let* () = Lwt_io.write output chunk in
+        let* () = Lwt_io.flush output in
+        copied input output
+  in
+  Lwt.finalize
+    (fun () ->
+      Lwt.catch
+        (fun () -> Lwt.pick [ copied client_in server_out; copied server_in client_out ])
+        (fun _ -> Lwt.return_unit))
+    (fun () ->
+      Lwt_list.iter_p
+        (fun close -> Lwt.catch close (fun _ -> Lwt.return_unit))
+        [
+          (fun () -> Lwt_io.close client_in);
+          (fun () -> Lwt_io.close client_out);
+          (fun () -> Lwt_io.close server_in);
+          (fun () -> Lwt_io.close server_out);
+        ])
+
+let () =
+  match Array.to_list Sys.argv with
+  | _ :: "--teagent-bridge" :: socket :: program :: arguments ->
+      exit
+        (Lwt_main.run
+           (let listening = Lwt_unix.socket PF_INET SOCK_STREAM 0 in
+            Lwt_unix.setsockopt listening SO_REUSEADDR true;
+            let* () = Lwt_unix.bind listening (ADDR_INET (Unix.inet_addr_loopback, bridged)) in
+            Lwt_unix.listen listening 64;
+            let rec accepted () =
+              let* client, _ = Lwt_unix.accept listening in
+              Lwt.async (fun () ->
+                  Lwt.catch
+                    (fun () ->
+                      let* upstream = Lwt_io.open_connection (ADDR_UNIX socket) in
+                      joined
+                        (Lwt_io.of_fd ~mode:Lwt_io.Input client, Lwt_io.of_fd ~mode:Lwt_io.Output client)
+                        upstream)
+                    (fun _ -> Lwt.return_unit));
+              accepted ()
+            in
+            Lwt.async (fun () -> Lwt.catch accepted (fun _ -> Lwt.return_unit));
+            let+ status = Lwt_process.exec (program, Array.of_list (program :: arguments)) in
+            match status with
+            | WEXITED code -> code
+            | WSIGNALED signal | WSTOPPED signal -> 128 + abs signal))
+  | _ -> ()
+
 let contained workspace staged command =
   let refused out = Lwt.return ({ out; code = 126 }, []) in
   let rec removed path =
@@ -311,6 +366,25 @@ let contained workspace staged command =
                  ".git-credentials"; ".npmrc"; ".pypirc"; ".teagent"; ".claude"; ".codex";
                  "Library/Keychains" ])
       in
+      let socket = Filename.concat base "proxy.sock" in
+      let proxy =
+        match (workspace.limits.net, sandbox) with
+        | [], _ -> None
+        | _ :: _, `Seatbelt ->
+            let listening = Unix.socket PF_INET SOCK_STREAM 0 in
+            Unix.bind listening (ADDR_INET (Unix.inet_addr_loopback, 0));
+            Unix.listen listening 64;
+            Some
+              ( listening,
+                match Unix.getsockname listening with
+                | ADDR_INET (_, port) -> port
+                | ADDR_UNIX _ -> bridged )
+        | _ :: _, `Bubblewrap ->
+            let listening = Unix.socket PF_UNIX SOCK_STREAM 0 in
+            Unix.bind listening (ADDR_UNIX socket);
+            Unix.listen listening 64;
+            Some (listening, bridged)
+      in
       let readable system =
         match workspace.limits.reads with
         | Anywhere -> None
@@ -327,10 +401,14 @@ let contained workspace staged command =
                 "sandbox-exec";
                 "-p";
                 Printf.sprintf
-                  "(version 1)\n(allow default)\n(deny network*)\n%s(deny file-read* %s)\n\
+                  "(version 1)\n(allow default)\n(deny network*)\n%s%s(deny file-read* %s)\n\
                    (deny file-write*)\n\
                    (allow file-write* (subpath %S) (literal \"/dev/null\") \
                    (literal \"/dev/zero\") (regex #\"^/dev/fd/\") (regex #\"^/dev/tty\"))\n"
+                  (Option.fold ~none:""
+                     ~some:(fun (_, port) ->
+                       Printf.sprintf "(allow network-outbound (remote tcp \"localhost:%d\"))\n" port)
+                     proxy)
                   (Option.fold ~none:""
                      ~some:(fun paths ->
                        Printf.sprintf
@@ -359,8 +437,15 @@ let contained workspace staged command =
                       | true -> [ "--tmpfs"; real ]
                       | false -> [ "--ro-bind"; "/dev/null"; real ])
                     secrets
+                @ Option.fold ~none:[]
+                    ~some:(fun _ -> [ "--ro-bind"; Sys.executable_name; Sys.executable_name ])
+                    proxy
                 @ [ "--bind"; base; base; "--chdir"; clone; "--unshare-all"; "--die-with-parent";
-                    "--new-session"; "/bin/sh"; "-c"; "exec 2>&1\n" ^ command ]) )
+                    "--new-session" ]
+                @ Option.fold ~none:[]
+                    ~some:(fun _ -> [ Sys.executable_name; "--teagent-bridge"; socket ])
+                    proxy
+                @ [ "/bin/sh"; "-c"; "exec 2>&1\n" ^ command ]) )
       in
       Lwt.finalize
         (fun () ->
@@ -412,16 +497,190 @@ let contained workspace staged command =
                     Lwt_list.iter_s (fun change -> Lwt.map ignore (placed shadow change)) staged
                   in
                   let* untouched = walked clone "" in
+                  let connections = ref [] in
+                  let served listening =
+                    let listening = Lwt_unix.of_unix_file_descr listening in
+                    let rec accepted () =
+                      let* client, _ = Lwt_unix.accept listening in
+                      Lwt.async (fun () ->
+                          let input = Lwt_io.of_fd ~mode:Lwt_io.Input client
+                          and output = Lwt_io.of_fd ~mode:Lwt_io.Output client in
+                          let answered status =
+                            Lwt.catch
+                              (fun () ->
+                                let* () =
+                                  Lwt_io.write output
+                                    ("HTTP/1.1 " ^ status
+                                   ^ "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                                in
+                                Lwt_io.close output)
+                              (fun _ -> Lwt.return_unit)
+                          in
+                          Lwt.catch
+                            (fun () ->
+                              let* request = Lwt_io.read_line input in
+                              let rec headers found =
+                                let* line = Lwt_io.read_line input in
+                                match String.trim line with
+                                | "" -> Lwt.return (List.rev found)
+                                | _ -> headers (line :: found)
+                              in
+                              let* fields = headers [] in
+                              let authority text default =
+                                match String.rindex_opt text ':' with
+                                | Some at ->
+                                    Option.map
+                                      (fun port -> (String.lowercase_ascii (String.sub text 0 at), port))
+                                      (int_of_string_opt
+                                         (String.sub text (at + 1) (String.length text - at - 1)))
+                                | None -> Some (String.lowercase_ascii text, default)
+                              in
+                              let destination =
+                                match String.split_on_char ' ' (String.trim request) with
+                                | [ "CONNECT"; target; _ ] ->
+                                    Option.map
+                                      (fun (host, port) -> (host, port, `Tunnel))
+                                      (authority target 443)
+                                | [ verb; target; version ]
+                                  when String.starts_with ~prefix:"http://"
+                                         (String.lowercase_ascii target) ->
+                                    let rest = String.sub target 7 (String.length target - 7) in
+                                    let slash =
+                                      Option.value ~default:(String.length rest)
+                                        (String.index_opt rest '/')
+                                    in
+                                    Option.map
+                                      (fun (host, port) ->
+                                        ( host,
+                                          port,
+                                          `Forward
+                                            (String.concat " "
+                                               [
+                                                 verb;
+                                                 (match
+                                                    String.sub rest slash (String.length rest - slash)
+                                                  with
+                                                 | "" -> "/"
+                                                 | path -> path);
+                                                 version;
+                                               ]) ))
+                                      (authority (String.sub rest 0 slash) 80)
+                                | _ -> None
+                              in
+                              match destination with
+                              | None -> answered "400 Bad Request"
+                              | Some (host, port, way) -> (
+                                  match
+                                    List.find_opt
+                                      (fun entry ->
+                                        String.equal entry host
+                                        || String.starts_with ~prefix:"*." entry
+                                           && String.ends_with
+                                                ~suffix:(String.sub entry 1 (String.length entry - 1))
+                                                host)
+                                      workspace.limits.net
+                                  with
+                                  | None ->
+                                      connections := (host, port, `Blocked) :: !connections;
+                                      answered "403 Forbidden"
+                                  | Some _ -> (
+                                      connections := (host, port, `Allowed) :: !connections;
+                                      let* addresses =
+                                        Lwt_unix.getaddrinfo host (string_of_int port)
+                                          [ AI_SOCKTYPE SOCK_STREAM ]
+                                      in
+                                      match addresses with
+                                      | [] -> answered "502 Bad Gateway"
+                                      | address :: _ ->
+                                          let* server_in, server_out =
+                                            Lwt_io.open_connection address.ai_addr
+                                          in
+                                          let* () =
+                                            match way with
+                                            | `Tunnel ->
+                                                Lwt_io.write output
+                                                  "HTTP/1.1 200 Connection established\r\n\r\n"
+                                            | `Forward line ->
+                                                Lwt_io.write server_out
+                                                  (String.concat "\r\n"
+                                                     ((line
+                                                      :: List.filter
+                                                           (fun field ->
+                                                             match
+                                                               Option.map
+                                                                 (fun at ->
+                                                                   String.lowercase_ascii
+                                                                     (String.trim (String.sub field 0 at)))
+                                                                 (String.index_opt field ':')
+                                                             with
+                                                             | Some
+                                                                 ( "connection" | "proxy-connection"
+                                                                 | "keep-alive" | "proxy-authorization" )
+                                                               ->
+                                                                 false
+                                                             | Some _ | None -> true)
+                                                           fields)
+                                                     @ [ "Connection: close"; ""; "" ]))
+                                          in
+                                          let* () = Lwt_io.flush output in
+                                          let* () = Lwt_io.flush server_out in
+                                          joined (input, output) (server_in, server_out))))
+                            (fun _ -> answered "502 Bad Gateway"));
+                      accepted ()
+                    in
+                    Lwt.catch accepted (fun _ -> Lwt.return_unit)
+                  in
+                  Option.iter (fun (listening, _) -> Lwt.async (fun () -> served listening)) proxy;
                   let* done_ =
                     ran_in ~cwd:clone
                       ~env:
                         (Array.append
-                           [| "TMPDIR=" ^ scratch ^ "/" |]
+                           (Array.of_list
+                              (List.map
+                                 (fun (name, folder) -> name ^ "=" ^ Filename.concat scratch folder)
+                                 [ ("TMPDIR", ""); ("XDG_CACHE_HOME", "cache");
+                                   ("npm_config_cache", "npm"); ("PIP_CACHE_DIR", "pip") ]
+                              @ Option.fold ~none:[]
+                                   ~some:(fun (_, port) ->
+                                     List.map
+                                       (fun name -> Printf.sprintf "%s=http://127.0.0.1:%d" name port)
+                                       [ "HTTP_PROXY"; "HTTPS_PROXY"; "ALL_PROXY"; "http_proxy";
+                                         "https_proxy"; "all_proxy" ])
+                                   proxy))
                            (Array.of_list
                               (List.filter
-                                 (fun binding -> not (String.starts_with ~prefix:"TMPDIR=" binding))
+                                 (fun binding ->
+                                   match
+                                     String.lowercase_ascii
+                                       (Option.fold ~none:binding
+                                          ~some:(fun at -> String.sub binding 0 at)
+                                          (String.index_opt binding '='))
+                                   with
+                                   | "tmpdir" | "xdg_cache_home" | "npm_config_cache"
+                                   | "pip_cache_dir" | "http_proxy" | "https_proxy" | "all_proxy"
+                                   | "no_proxy" ->
+                                       false
+                                   | _ -> true)
                                  (Array.to_list (Unix.environment ())))))
                       program arguments
+                  in
+                  let done_ =
+                    match
+                      List.sort_uniq String.compare
+                        (List.filter_map
+                           (function
+                             | host, port, `Blocked -> Some (Printf.sprintf "%s:%d" host port)
+                             | _, _, `Allowed -> None)
+                           !connections)
+                    with
+                    | [] -> done_
+                    | blocked ->
+                        {
+                          done_ with
+                          out =
+                            done_.out ^ "\nteagent: blocked connections to "
+                            ^ String.concat ", " blocked ^ ", which the profile's net does not list\n";
+                        }
                   in
                   let* touched = walked clone "" in
                   let* written =
@@ -461,7 +720,11 @@ let contained workspace staged command =
                   Lwt.return (done_, written @ deleted)
               | _ -> refused ("Could not clone the workspace: " ^ copied.out))
             (fun problem -> refused ("Could not run the contained shell: " ^ Printexc.to_string problem)))
-        (fun () -> Lwt.catch (fun () -> removed base) (fun _ -> Lwt.return_unit))
+        (fun () ->
+          Option.iter
+            (fun (listening, _) -> try Unix.close listening with Unix.Unix_error _ -> ())
+            proxy;
+          Lwt.catch (fun () -> removed base) (fun _ -> Lwt.return_unit))
 
 let commit workspace changes =
   let* checked =

@@ -195,7 +195,7 @@ the question it exists to answer is still open.
 | Gate of stage 0 | median compile rounds per task ≤ 2 on a frontier model: **not measured yet** |
 | Local `qwen2.5-coder:7b` | 2 to 3 of 6–11 tasks; it copies examples and reaches for missing APIs |
 | Contained shell | macOS (Seatbelt + APFS clone); Linux (bubblewrap + reflink copy) |
-| Network for commands | off; an allowlist proxy is planned |
+| Network for commands | off by default; hosts listed in the profile go through teagent's proxy |
 
 The sandbox design and the roadmap behind it: [docs/research/sandboxing.md](docs/research/sandboxing.md).
 

@@ -150,9 +150,46 @@ write : String -> String -> Task IoErr ()
 edit  : { path : String, old : String, new : String } -> Task IoErr ()
 grep  : { pattern : String, glob : String } -> Task e (List Match)
 shell : String -> Task e { out : String, code : Int }
+hole  : String -> Task e a
+spawn : List Mount -> Task e a -> Task e (Child a)
+merge : Child a -> Task (List Change) a
 
 succeed, fail, andThen, map, mapErr, onError, batch, fromResult
 ```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/os-dark.svg">
+  <img src="assets/os.svg" alt="The profile cuts what a program can name: Agent calls and the Fetch driver; main spawns a child that sees less and merges back what nobody moved; the workspace has hidden, readonly, scratch and staged paths, and only staged changes reach the disk" width="100%">
+</picture>
+
+`spawn` runs a task as a child process. The child starts from the parent's changes, with the
+mounts it is given added to the parent's, so it can only see less: a path the parent hides, it
+cannot read by any tool or command. Its own changes stay apart and come back in the `Child`
+value; `merge` takes them into the parent, or fails with the ones that clash if a file moved
+since the child began. A child that is never merged leaves no trace in the project.
+
+Drivers add modules next to `Agent`. The first is `Fetch`:
+
+```elm
+Fetch.get : String -> Task FetchErr { status : Int, body : String }
+type FetchErr = NotGranted String | Unreachable String
+```
+
+It reaches only the hosts granted with `--net`; any other host fails with `NotGranted`. A
+driver is an Elm module over one generic call and the OCaml code that answers it, so its calls
+show in the log and replay like every other tool. A program cannot name `Elm.Kernel` itself:
+everything it does goes through these modules.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/holes-dark.svg">
+  <img src="assets/holes.svg" alt="A program with a hole stops there; the agent sees the values in scope and writes one expression; it is typechecked in place of the hole; the program runs again with the tools that ran answered from what they returned; the new code may hold holes of its own" width="100%">
+</picture>
+
+`hole "what goes here"` stands for code the model cannot write before it sees data. When `main`
+reaches it, the same model, in the same conversation, sees the values in scope there and writes
+the expression for that place. teagent puts it into the source and typechecks it there, so it has
+the type the hole has, then runs the program again. The tools that already ran answer from what
+they returned the first time, so nothing runs twice. The new code may hold holes of its own.
 
 The rename task, as the bench's reference program writes it:
 
@@ -237,14 +274,22 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl                                 
 | `--dry-run` | show the changes, write nothing |
 | `--undo FILE` | put back every file a session changed, unless you changed it since |
 | `--exec FILE` | run a program you wrote, with no model inside |
-| `--mcp` | serve bash, read, write, edit and grep to another agent over MCP |
+| `--mcp` | serve bash, read, write, edit, grep, run and fill to another agent over MCP |
+| `--net HOST` | let contained commands reach `HOST` (or `*.HOST`) through teagent's proxy; repeat it |
 
 ### With Claude Code, over MCP
 
-`teagent --mcp` serves five tools to another agent: `bash`, `read`, `write`, `edit` and
-`grep`. Commands run in a sandboxed copy without network, and what they write or delete is
-applied when they end. Writes never overwrite a file you changed meanwhile. The whole session is
-logged, so `teagent --undo` puts everything back.
+`teagent --mcp` serves tools to another agent: `bash`, `read`, `write`, `edit` and `grep`.
+Commands run in a sandboxed copy without network, and what they write or delete is applied when
+they end. Writes never overwrite a file you changed meanwhile. The whole session is logged, so
+`teagent --undo` puts everything back.
+
+It also serves `run`, which takes a whole Dartea program instead of one call. The program is
+typechecked before anything runs, and its changes are applied together only if `main` succeeds.
+When it reaches a `hole`, the run stops and returns the values in scope; the agent sends the
+code for that place with `fill`, and the run goes on without repeating the tools that already
+ran. A program sees only the calls the profile offers: without `bash`, `Agent` has no `shell`,
+and a program that calls it does not compile.
 
 Add it to a project and switch off Claude Code's own shell and editing, so every change goes
 through teagent:

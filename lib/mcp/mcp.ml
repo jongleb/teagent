@@ -4,7 +4,10 @@ type t = {
   workspace : Tools.t;
   handler : Handler.Overlay.t Handler.t;
   serves : Os.call list;
+  calls : Lang.Calls.t;
   on : Driver.event -> unit Lwt.t;
+  waiting : (string, Run.hole) Hashtbl.t;  (** Runs stopped at a hole, by the name given out. *)
+  mutable started : int;  (** How many runs this connection has begun. *)
 }
 
 let start os shell ~on =
@@ -12,10 +15,14 @@ let start os shell ~on =
     workspace = Os.workspace os;
     handler = Handler.staged (Os.workspace os) shell;
     serves = (Os.view os).offers;
+    calls = Os.table os;
     on;
+    waiting = Hashtbl.create 4;
+    started = 0;
   }
 
 let handled program json =
+  let offered kind = List.find_opt (( = ) kind) program.serves in
   let listed =
     let schema properties required =
       `Assoc
@@ -31,27 +38,27 @@ let handled program json =
           ("additionalProperties", `Bool false);
         ]
     in
-    let tool name description input =
-      ( List.assoc name Os.calls,
+    let tool kind name description input =
+      ( kind,
         `Assoc [ ("name", `String name); ("description", `String description); ("inputSchema", input) ] )
     in
     List.filter_map
-      (fun (kind, listed) -> Option.map (fun _ -> listed) (List.find_opt (( = ) kind) program.serves))
+      (fun (kind, listed) -> Option.map (fun _ -> listed) (offered kind))
       [
-        tool "bash"
+        tool Os.Bash "bash"
           "Run a shell command with /bin/sh in a sandboxed copy of the project: no network, no \
            writes outside the copy. Files the command writes or deletes are applied to the project \
            when it ends. Returns stdout and stderr together, then the exit code."
           (schema [ ("command", "The command to run, as you would type it in sh.") ] [ "command" ]);
-        tool "read" "Read a file of the project. Paths are relative to the project folder."
+        tool Os.Read "read" "Read a file of the project. Paths are relative to the project folder."
           (schema [ ("path", "The file, relative to the project folder.") ] [ "path" ]);
-        tool "write"
+        tool Os.Write "write"
           "Write a whole file, creating folders as needed. A file the user changed meanwhile is \
            never overwritten."
           (schema
              [ ("path", "The file, relative to the project folder."); ("content", "The full new text.") ]
              [ "path"; "content" ]);
-        tool "edit"
+        tool Os.Edit "edit"
           "Replace the one place in a file where old_string appears with new_string. Fails if \
            old_string is missing or appears more than once."
           (schema
@@ -61,7 +68,7 @@ let handled program json =
                ("new_string", "The text to put in its place.");
              ]
              [ "path"; "old_string"; "new_string" ]);
-        tool "grep"
+        tool Os.Grep "grep"
           "Find the lines that match an Emacs-style regular expression (write a\\|b for 'a or b') \
            in files whose path matches a glob such as src/**/*.ml."
           (schema
@@ -70,6 +77,28 @@ let handled program json =
                ("glob", "Which files to search, such as src/**/*.ml; ** by default.");
              ]
              [ "pattern" ]);
+        tool Os.Run "run"
+          ("Run a program instead of calling tools one by one. The program is one module in \
+            Dartea, a dialect of Elm: `module Main exposing (main)`, `import Agent exposing \
+            (..)`, and `main : Task e a`. It is typechecked before anything runs; compiler errors \
+            come back as they are. Its tools see the same project as the other tools, and its \
+            changes are applied together only if main succeeds. Where the program cannot be \
+            written before seeing data, put `hole \"what goes here\"`: the run stops there, shows \
+            the values in scope, and waits for `fill`. The core modules Basics, List, Maybe, \
+            Result, String, Char, Tuple, Dict and Set are available. The modules this run \
+            offers, Agent and drivers such as Fetch that a program imports by name:\n\n"
+          ^ Lang.Calls.source program.calls)
+          (schema [ ("program", "The whole Main module.") ] [ "program" ]);
+        tool Os.Run "fill"
+          "Give the code for the hole a run stopped at: one Elm expression of the hole's type, \
+           which may use the values in scope there. The run starts again with it; the tools \
+           that already ran are not run twice."
+          (schema
+             [
+               ("run", "The run, as `run` named it.");
+               ("code", "The Elm expression that takes the place of the hole.");
+             ]
+             [ "run"; "code" ]);
       ]
   in
   let reply id result = `Assoc [ ("jsonrpc", `String "2.0"); ("id", id); ("result", result) ] in
@@ -86,55 +115,135 @@ let handled program json =
       | Some (`String value) -> Ok value
       | Some _ | None -> Error ("The argument " ^ key ^ " is missing or not text.")
     in
-    let requested : (Value.tool, string) result =
-      match
-        Option.bind (List.assoc_opt name Os.calls) (fun kind ->
-            List.find_opt (( = ) kind) program.serves)
-      with
-      | Some Os.Bash -> Result.map (fun command -> Value.Shell command) (field "command")
-      | Some Read -> Result.map (fun path -> Value.Read path) (field "path")
+    let requested =
+      match Option.bind (List.assoc_opt name Os.calls) offered with
+      | Some Os.Bash -> Result.map (fun command -> `Tool (Value.Shell command)) (field "command")
+      | Some Read -> Result.map (fun path -> `Tool (Value.Read path)) (field "path")
       | Some Write ->
           Result.bind (field "path") (fun path ->
-              Result.map (fun content -> Value.Write { path; content }) (field "content"))
+              Result.map (fun content -> `Tool (Value.Write { path; content })) (field "content"))
       | Some Edit ->
           Result.bind (field "path") (fun path ->
               Result.bind (field "old_string") (fun old ->
-                  Result.map (fun new_ -> Value.Edit { path; old; new_ }) (field "new_string")))
+                  Result.map (fun new_ -> `Tool (Value.Edit { path; old; new_ })) (field "new_string")))
       | Some Grep ->
           Result.map
             (fun pattern ->
-              Value.Grep { pattern; glob = Result.value ~default:"**" (field "glob") })
+              `Tool (Value.Grep { pattern; glob = Result.value ~default:"**" (field "glob") }))
             (field "pattern")
-      | None -> Error ("There is no tool called " ^ name ^ ".")
+      | Some Run -> Result.map (fun source -> `Run source) (field "program")
+      | Some Fetch -> Error "fetch is not a tool of its own: a program sent to run reaches it as Fetch.get."
+      | None -> (
+          match (name, offered Os.Run) with
+          | "fill", Some _ ->
+              Result.bind (field "run") (fun run ->
+                  Result.map (fun code -> `Fill (run, code)) (field "code"))
+          | _ -> Error ("There is no tool called " ^ name ^ "."))
+    in
+    let applied staged =
+      match staged with
+      | [] -> Lwt.return (Ok [])
+      | _ :: _ ->
+          let* committed = Tools.commit program.workspace staged in
+          let applied =
+            Result.map_error
+              (function
+                | `Tools (Tools.Denied path) -> path ^ " is off limits"
+                | `Tools (Tools.Not_found reason | Conflict reason) -> reason)
+              committed
+          in
+          let* () = program.on (Committed applied) in
+          Lwt.return
+            (Result.map
+               (fun () -> List.map (fun (change : Tools.change) -> (change.path :> string)) staged)
+               applied)
+    in
+    let reported body = function
+      | Ok [] -> text body false
+      | Ok paths -> text (body ^ "\n\nApplied to the project: " ^ String.concat ", " paths) false
+      | Error reason -> text (body ^ "\n\nNot applied, nothing was written: " ^ reason) true
+    in
+    let rec went run =
+      let watched =
+        {
+          Handler.perform =
+            (fun tool overlay ->
+              let* step = program.handler.perform tool overlay in
+              let* () =
+                match step with
+                | Handler.Performed (result, after) ->
+                    program.on
+                      (Performed { tool; result; staged = Handler.Overlay.since overlay after })
+                | Handler.Blocked -> Lwt.return_unit
+              in
+              Lwt.return step);
+        }
+      in
+      let dropped body =
+        let* () = program.on (Decided Discard) in
+        Lwt.return (text (body ^ "\n\nThe changes of this run were dropped.") true)
+      in
+      let* outcome =
+        Run.run run watched ~settle:(fun overlay ->
+            Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
+      in
+      match outcome with
+      | Error reason -> dropped ("The changes could not be applied: " ^ reason)
+      | Ok (Finished (Ok value), overlay) ->
+          let body = "main finished with:\n" ^ Value.to_elm value in
+          let* () = program.on (Ran body) in
+          Lwt.map (reported body) (applied (Handler.Overlay.changes overlay))
+      | Ok (Finished (Error (`Failed value)), _) ->
+          dropped ("main failed with:\n" ^ Value.to_elm value)
+      | Ok (Finished (Error (`Interp error)), _) -> dropped (Run.stopped error)
+      | Ok (Unfillable reason, _) -> dropped reason
+      | Ok (Reached hole, _) ->
+          program.started <- program.started + 1;
+          let name = Printf.sprintf "run-%d" program.started in
+          Hashtbl.replace program.waiting name hole;
+          let* () = program.on (Decided Discard) in
+          Lwt.return
+            (text
+               (Run.question hole ^ "\n\nCall `fill` with run \"" ^ name
+              ^ "\" and that expression as code; until then nothing of this run is applied.")
+               false)
+    and resumed name code =
+      match Hashtbl.find_opt program.waiting name with
+      | None -> Lwt.return (text ("No run called " ^ name ^ " is waiting for a hole.") true)
+      | Some hole -> (
+          match Run.filled hole code with
+          | Error report ->
+              Lwt.return
+                (text ("That code does not compile in place of the hole:\n\n" ^ report) true)
+          | Ok run ->
+              Hashtbl.remove program.waiting name;
+              let* () = program.on (Filled { hole = Run.description hole; reply = code }) in
+              let* () =
+                Lwt_list.iter_s
+                  (fun ({ tool; result; staged; _ } : Run.step) ->
+                    program.on (Performed { tool; result; staged }))
+                  (Run.performed hole)
+              in
+              went run)
     in
     match requested with
     | Error reason -> Lwt.return (text reason true)
-    | Ok tool -> (
+    | Ok (`Run source) -> (
+        let* () = program.on (Wrote source) in
+        match Run.compiled program.calls source with
+        | Error report ->
+            let* () = program.on (Refused report) in
+            Lwt.return (text report true)
+        | Ok run -> went run)
+    | Ok (`Fill (name, code)) -> resumed name code
+    | Ok (`Tool tool) -> (
         let* step = program.handler.perform tool Handler.Overlay.empty in
         match step with
         | Handler.Blocked -> Lwt.return (text "The tool was held back; try again." true)
         | Handler.Performed (result, overlay) ->
             let staged = Handler.Overlay.changes overlay in
             let* () = program.on (Performed { tool; result; staged }) in
-            let* applied =
-              match staged with
-              | [] -> Lwt.return (Ok [])
-              | _ :: _ ->
-                  let* committed = Tools.commit program.workspace staged in
-                  let applied =
-                    Result.map_error
-                      (function
-                        | `Tools (Tools.Denied path) -> path ^ " is off limits"
-                        | `Tools (Tools.Not_found reason | Conflict reason) -> reason)
-                      committed
-                  in
-                  let* () = program.on (Committed applied) in
-                  Lwt.return
-                    (Result.map
-                       (fun () ->
-                         List.map (fun (change : Tools.change) -> (change.path :> string)) staged)
-                       applied)
-            in
+            let* applied = applied staged in
             let body =
               match (tool, result) with
               | Read _, Ok (V_string content) -> content
@@ -154,12 +263,9 @@ let handled program json =
               | _, (Ok value | Error value) -> Value.to_elm value
             in
             Lwt.return
-              (match (result, applied) with
-              | Error _, _ -> text body true
-              | Ok _, Ok [] -> text body false
-              | Ok _, Ok paths -> text (body ^ "\n\nApplied to the project: " ^ String.concat ", " paths) false
-              | Ok _, Error reason ->
-                  text (body ^ "\n\nNot applied, nothing was written: " ^ reason) true))
+              (match result with
+              | Error _ -> text body true
+              | Ok _ -> reported body applied))
   in
   match json with
   | `Assoc fields -> (

@@ -51,6 +51,50 @@ let () =
   in
   let ran = outcome (call 2 "bash" [ ("command", "cat lib/a.ml; echo built > out.txt; rm lib/c.ml") ]) in
   let escaped = outcome (call 3 "write" [ ("path", "../escape.txt"); ("content", "x") ]) in
+  let main body = "module Main exposing (main)\n\nimport Agent exposing (..)\n\n\n" ^ body in
+  let whole =
+    outcome
+      (call 5 "run"
+         [
+           ( "program",
+             main
+               "main : Task IoErr String\n\
+                main =\n\
+               \    write \"lib/d.ml\" \"let d = 4\\n\"\n\
+               \        |> andThen (\\_ -> read \"lib/d.ml\")\n" );
+         ])
+  in
+  let atomic =
+    outcome
+      (call 6 "run"
+         [
+           ( "program",
+             main
+               "main : Task IoErr ()\n\
+                main =\n\
+               \    write \"lib/f.ml\" \"let f = 5\\n\"\n\
+               \        |> andThen (\\_ -> fail (NotFound \"on purpose\"))\n" );
+         ])
+  in
+  let refused = outcome (call 7 "run" [ ("program", main "main = 42\n") ]) in
+  let holed =
+    outcome
+      (call 8 "run"
+         [
+           ( "program",
+             main
+               "main : Task IoErr ()\n\
+                main =\n\
+               \    read \"lib/a.ml\"\n\
+               \        |> andThen (\\text -> write \"lib/e.ml\" \"pending\" |> andThen (\\_ -> hole \"save the text\"))\n" );
+         ])
+  in
+  let pending = Sys.file_exists (Filename.concat workspace "lib/e.ml") in
+  let misfilled = outcome (call 9 "fill" [ ("run", "run-1"); ("code", "succeed 42") ]) in
+  let filled =
+    outcome (call 10 "fill" [ ("run", "run-1"); ("code", "write \"lib/e.ml\" (String.toUpper text)") ])
+  in
+  let written = (contents "lib/d.ml", contents "lib/e.ml") in
   let listed =
     Lwt_main.run
       (Mcp.handled program
@@ -72,8 +116,33 @@ let () =
         | Some (text, false) when String.starts_with ~prefix:"let x = Foo.baz 1" text -> None
         | _ -> Some "bash: did not see the edit or failed");
         (match escaped with Some (_, true) -> None | _ -> Some "write: a path outside was accepted");
+        (match (whole, fst written) with
+        | Some (text, false), "let d = 4\n"
+          when String.ends_with ~suffix:"Applied to the project: lib/d.ml" text ->
+            None
+        | _ -> Some "run: the program's write was not applied");
+        (match (atomic, Sys.file_exists (Filename.concat workspace "lib/f.ml")) with
+        | Some (_, true), false -> None
+        | _ -> Some "run: a failed program left its changes");
+        (match refused with
+        | Some (text, true) when String.length text > 0 -> None
+        | _ -> Some "run: a program that does not compile was not refused");
+        (match (holed, pending, misfilled, filled, snd written) with
+        | ( Some (question, false),
+            false,
+            Some (_, true),
+            Some (_, false),
+            "LET X = FOO.BAZ 1\n" )
+          when String.ends_with ~suffix:"Call `fill` with run \"run-1\" and that expression as code; until then nothing of this run is applied." question ->
+            None
+        | _ ->
+            Some
+              ("run: the hole was not asked, kept or filled\n"
+              ^ Option.fold ~none:"" ~some:fst holed
+              ^ "\n"
+              ^ Option.fold ~none:"" ~some:fst filled));
         (match listed with
-        | Some (`Assoc [ _; _; ("result", `Assoc [ ("tools", `List tools) ]) ]) when List.length tools = 5 ->
+        | Some (`Assoc [ _; _; ("result", `Assoc [ ("tools", `List tools) ]) ]) when List.length tools = 7 ->
             None
         | _ -> Some "tools/list: wrong tools");
         (match after_session with
@@ -83,9 +152,12 @@ let () =
            ( undone,
              contents "lib/a.ml",
              Sys.file_exists (Filename.concat workspace "out.txt"),
-             contents "lib/c.ml" )
+             contents "lib/c.ml",
+             List.exists
+               (fun name -> Sys.file_exists (Filename.concat workspace name))
+               [ "lib/d.ml"; "lib/e.ml"; "lib/f.ml" ] )
          with
-        | Ok (), "let x = Foo.bar 1\n", false, "let z = 3\n" -> None
+        | Ok (), "let x = Foo.bar 1\n", false, "let z = 3\n", false -> None
         | _ -> Some "undo: the session was not put back");
       ]
   in

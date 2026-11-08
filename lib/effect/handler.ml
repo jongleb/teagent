@@ -3,19 +3,62 @@ open Lwt.Syntax
 module Overlay = struct
   module Paths = Map.Make (String)
 
-  type t = Tools.change Paths.t
+  (** What one process sees over the workspace. *)
+  type frame = {
+    staged : Tools.change Paths.t;  (** Applied when the changes are settled. *)
+    scratch : Tools.change Paths.t;  (** Under a [Scratch] mount: seen, never applied. *)
+    mounts : (Tools.Path.t * Tools.mount) list;  (** What spawns added to the workspace's. *)
+  }
 
-  let empty = Paths.empty
-  let changes overlay = List.map snd (Paths.bindings overlay)
+  (** The running process's frame over the frames of the processes that spawned it, nearest first. *)
+  type t = { frame : frame; parents : frame list }
+
+  let empty = { frame = { staged = Paths.empty; scratch = Paths.empty; mounts = [] }; parents = [] }
+  let staged frame = List.map snd (Paths.bindings frame.staged)
+  let changes overlay = staged (List.fold_left (fun _ parent -> parent) overlay.frame overlay.parents)
+
+  let visible overlay =
+    List.map snd
+      (Paths.bindings
+         (Paths.union (fun _ staged _ -> Some staged) overlay.frame.staged overlay.frame.scratch))
+
+  let found overlay path =
+    Option.fold ~none:(Paths.find_opt path overlay.frame.scratch) ~some:Option.some
+      (Paths.find_opt path overlay.frame.staged)
+
+  let put paths (change : Tools.change) =
+    match change with
+    | { before = None; after = None; _ } -> Paths.remove (change.path :> string) paths
+    | { before = Some _; _ } | { after = Some _; _ } -> Paths.add (change.path :> string) change paths
 
   let added overlay changes =
-    List.fold_left
-      (fun overlay (change : Tools.change) ->
-        match change with
-        | { before = None; after = None; _ } -> Paths.remove (change.path :> string) overlay
-        | { before = Some _; _ } | { after = Some _; _ } ->
-            Paths.add (change.path :> string) change overlay)
-      overlay changes
+    { overlay with frame = { overlay.frame with staged = List.fold_left put overlay.frame.staged changes } }
+
+  let since earlier later =
+    match Int.equal (List.length earlier.parents) (List.length later.parents) with
+    | false -> []
+    | true ->
+        List.filter (fun change -> not (List.mem change (staged earlier.frame))) (staged later.frame)
+        @ List.filter_map
+            (fun (gone : Tools.change) ->
+              Option.fold
+                ~none:(Some { gone with before = None; after = None })
+                ~some:(fun _ -> None)
+                (List.find_opt
+                   (fun (kept : Tools.change) -> kept.path = gone.path)
+                   (staged later.frame)))
+            (staged earlier.frame)
+
+  let after overlay (tool : Value.tool) changes =
+    match tool with
+    | Enter mounts ->
+        {
+          frame = { overlay.frame with mounts = overlay.frame.mounts @ mounts };
+          parents = overlay.frame :: overlay.parents;
+        }
+    | Leave -> (
+        match overlay.parents with [] -> overlay | parent :: parents -> { frame = parent; parents })
+    | Read _ | Write _ | Edit _ | Grep _ | Shell _ | Call _ | Merge _ -> added overlay changes
 
   (** One line of a diff, with the line numbers before it in each version. *)
   type line = { mark : mark; text : string; old_at : int; new_at : int }
@@ -111,6 +154,7 @@ type 'state t = { perform : Value.tool -> 'state -> 'state step Lwt.t }
 type outcome =
   | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error ]) result
   | Stopped of Value.task
+  | Reached of Value.hole
 
 let seen result =
   Result.map_error
@@ -137,6 +181,13 @@ let matches found =
            ])
        found)
 
+let maybe text =
+  Option.fold
+    ~none:(Value.V_constr { constructor = { module_name = "Maybe"; name = "Nothing" }; arguments = [] })
+    ~some:(fun text ->
+      Value.V_constr { constructor = { module_name = "Maybe"; name = "Just" }; arguments = [ V_string text ] })
+    text
+
 let ran ({ out; code } : Tools.ran) =
   Value.V_record [ ("code", V_number (Float.of_int code)); ("out", V_string out) ]
 
@@ -147,28 +198,31 @@ let run workspace =
     | Ok path -> within path
   in
   let perform (tool : Value.tool) () =
-    let+ result =
-      match tool with
-      | Read path ->
-          located path (fun path ->
-              Lwt.map
-                (fun read -> seen (Result.map (fun text -> Value.V_string text) read))
-                (Tools.read workspace path))
-      | Write { path; content } ->
-          located path (fun path ->
-              Lwt.map
-                (fun written -> seen (Result.map (fun () -> Value.V_unit) written))
-                (Tools.write workspace path content))
-      | Edit { path; old; new_ } ->
-          located path (fun path ->
-              Lwt.map
-                (fun edited -> seen (Result.map (fun () -> Value.V_unit) edited))
-                (Tools.edit workspace path ~old ~new_))
-      | Grep { pattern; glob } ->
-          Lwt.map (fun found -> Ok (matches found)) (Tools.grep workspace ~pattern ~glob)
-      | Shell command -> Lwt.map (fun done_ -> Ok (ran done_)) (Tools.shell workspace command)
-    in
-    Performed (result, ())
+    let performed result = Lwt.map (fun result -> Performed (result, ())) result in
+    match tool with
+    | Enter _ | Leave | Merge _ -> Lwt.return Blocked
+    | Read path ->
+        performed
+          (located path (fun path ->
+               Lwt.map
+                 (fun read -> seen (Result.map (fun text -> Value.V_string text) read))
+                 (Tools.read workspace path)))
+    | Write { path; content } ->
+        performed
+          (located path (fun path ->
+               Lwt.map
+                 (fun written -> seen (Result.map (fun () -> Value.V_unit) written))
+                 (Tools.write workspace path content)))
+    | Edit { path; old; new_ } ->
+        performed
+          (located path (fun path ->
+               Lwt.map
+                 (fun edited -> seen (Result.map (fun () -> Value.V_unit) edited))
+                 (Tools.edit workspace path ~old ~new_)))
+    | Grep { pattern; glob } ->
+        performed (Lwt.map (fun found -> Ok (matches found)) (Tools.grep workspace ~pattern ~glob))
+    | Shell command -> performed (Lwt.map (fun done_ -> Ok (ran done_)) (Tools.shell workspace command))
+    | Call { name; argument } -> performed (Device.perform workspace ~name argument)
   in
   { perform }
 
@@ -177,8 +231,9 @@ type shell = Open | Contained | Disabled
 let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]
 
 let staged workspace shell =
+  let within (overlay : Overlay.t) = Tools.mounting overlay.frame.mounts workspace in
   let current overlay (path : Tools.Path.t) =
-    match Overlay.Paths.find_opt (path :> string) overlay with
+    match Overlay.found overlay (path :> string) with
     | Some (change : Tools.change) -> Lwt.return (Ok (change.before, change.after))
     | None ->
         Lwt.map
@@ -186,14 +241,88 @@ let staged workspace shell =
             | Ok text -> Ok (Some text, Some text)
             | Error (`Tools (Tools.Not_found _)) -> Ok (None, None)
             | Error _ as failure -> failure)
-          (Tools.read workspace path)
+          (Tools.read (within overlay) path)
   in
-  let stored overlay (path : Tools.Path.t) before after =
-    Overlay.added overlay [ { Tools.path; before; after } ]
+  let stored (overlay : Overlay.t) (path : Tools.Path.t) before after =
+    match Tools.mounted (within overlay) path with
+    | Some Scratch ->
+        {
+          overlay with
+          frame =
+            { overlay.frame with scratch = Overlay.put overlay.frame.scratch { Tools.path; before; after } };
+        }
+    | None | Some (Hidden | Readonly) -> Overlay.added overlay [ { Tools.path; before; after } ]
   in
-  let perform (tool : Value.tool) overlay =
+  let writable overlay path =
+    Result.bind (Tools.Path.of_string path) (fun (path : Tools.Path.t) ->
+        match Tools.mounted (within overlay) path with
+        | Some (Hidden | Readonly) -> Error (`Tools (Tools.Denied (path :> string)))
+        | None | Some Scratch -> Ok path)
+  in
+  let perform (tool : Value.tool) (overlay : Overlay.t) =
     let kept result = Performed (seen result, overlay) in
     match tool with
+    | Enter _ -> Lwt.return (Performed (Ok Value.V_unit, Overlay.after overlay tool []))
+    | Leave -> (
+        let left = Overlay.after overlay tool [] in
+        let viewed side (file : Tools.Path.t) =
+          Lwt.map
+            (function Ok (_, after) -> after | Error _ -> None)
+            (current side file)
+        in
+        match overlay.parents with
+        | [] -> Lwt.return (Performed (Ok (Value.V_list []), overlay))
+        | _ :: _ ->
+            let+ patches =
+              Lwt_list.map_s
+                (fun (change : Tools.change) ->
+                  let* base = viewed left change.path in
+                  let+ content = viewed overlay change.path in
+                  Value.V_record
+                    [
+                      ("base", maybe base);
+                      ("content", maybe content);
+                      ("path", V_string (change.path :> string));
+                    ])
+                (Overlay.since left { overlay with parents = left.parents })
+            in
+            Performed (Ok (Value.V_list patches), left))
+    | Merge patches -> (
+        let* checked =
+          Lwt_list.map_s
+            (fun ({ file; base; content } : Value.patch) ->
+              match writable overlay file with
+              | Error _ -> Lwt.return (Error { Value.file; base; content })
+              | Ok path ->
+                  Lwt.map
+                    (function
+                      | Ok (before, now) when Option.equal String.equal now base -> Ok (path, before, content)
+                      | Ok _ | Error _ -> Error { Value.file; base; content })
+                    (current overlay path))
+            patches
+        in
+        match List.filter_map (function Ok _ -> None | Error patch -> Some patch) checked with
+        | [] ->
+            Lwt.return
+              (Performed
+                 ( Ok Value.V_unit,
+                   List.fold_left
+                     (fun overlay checked ->
+                       match checked with
+                       | Ok (path, before, content) -> stored overlay path before content
+                       | Error _ -> overlay)
+                     overlay checked ))
+        | conflicts ->
+            Lwt.return
+              (Performed
+                 ( Error
+                     (Value.V_list
+                        (List.map
+                           (fun ({ file; base; content } : Value.patch) ->
+                             Value.V_record
+                               [ ("base", maybe base); ("content", maybe content); ("path", V_string file) ])
+                           conflicts)),
+                   overlay )))
     | Read path -> (
         match Tools.Path.of_string path with
         | Error _ as denied -> Lwt.return (kept denied)
@@ -205,7 +334,7 @@ let staged workspace shell =
                 | Error _ as failure -> kept failure)
               (current overlay path))
     | Write { path; content } -> (
-        match Tools.Path.of_string path with
+        match writable overlay path with
         | Error _ as denied -> Lwt.return (kept denied)
         | Ok path ->
             Lwt.map
@@ -215,7 +344,7 @@ let staged workspace shell =
                 | Error _ as failure -> kept failure)
               (current overlay path))
     | Edit { path; old; new_ } -> (
-        match Tools.Path.of_string path with
+        match writable overlay path with
         | Error _ as denied -> Lwt.return (kept denied)
         | Ok path ->
             Lwt.map
@@ -229,7 +358,7 @@ let staged workspace shell =
                 | Error _ as failure -> kept failure)
               (current overlay path))
     | Grep { pattern; glob } ->
-        let+ on_disk = Tools.grep workspace ~pattern ~glob in
+        let+ on_disk = Tools.grep (within overlay) ~pattern ~glob in
         Performed
           ( Ok
               (matches
@@ -237,27 +366,34 @@ let staged workspace shell =
                     (fun (one : Tools.found) (other : Tools.found) ->
                       compare (one.path, one.line) (other.path, other.line))
                     (List.filter
-                       (fun (found : Tools.found) -> not (Overlay.Paths.mem found.path overlay))
+                       (fun (found : Tools.found) -> Option.is_none (Overlay.found overlay found.path))
                        on_disk
                     @ List.concat_map
                         (fun (change : Tools.change) ->
                           Option.fold ~none:[]
                             ~some:(Tools.search ~pattern ~glob ~path:(change.path :> string))
                             change.after)
-                        (Overlay.changes overlay)))),
+                        (Overlay.visible overlay)))),
             overlay )
+    | Call { name; argument } ->
+        Lwt.map (fun result -> Performed (result, overlay)) (Device.perform workspace ~name argument)
     | Shell command -> (
-        match (shell, Overlay.Paths.min_binding_opt overlay) with
-        | Disabled, _ ->
+        match (shell, Overlay.visible overlay, overlay.parents) with
+        | Open, _, _ :: _ ->
+            Lwt.return
+              (Performed
+                 ( Ok (ran { out = "a spawned process runs commands only with --shell contained"; code = 126 }),
+                   overlay ))
+        | Disabled, _, _ ->
             Lwt.return
               (Performed
                  (Ok (ran { out = "shell is disabled in this run"; code = 126 }), overlay))
-        | Open, None ->
+        | Open, [], [] ->
             Lwt.map
               (fun done_ -> Performed (Ok (ran done_), overlay))
               (Tools.shell workspace command)
-        | Open, Some _ -> Lwt.return Blocked
-        | Contained, _ ->
+        | Open, _ :: _, [] -> Lwt.return Blocked
+        | Contained, _, _ ->
             Lwt.map
               (fun (done_, written) ->
                 Performed
@@ -267,10 +403,10 @@ let staged workspace shell =
                         stored overlay change.path
                           (Option.fold ~none:change.before
                              ~some:(fun (earlier : Tools.change) -> earlier.before)
-                             (Overlay.Paths.find_opt (change.path :> string) overlay))
+                             (Overlay.found overlay (change.path :> string)))
                           change.after)
                       overlay written ))
-              (Tools.contained workspace (Overlay.changes overlay) command))
+              (Tools.contained (within overlay) (Overlay.visible overlay) command))
   in
   { perform }
 
@@ -287,7 +423,7 @@ let rec interpret handler program state (task : Value.task) =
   let resumed rebuild (outcome, state) =
     match outcome with
     | Stopped rest -> (Stopped (rebuild rest), state)
-    | Finished _ -> (outcome, state)
+    | Finished _ | Reached _ -> (outcome, state)
   in
   match task with
   | Succeed value -> Lwt.return (Finished (Ok value), state)
@@ -298,11 +434,12 @@ let rec interpret handler program state (task : Value.task) =
       | Performed (result, state) ->
           (Finished (Result.map_error (fun value -> `Failed value) result), state)
       | Blocked -> (Stopped task, state))
+  | Hole hole -> Lwt.return (Reached hole, state)
   | And_then { callback; task } -> (
       let* outcome, state = interpret handler program state task in
       match outcome with
       | Finished (Ok value) -> continued callback value state
-      | Finished (Error _) -> Lwt.return (outcome, state)
+      | Finished (Error _) | Reached _ -> Lwt.return (outcome, state)
       | Stopped rest -> Lwt.return (Stopped (And_then { callback; task = rest }), state))
   | Map { callback; task } ->
       let+ outcome, state = interpret handler program state task in
@@ -310,7 +447,7 @@ let rec interpret handler program state (task : Value.task) =
         (fun rest -> Map { callback; task = rest })
         ( (match outcome with
           | Finished (Ok value) -> Finished (Interp.apply program callback value)
-          | Finished (Error _) | Stopped _ -> outcome),
+          | Finished (Error _) | Stopped _ | Reached _ -> outcome),
           state )
   | Map_err { callback; task } ->
       let+ outcome, state = interpret handler program state task in
@@ -321,13 +458,13 @@ let rec interpret handler program state (task : Value.task) =
               Finished
                 (Result.bind (Interp.apply program callback value) (fun value ->
                      Error (`Failed value)))
-          | Finished (Ok _ | Error (`Interp _)) | Stopped _ -> outcome),
+          | Finished (Ok _ | Error (`Interp _)) | Stopped _ | Reached _ -> outcome),
           state )
   | On_error { callback; task } -> (
       let* outcome, state = interpret handler program state task in
       match outcome with
       | Finished (Error (`Failed value)) -> continued callback value state
-      | Finished (Ok _ | Error (`Interp _)) -> Lwt.return (outcome, state)
+      | Finished (Ok _ | Error (`Interp _)) | Reached _ -> Lwt.return (outcome, state)
       | Stopped rest -> Lwt.return (Stopped (On_error { callback; task = rest }), state))
   | Batch tasks ->
       let rec each done_ state = function
@@ -336,7 +473,7 @@ let rec interpret handler program state (task : Value.task) =
             let* outcome, state = interpret handler program state task in
             match outcome with
             | Finished (Ok value) -> each (value :: done_) state rest
-            | Finished (Error _) -> Lwt.return (outcome, state)
+            | Finished (Error _) | Reached _ -> Lwt.return (outcome, state)
             | Stopped remaining ->
                 Lwt.return
                   ( Stopped

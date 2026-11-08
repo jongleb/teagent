@@ -126,6 +126,28 @@ outside it, because the agent is a separate process with the user's rights. That
 operating-system boundary around the agent process; it is a separate piece of work, tracked on
 its own, and this design assumes it rather than describes it.
 
+## A runtime for other agents
+
+Codemode, where a model writes code instead of calling tools one by one, runs elsewhere in
+V8 isolates or containers: the effects show only after the code runs, the isolation is the
+sandbox's and not the language's, and nothing replays. teagent offers the same thing as a
+runtime any agent can call. Over MCP, `run` takes a Dartea program, typechecks it, runs it
+against the OS and applies its changes together only if `main` succeeds. A `hole` in it stops
+the run and hands the values in scope to the calling agent, which sends the missing code back
+with `fill`; the tools that already ran answer from what they returned, so nothing runs twice.
+The calling agent is the hole's filler, so the model inside the program is whatever agent
+called it.
+
+What would make this a standard and not one program:
+
+- **A versioned ABI.** The `Agent` call table, the JSON of `Value`, and the session log, written
+  down as a specification with a version, so another runtime can implement it and another agent
+  can target it without teagent's source.
+- **Images.** An OS value with its drivers and skills, addressed by the hash of its content. A
+  session is an image, a program and a log; `--replay` checks it on any machine.
+- **Layers.** The overlay as a stack: a checkpoint is a layer, `fork` copies the stack, and
+  `merge` returns conflicts as data.
+
 ## The far end: a real unikernel
 
 The handlers are OCaml and the OS is a list of modules, which is the shape MirageOS builds
@@ -145,6 +167,21 @@ direction, not a plan.
 | 5 | Drivers as handler transformers; boot order taken from the OS | reordering `journal` and `budget` changes only what the log and the budget count |
 | 6 | `spawn` with narrowing, per-child overlay and log; explicit `merge` | a child cannot read a path the parent hid, shown by a test |
 | 7 | Call classes as constructors; plan and replay keyed on them | an `Irreversible` driver call is held for approval in every mode |
+| 8 | ABI document with a version; image hash over OS, drivers and skills | a log made by one build replays under another build of the same ABI version |
+
+Steps 1 to 4 and 6 are done; step 5, the order of handler wrappers taken from the OS, is not. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
+`Os.table` turns it into `Lang.Calls.t`, which can only lose calls, and every program, the
+model's prompt and the MCP `run` tool see the `Agent` module cut to that table. Drivers go
+through one kernel, `Agent.call`; the first is `Fetch`, whose handler checks the host against
+the hosts granted with `--net`, as the proxy for commands does, and fetches with curl directly.
+A program cannot name `Elm.Kernel` itself, so the call table and the types hold. Mounts are
+`Tools.mount` (`Hidden`, `Readonly`, `Scratch`) over paths of the project; the overlay keeps
+scratch writes apart from the changes to apply, and the escape demo runs with its profile
+written as mounts. Processes are frames of the overlay: `spawn` pushes a copy of the
+running frame with more mounts, `leave` pops it and hands its changes to the program as
+`List Change`, and `merge` takes them only where the file is still what the child started
+from. Settling and the diff look at the root frame only, so a child that is never merged leaves
+nothing behind.
 
 ## Open questions
 

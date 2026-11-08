@@ -29,11 +29,33 @@ let () =
         | os when (Os.view os).reads = Within [ "/opt/a/b" ] -> None
         | _ -> Some "a second reads widened the first");
         (match
-           Os.granted "/w" ~net:[] |> Os.hiding (paths [ "secrets" ])
-           |> narrowed {|{ "hidden": ["keys"] }|}
+           Os.granted "/w" ~net:[]
+           |> Os.mounting (List.map (fun path -> (path, Tools.Hidden)) (paths [ "secrets" ]))
+           |> narrowed {|{ "hidden": ["keys"], "mounts": { "vendor": "readonly", "tmp": "scratch" } }|}
          with
-        | Ok os when List.length (Os.view os).hidden = 2 -> None
-        | _ -> Some "hidden paths did not add up");
+        | Ok os
+          when List.map snd (Os.view os).mounts = [ Tools.Hidden; Tools.Hidden; Tools.Readonly; Tools.Scratch ] ->
+            None
+        | _ -> Some "mounts did not add up");
+        (match narrowed {|{ "mounts": { "tmp": "writable" } }|} (Os.granted "/w" ~net:[]) with
+        | Error "mounts: tmp is not hidden, readonly or scratch" -> None
+        | _ -> Some "an unknown mount kind was not refused");
+        (match narrowed {|{ "tools": ["read", "run"] }|} (Os.granted "/w" ~net:[]) with
+        | Ok os
+          when List.filter
+                 (fun name ->
+                   let source = Lang.Calls.source (Os.table os) and piece = "\n" ^ name ^ " :" in
+                   List.exists
+                     (fun at -> String.equal (String.sub source at (String.length piece)) piece)
+                     (List.init (String.length source - String.length piece + 1) Fun.id))
+                 [ "read"; "write"; "edit"; "grep"; "shell"; "hole" ]
+               = [ "read"; "hole" ]
+               && not
+                    (List.exists
+                       (String.starts_with ~prefix:"module Fetch")
+                       (String.split_on_char '\n' (Lang.Calls.source (Os.table os)))) ->
+            None
+        | _ -> Some "the Agent module kept a call the profile dropped");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

@@ -17,6 +17,7 @@ type event =
   | Ran of string  (** What the program returned, as the model sees it. *)
   | Guessed of string  (** A reply without a program before any program ran; sent back once. *)
   | Answered of string  (** The model's final reply, without a program. *)
+  | Filled of { hole : string; reply : string }  (** A reply with the code for a reached hole. *)
 
 (** Why a session ended without an answer. *)
 type stop =
@@ -34,13 +35,13 @@ type world = {
   approve : string -> decision Lwt.t;
   handler : Handler.Overlay.t Handler.t;
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
+  calls : Lang.Calls.t;  (** What the programs of this session may call. *)
 }
 
-val system : string
 val explained : stop -> string
 val solve : world -> on:(event -> unit Lwt.t) -> string -> report Lwt.t
 val resumed : event list -> world -> world
-val replayed : event list -> world
+val replayed : Lang.Calls.t -> event list -> world
 val undone : event list -> Tools.change list
 val event_to_json : event -> Yojson.Safe.t
 val event_of_json : Yojson.Safe.t -> (event, string) result

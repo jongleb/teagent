@@ -1,0 +1,14 @@
+(rule
+ (target fetch_elm.ml)
+ (deps Fetch.elm)
+ (action
+  (with-stdout-to
+   fetch_elm.ml
+   (progn
+    (echo "let source = {elm|")
+    (cat Fetch.elm)
+    (echo "|elm}\n")))))
+
+(library
+ (name device)
+ (libraries lwt tools value))

@@ -29,7 +29,7 @@ let () =
   in
   let started source =
     Result.bind
-      (Result.map_error (fun report -> `Lang report) (Lang.compile source))
+      (Result.map_error (fun report -> `Lang report) (Lang.compile Lang.Calls.all source))
       (fun modules ->
         let program = Interp.load ~budget:1_000_000 modules in
         Result.map (fun task -> (program, task)) (Interp.main program))
@@ -45,6 +45,7 @@ let () =
     | Handler.Finished (Ok value) -> check value
     | Handler.Finished (Error error) -> explained name error
     | Handler.Stopped _ -> Some (name ^ ": stopped early")
+    | Handler.Reached _ -> Some (name ^ ": reached a hole")
   in
   let failures =
     List.filter_map Fun.id
@@ -205,7 +206,14 @@ let () =
          in
          let limited =
            Tools.limited
-             { hidden = paths [ "Secrets" ]; readonly = paths [ "vendor" ]; reads = Within []; net = [] }
+             {
+               mounts =
+                 List.map (fun path -> (path, Tools.Hidden)) (paths [ "Secrets" ])
+                 @ List.map (fun path -> (path, Tools.Readonly)) (paths [ "vendor" ])
+                 @ List.map (fun path -> (path, Tools.Scratch)) (paths [ "tmp" ]);
+               reads = Within [];
+               net = [];
+             }
              (Tools.at workspace)
          in
          match
@@ -217,8 +225,9 @@ let () =
                  main =\n\
                 \    batch\n\
                 \        [ read \"secrets/prod.env\" |> onError (\\_ -> succeed \"denied\")\n\
-                \        , write \"vendor/lib.ml\" \"x\" |> map (\\_ -> \"staged\")\n\
-                \        , shell \"cat secrets/prod.env; cat %s/secrets/prod.env; cat %s/secret; wc -l lib/c.ml\" |> map .out\n\
+                \        , write \"vendor/lib.ml\" \"x\" |> map (\\_ -> \"staged\") |> onError (\\_ -> succeed \"refused\")\n\
+                \        , write \"tmp/notes.txt\" \"NOTE_VALUE\" |> andThen (\\_ -> read \"tmp/notes.txt\")\n\
+                \        , shell \"cat secrets/prod.env; cat %s/secrets/prod.env; cat %s/secret; wc -l lib/c.ml; cat tmp/notes.txt; echo more > tmp/built.txt\" |> map .out\n\
                 \        ]\n"
                 (Unix.realpath workspace) (Unix.realpath outside))
          with
@@ -230,7 +239,11 @@ let () =
                     (Handler.staged limited Handler.Contained)
                     program Handler.Overlay.empty task)
              with
-             | Finished (Ok (V_list [ V_string "denied"; V_string "staged"; V_string out ])), overlay
+             | ( Finished
+                   (Ok
+                     (V_list
+                       [ V_string "denied"; V_string "refused"; V_string "NOTE_VALUE"; V_string out ])),
+                 overlay )
                -> (
                  let leaked secret =
                    List.exists
@@ -240,11 +253,15 @@ let () =
                  match
                    ( leaked "PROD_VALUE",
                      leaked "OUT_VALUE",
-                     leaked "1 lib/c.ml",
-                     Lwt_main.run (Tools.commit limited (Handler.Overlay.changes overlay)) )
+                     leaked "1 lib/c.ml" && leaked "NOTE_VALUE",
+                     Handler.Overlay.changes overlay,
+                     match Tools.Path.of_string "tmp/notes.txt" with
+                     | Ok path -> Lwt_main.run (Tools.write limited path "x")
+                     | Error _ as failure -> failure )
                  with
-                 | false, false, true, Error (`Tools (Tools.Denied _))
-                   when String.equal (contents workspace "vendor/lib.ml") "let v = 1\n" ->
+                 | false, false, true, [], Error (`Tools (Tools.Denied _))
+                   when String.equal (contents workspace "vendor/lib.ml") "let v = 1\n"
+                        && not (Sys.file_exists (Filename.concat workspace "tmp")) ->
                      None
                  | _ -> Some ("limits: the shell or a commit went past the profile\n" ^ out))
              | _ -> Some "limits: another result"));
@@ -277,7 +294,7 @@ let () =
          Lwt.async (fun () -> Lwt.catch served (fun _ -> Lwt.return_unit));
          let limited =
            Tools.limited
-             { hidden = []; readonly = []; reads = Anywhere; net = [ "127.0.0.1" ] }
+             { mounts = []; reads = Anywhere; net = [ "127.0.0.1" ] }
              (Tools.at workspace)
          in
          match
@@ -351,7 +368,8 @@ let () =
                  | _, diff, _ ->
                      Some ("staged 01_rename: the disk, the diff or the commit is wrong\n" ^ diff))
              | Stopped _, _ -> Some "staged 01_rename: stopped at another tool"
-             | Finished _, _ -> Some "staged 01_rename: ran the shell over staged edits"));
+             | Finished _, _ -> Some "staged 01_rename: ran the shell over staged edits"
+             | Reached _, _ -> Some "staged 01_rename: reached a hole"));
         (let workspace = fresh () in
          match
            started
@@ -406,7 +424,7 @@ let () =
                    when String.ends_with ~suffix:"lib/b.ml" reason ->
                      None
                  | _ -> Some "conflict: a stale commit was not refused whole")
-             | Finished _, _ -> Some "conflict: the program did not stop"));
+             | Finished _, _ | Reached _, _ -> Some "conflict: the program did not stop"));
         (let workspace = fresh () in
          match
            started

@@ -347,9 +347,24 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
       | Tl, V_list (_ :: rest) -> V_list rest
       | (Payload _ | Index _ | Field _ | Hd | Tl), _ ->
           stuck "an access that does not fit its value")
-  | B_call { callee; arguments } | B_partial { callee; arguments; _ } ->
-      called program (top program ~home callee)
-        (List.map (atom program ~home scope) arguments)
+  | B_call { callee; arguments } | B_partial { callee; arguments; _ } -> (
+      match (global ~home callee, List.map (atom program ~home scope) arguments) with
+      | { module_name = "Agent"; name = "hole" }, [ V_string description ] ->
+          V_task
+            (Hole
+               {
+                 description;
+                 locals =
+                   Value.Scope.filter
+                     (fun name _ ->
+                       String.length name > 0
+                       && (match name.[0] with 'a' .. 'z' -> true | _ -> false)
+                       && String.for_all
+                            (function 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true | _ -> false)
+                            name)
+                     scope;
+               })
+      | _, values -> called program (top program ~home callee) values)
   | B_call_closure { callee; arguments } ->
       called program
         (atom program ~home scope callee)
@@ -597,6 +612,41 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
             Tool
               (Grep { pattern = field "pattern" fields; glob = field "glob" fields })
         | Some Agent_shell, [ V_string command ] -> Tool (Shell command)
+        | Some Agent_hole, [ V_string description ] -> Hole { description; locals = Value.Scope.empty }
+        | Some Agent_call, [ V_string name; argument ] -> Tool (Call { name; argument })
+        | Some Agent_enter, [ V_list mounts ] ->
+            Tool
+              (Enter
+                 (List.map
+                    (function
+                      | Value.V_constr
+                          { constructor = { module_name = "Agent"; name }; arguments = [ V_string path ] }
+                        -> (
+                          match
+                            ( Tools.Path.of_string path,
+                              List.assoc_opt name
+                                [ ("Hidden", Tools.Hidden); ("Readonly", Tools.Readonly); ("Scratch", Tools.Scratch) ] )
+                          with
+                          | Ok path, Some mount -> (path, mount)
+                          | Error _, _ -> crashed ("spawn: " ^ path ^ " is not a path in the project")
+                          | Ok _, None -> stuck ("spawn: an unknown mount " ^ name))
+                      | _ -> stuck "spawn: a mount that is not a Mount")
+                    mounts))
+        | Some Agent_leave, [ _ ] -> Tool Leave
+        | Some Agent_merge, [ V_list changes ] ->
+            let text = function
+              | Value.V_constr { constructor = { name = "Just"; _ }; arguments = [ V_string text ] } -> Some text
+              | Value.V_constr { constructor = { name = "Nothing"; _ }; arguments = [] } -> None
+              | _ -> stuck "merge: a change whose text is not a Maybe String"
+            in
+            Tool
+              (Merge
+                 (List.map
+                    (function
+                      | Value.V_record [ ("base", base); ("content", content); ("path", V_string file) ] ->
+                          { Value.file; base = text base; content = text content }
+                      | _ -> stuck "merge: a change that is not a Change")
+                    changes))
         | Some Task_succeed, [ value ] -> Succeed value
         | Some Task_fail, [ value ] -> Fail value
         | Some Task_and_then, [ V_closure callback; V_task task ] ->

@@ -18,16 +18,23 @@ type reads =
   | Anywhere  (** Every file the user can, except the project itself and well-known secrets. *)
   | Within of string list  (** Only under these absolute paths. *)
 
+(** What a path of the workspace is to the agent; a path no mount covers is staged and applied. *)
+type mount =
+  | Hidden  (** Neither readable nor writable, and absent from the shell's copy. *)
+  | Readonly  (** Readable, never written. *)
+  | Scratch  (** Read and written during the session; never applied to the project. *)
+
 (** What the user keeps from the agent; it only ever narrows what the agent can do. *)
 type limits = {
-  hidden : Path.t list;  (** Neither readable nor writable, and absent from the shell's copy. *)
-  readonly : Path.t list;  (** Readable, never written. *)
+  mounts : (Path.t * mount) list;  (** Where several cover a path, the strictest holds. *)
   reads : reads;
   net : string list;  (** Hosts a contained command may reach through the proxy, such as [*.npmjs.org]. *)
 }
 
 val at : string -> t
 val limited : limits -> t -> t
+val mounting : (Path.t * mount) list -> t -> t
+val mounted : t -> Path.t -> mount option
 
 (** One line that matched a search. *)
 type found = { path : string; line : int; text : string }
@@ -58,3 +65,9 @@ val shell : t -> string -> ran Lwt.t
 val contained : t -> change list -> string -> (ran * change list) Lwt.t
 
 val commit : t -> change list -> (unit, [> `Tools of error ]) result Lwt.t
+
+(** What a server answered: the HTTP status and the body. *)
+type fetched = { status : int; body : string }
+
+val fetch :
+  t -> string -> (fetched, [> `Not_granted of string | `Unreachable of string ]) result Lwt.t

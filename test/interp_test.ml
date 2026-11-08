@@ -1,7 +1,7 @@
 let () =
   let loaded source =
     Result.map (Interp.load ~budget:100_000)
-      (Result.map_error (fun report -> `Lang report) (Lang.compile source))
+      (Result.map_error (fun report -> `Lang report) (Lang.compile Lang.Calls.all source))
   in
   let program file =
     loaded

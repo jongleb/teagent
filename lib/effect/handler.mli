@@ -4,7 +4,8 @@ module Overlay : sig
 
   val empty : t
   val changes : t -> Tools.change list
-  val added : t -> Tools.change list -> t
+  val since : t -> t -> Tools.change list
+  val after : t -> Value.tool -> Tools.change list -> t
   val diff : t -> string
 end
 
@@ -21,6 +22,7 @@ type 'state t = { perform : Value.tool -> 'state -> 'state step Lwt.t }
 type outcome =
   | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error ]) result
   | Stopped of Value.task  (** The rest of the task, starting at the blocked tool. *)
+  | Reached of Value.hole  (** A hole the agent has to fill before the program can go on. *)
 
 (** How a staged handler runs shell commands. *)
 type shell =

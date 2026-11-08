@@ -36,6 +36,10 @@ and task =
   | Map_err of { callback : closure; task : task }
   | On_error of { callback : closure; task : task }
   | Batch of task list
+  | Hole of hole
+
+(** A place the program left for the agent to fill once it is reached. *)
+and hole = { description : string; locals : t Scope.t  (** Values in scope where it was reached. *) }
 
 (** One effect the agent asks the harness to perform. *)
 and tool =
@@ -44,6 +48,13 @@ and tool =
   | Edit of { path : string; old : string; new_ : string }
   | Grep of { pattern : string; glob : string }
   | Shell of string
+  | Call of { name : string; argument : t }  (** A call a driver answers, such as [fetch.get]. *)
+  | Enter of (Tools.Path.t * Tools.mount) list  (** A child process begins, narrower by these. *)
+  | Leave  (** The child process ends; its changes come back as a value. *)
+  | Merge of patch list  (** A child's changes, taken only if nothing moved under them. *)
+
+(** A file a child changed: what it held when the child began, and what the child left. *)
+and patch = { file : string; base : string option; content : string option }
 
 let rec to_elm (value : t) =
   let nested (value : t) =
@@ -159,6 +170,39 @@ let tool_to_json (tool : tool) : Yojson.Safe.t =
   | Grep { pattern; glob } ->
       `Assoc [ ("grep", `Assoc [ ("pattern", `String pattern); ("glob", `String glob) ]) ]
   | Shell command -> `Assoc [ ("shell", `String command) ]
+  | Call { name; argument } ->
+      `Assoc [ ("call", `Assoc [ ("name", `String name); ("argument", to_json argument) ]) ]
+  | Enter mounts ->
+      `Assoc
+        [
+          ( "enter",
+            `List
+              (List.map
+                 (fun ((path : Tools.Path.t), (mount : Tools.mount)) ->
+                   `Assoc
+                     [
+                       ("path", `String (path :> string));
+                       ( "mount",
+                         `String
+                           (match mount with
+                           | Hidden -> "hidden"
+                           | Readonly -> "readonly"
+                           | Scratch -> "scratch") );
+                     ])
+                 mounts) );
+        ]
+  | Leave -> `Assoc [ ("leave", `Null) ]
+  | Merge patches ->
+      let text = Option.fold ~none:`Null ~some:(fun text -> `String text) in
+      `Assoc
+        [
+          ( "merge",
+            `List
+              (List.map
+                 (fun { file; base; content } ->
+                   `Assoc [ ("file", `String file); ("base", text base); ("content", text content) ])
+                 patches) );
+        ]
 
 let tool_of_json (json : Yojson.Safe.t) : (tool, string) result =
   match json with
@@ -172,4 +216,36 @@ let tool_of_json (json : Yojson.Safe.t) : (tool, string) result =
   | `Assoc [ ("grep", `Assoc [ ("pattern", `String pattern); ("glob", `String glob) ]) ] ->
       Ok (Grep { pattern; glob })
   | `Assoc [ ("shell", `String command) ] -> Ok (Shell command)
+  | `Assoc [ ("call", `Assoc [ ("name", `String name); ("argument", argument) ]) ] ->
+      Result.map (fun argument -> Call { name; argument }) (of_json argument)
+  | `Assoc [ ("enter", `List mounts) ] ->
+      List.fold_right
+        (fun mount collected ->
+          Result.bind collected (fun rest ->
+              match mount with
+              | `Assoc [ ("path", `String path); ("mount", `String kind) ] -> (
+                  match
+                    ( Tools.Path.of_string path,
+                      List.assoc_opt kind
+                        [ ("hidden", Tools.Hidden); ("readonly", Tools.Readonly); ("scratch", Tools.Scratch) ] )
+                  with
+                  | Ok path, Some mount -> Ok ((path, mount) :: rest)
+                  | _ -> Error ("not a recorded mount: " ^ Yojson.Safe.to_string mount))
+              | _ -> Error ("not a recorded mount: " ^ Yojson.Safe.to_string mount)))
+        mounts (Ok [])
+      |> Result.map (fun mounts -> Enter mounts)
+  | `Assoc [ ("leave", `Null) ] -> Ok Leave
+  | `Assoc [ ("merge", `List patches) ] ->
+      List.fold_right
+        (fun patch collected ->
+          Result.bind collected (fun rest ->
+              let text = function `Null -> Some None | `String text -> Some (Some text) | _ -> None in
+              match patch with
+              | `Assoc [ ("file", `String file); ("base", base); ("content", content) ] -> (
+                  match (text base, text content) with
+                  | Some base, Some content -> Ok ({ file; base; content } :: rest)
+                  | _ -> Error ("not a recorded patch: " ^ Yojson.Safe.to_string patch))
+              | _ -> Error ("not a recorded patch: " ^ Yojson.Safe.to_string patch)))
+        patches (Ok [])
+      |> Result.map (fun patches -> Merge patches)
   | other -> Error ("not a recorded tool: " ^ Yojson.Safe.to_string other)

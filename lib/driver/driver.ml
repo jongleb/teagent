@@ -17,6 +17,7 @@ type event =
   | Ran of string
   | Guessed of string
   | Answered of string
+  | Filled of { hole : string; reply : string }
 
 type stop = Llm_failed of Llm.error | Never_compiled of string | Discarded | Too_many_programs
 type report = { ending : (string, stop) result; rounds : int list }
@@ -26,47 +27,61 @@ type world = {
   approve : string -> decision Lwt.t;
   handler : Handler.Overlay.t Handler.t;
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
+  calls : Lang.Calls.t;
 }
 
-let system =
-  String.concat "\n\n"
-    ([
-       "You are teagent, a coding agent. You act only by writing a program in Dartea, a \
-        dialect of Elm. The harness typechecks it, runs it in the user's workspace, and \
-        shows you the value of `main`.";
-       "Rules:\n\
-        - Reply with exactly one ```elm code block holding one module: `module Main \
-        exposing (main)`, `import Agent exposing (..)`, and `main : Task e a`.\n\
-        - Every effect goes through the Agent module below; nothing else can touch files \
-        or run commands. Paths are relative to the workspace.\n\
-        - Handle every error and cover every case of a `case`; the compiler rejects \
-        missing branches.\n\
-        - The core modules Basics, List, Maybe, Result, String, Char, Tuple, Dict and Set \
-        are available. `List.unique` removes duplicates.\n\
-        - `grep` takes an Emacs-style regular expression, not PCRE: alternation is `\\|` \
-        (written \"a\\\\|b\" in an Elm string) and there is no `\\d`. `glob` matches \
-        paths like `lib/**/*.ml`.\n\
-        - `shell` runs `/bin/sh -c` in a sandboxed copy of the workspace that already holds \
-        your edits, without network, and returns stdout and stderr together; the files it \
-        writes are staged with your edits.\n\
-        - `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), \
-        not a `Result`. `port`, `type`, `as` and `where` are reserved words.\n\
-        - Write the Agent functions without a prefix (`succeed`, not `Task.succeed`); \
-        `fromResult` turns a `Result` into a task. Only the core List functions exist, \
-        there is no `List.Extra`.\n\
-        - If `main` has its own error type, convert each `IoErr` with `mapErr`; otherwise \
-        use `IoErr` itself.\n\
-        - Look before you answer: write a program that reads or searches first.\n\
-        - When the compiler reports an error, change the program and send all of it again.\n\
-        - When the task is done, reply in plain text without a code block, and state the \
-        facts you found: names, paths, numbers.";
-       "The Agent module:\n\n```elm\n" ^ Agent.source ^ "```";
-       "The examples below show the style only. Each solves a different task from yours; \
-        write a new program for your task instead of copying one.";
-     ]
-    @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
-
-let solve { ask; approve; handler; commit } ~on task =
+let solve { ask; approve; handler; commit; calls } ~on task =
+  let system =
+    String.concat "\n\n"
+      ([
+         "You are teagent, a coding agent. You act only by writing a program in Dartea, a \
+          dialect of Elm. The harness typechecks it, runs it in the user's workspace, and \
+          shows you the value of `main`.";
+         "Rules:\n\
+          - Reply with exactly one ```elm code block holding one module: `module Main \
+          exposing (main)`, `import Agent exposing (..)`, and `main : Task e a`.\n\
+          - Every effect goes through the Agent module below; nothing else can touch files \
+          or run commands. Paths are relative to the workspace.\n\
+          - Handle every error and cover every case of a `case`; the compiler rejects \
+          missing branches.\n\
+          - The core modules Basics, List, Maybe, Result, String, Char, Tuple, Dict and Set \
+          are available. `List.unique` removes duplicates.\n\
+          - `grep` takes an Emacs-style regular expression, not PCRE: alternation is `\\|` \
+          (written \"a\\\\|b\" in an Elm string) and there is no `\\d`. `glob` matches \
+          paths like `lib/**/*.ml`.\n\
+          - `shell` runs `/bin/sh -c` in a sandboxed copy of the workspace that already holds \
+          your edits, without network, and returns stdout and stderr together; the files it \
+          writes are staged with your edits.\n\
+          - `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), \
+          not a `Result`. `port`, `type`, `as` and `where` are reserved words.\n\
+          - Write the Agent functions without a prefix (`succeed`, not `Task.succeed`); \
+          `fromResult` turns a `Result` into a task. Only the core List functions exist, \
+          there is no `List.Extra`.\n\
+          - If `main` has its own error type, convert each `IoErr` with `mapErr`; otherwise \
+          use `IoErr` itself.\n\
+          - Look before you answer: write a program that reads or searches first.\n\
+          - When the compiler reports an error, change the program and send all of it again.\n\
+          - When part of the program depends on what earlier steps return and you cannot \
+          write it before you see that, put `hole \"what goes here\"` in its place, with a \
+          plain string: it is a task of whatever type fits there. When main reaches it, you \
+          see the values in scope and write the code for that place; that code may hold holes \
+          too.\n\
+          - `spawn mounts task` runs `task` as a child process: it sees your changes so far, \
+          cannot see what `mounts` hide, and keeps its own changes apart. They reach yours \
+          only through `merge`, which fails with the changes that clash if a file moved \
+          meanwhile. Use it to try something you may throw away.\n\
+          - When the task is done, reply in plain text without a code block, and state the \
+          facts you found: names, paths, numbers.";
+         "The modules this run offers: Agent, and drivers such as Fetch, which a program \
+          imports by name (`import Fetch`). `Fetch.get` reaches only the hosts the user granted; \
+          the others fail with `NotGranted`.\n\n\
+          ```elm\n"
+         ^ Lang.Calls.source calls ^ "```";
+         "The examples below show the style only. Each solves a different task from yours; \
+          write a new program for your task instead of copying one.";
+       ]
+      @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
+  in
   let watched =
     {
       Handler.perform =
@@ -74,27 +89,7 @@ let solve { ask; approve; handler; commit } ~on task =
           let* step = handler.perform tool overlay in
           match step with
           | Handler.Performed (result, after) ->
-              let* () =
-                on
-                  (Performed
-                     {
-                       tool;
-                       result;
-                       staged =
-                         List.filter
-                           (fun change -> not (List.mem change (Handler.Overlay.changes overlay)))
-                           (Handler.Overlay.changes after)
-                         @ List.filter_map
-                             (fun (earlier : Tools.change) ->
-                               Option.fold
-                                 ~none:(Some { earlier with before = None; after = None })
-                                 ~some:(fun _ -> None)
-                                 (List.find_opt
-                                    (fun (later : Tools.change) -> later.path = earlier.path)
-                                    (Handler.Overlay.changes after)))
-                             (Handler.Overlay.changes overlay);
-                     })
-              in
+              let* () = on (Performed { tool; result; staged = Handler.Overlay.since overlay after }) in
               Lwt.return step
           | Handler.Blocked ->
               let* () = on (Deferred tool) in
@@ -148,29 +143,74 @@ let solve { ask; approve; handler; commit } ~on task =
             in
             Lwt.return applied)
   in
-  let executed modules =
-    let failed : Interp.error -> string = function
-      | Crashed reason -> "main crashed: " ^ reason
-      | Budget_exhausted -> "main ran out of steps; it probably loops forever."
-      | Stuck reason -> "The harness failed to run main (a bug in teagent): " ^ reason
+  let executed history run =
+    let refused history = function
+      | `Discarded -> Error Discarded
+      | `Conflicted reason -> Ok (history, "The changes could not be applied: " ^ reason)
     in
-    let program = Interp.load ~budget:10_000_000 modules in
-    let rec stepped task =
-      let* outcome, overlay = Handler.interpret watched program Handler.Overlay.empty task in
-      let* settlement = settled overlay in
-      match (settlement, outcome) with
-      | Error `Discarded, _ -> Lwt.return (Error Discarded)
-      | Error (`Conflicted reason), _ ->
-          Lwt.return (Ok ("The changes could not be applied: " ^ reason))
-      | Ok (), Stopped rest -> stepped rest
-      | Ok (), Finished (Ok value) -> Lwt.return (Ok ("main finished with:\n" ^ shown value))
-      | Ok (), Finished (Error (`Failed value)) ->
-          Lwt.return (Ok ("main failed with:\n" ^ shown value))
-      | Ok (), Finished (Error (`Interp error)) -> Lwt.return (Ok (failed error))
+    let rec ran history run =
+      let* went = Run.run run watched ~settle:settled in
+      match went with
+      | Error problem -> Lwt.return (refused history problem)
+      | Ok (outcome, overlay) -> (
+          let finished history text =
+            Lwt.map
+              (Result.fold ~ok:(fun () -> Ok (history, text)) ~error:(refused history))
+              (settled overlay)
+          in
+          match outcome with
+          | Finished (Ok value) -> finished history ("main finished with:\n" ^ shown value)
+          | Finished (Error (`Failed value)) -> finished history ("main failed with:\n" ^ shown value)
+          | Finished (Error (`Interp error)) -> finished history (Run.stopped error)
+          | Unfillable reason -> finished history reason
+          | Reached hole ->
+              let rec asked history round =
+                let* reply = ask ~system history in
+                match reply with
+                | Error (`Llm problem) -> Lwt.return (Error (Llm_failed problem))
+                | Ok text -> (
+                    let* () = on (Filled { hole = Run.description hole; reply = text }) in
+                    let history = history @ [ { Llm.role = Assistant; text } ] in
+                    let again problem =
+                      match round >= 4 with
+                      | true ->
+                          finished history
+                            ("main stopped at the hole "
+                            ^ Value.to_elm (V_string (Run.description hole))
+                            ^ ": none of 4 replies for it compiled.")
+                      | false ->
+                          asked
+                            (history
+                            @ [
+                                {
+                                  Llm.role = User;
+                                  text = problem ^ "\n\nSend the expression for the hole again.";
+                                };
+                              ])
+                            (round + 1)
+                    in
+                    match program_in text with
+                    | None -> again "Reply with one ```elm block holding only the expression."
+                    | Some code -> (
+                        match Run.filled hole code with
+                        | Ok run -> ran history run
+                        | Error report ->
+                            let* () = on (Refused report) in
+                            again ("That code does not compile in place of the hole:\n\n" ^ report)))
+              in
+              asked
+                (history
+                @ [
+                    {
+                      Llm.role = User;
+                      text =
+                        Run.question hole
+                        ^ "\n\nReply with one ```elm block holding only that expression.";
+                    };
+                  ])
+                1)
     in
-    match Interp.main program with
-    | Ok task -> stepped task
-    | Error (`Interp error) -> Lwt.return (Ok (failed error))
+    ran history run
   in
   let rec conversation history rounds runs nudged =
     match List.length rounds >= 8 with
@@ -203,7 +243,7 @@ let solve { ask; approve; handler; commit } ~on task =
         | Some source, _, _ -> (
             let* () = on (Wrote text) in
             let history = history @ [ { Llm.role = Assistant; text } ] in
-            match Lang.compile source with
+            match Run.compiled calls source with
             | Error report when round >= 4 ->
                 let* () = on (Refused report) in
                 Lwt.return { ending = Error (Never_compiled report); rounds = List.rev rounds }
@@ -225,11 +265,11 @@ let solve { ask; approve; handler; commit } ~on task =
                       };
                     ])
                   rounds runs nudged (round + 1) (Some source)
-            | Ok modules -> (
-                let* result = executed modules in
+            | Ok run -> (
+                let* result = executed history run in
                 match result with
                 | Error stop -> Lwt.return { ending = Error stop; rounds = List.rev (round :: rounds) }
-                | Ok result ->
+                | Ok (history, result) ->
                     let* () = on (Ran result) in
                     conversation
                       (history
@@ -272,7 +312,9 @@ let resumed events live =
     | [] -> None
   in
   let replies =
-    queued (function Wrote text | Guessed text | Answered text -> Some text | _ -> None)
+    queued (function
+      | Wrote text | Guessed text | Answered text | Filled { reply = text; _ } -> Some text
+      | _ -> None)
   in
   let steps =
     queued (function
@@ -299,7 +341,7 @@ let resumed events live =
           (fun tool overlay ->
             match next steps with
             | Some (recorded, `Performed (result, staged)) when recorded = tool ->
-                Lwt.return (Handler.Performed (result, Handler.Overlay.added overlay staged))
+                Lwt.return (Handler.Performed (result, Handler.Overlay.after overlay tool staged))
             | Some (recorded, `Deferred) when recorded = tool -> Lwt.return Handler.Blocked
             | Some _ ->
                 replies := [];
@@ -309,6 +351,7 @@ let resumed events live =
                 live.handler.perform tool overlay
             | None -> live.handler.perform tool overlay);
       };
+    calls = live.calls;
     commit =
       (fun changes ->
         match next commits with
@@ -317,9 +360,10 @@ let resumed events live =
         | None -> live.commit changes);
   }
 
-let replayed events =
+let replayed calls events =
   resumed events
     {
+      calls;
       ask = (fun ~system:_ _ -> Lwt.return (Error (`Llm (Llm.Transport "the log has no more replies"))));
       approve = (fun _ -> Lwt.return Discard);
       handler =
@@ -337,11 +381,11 @@ let undone events =
     List.fold_left
       (fun (committed, overlay) event ->
         match event with
-        | Performed { staged; _ } -> (committed, Handler.Overlay.added overlay staged)
+        | Performed { tool; staged; _ } -> (committed, Handler.Overlay.after overlay tool staged)
         | Committed (Ok ()) -> (committed @ Handler.Overlay.changes overlay, Handler.Overlay.empty)
         | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
         | Wrote _ | Refused _ | Deferred _ | Staged _ | Decided Apply | Ran _ | Guessed _
-        | Answered _ ->
+        | Answered _ | Filled _ ->
             (committed, overlay))
       ([], Handler.Overlay.empty) events
   in
@@ -370,6 +414,8 @@ let event_to_json event : Yojson.Safe.t =
   | Ran result -> text "ran" result
   | Guessed reply -> text "guessed" reply
   | Answered reply -> text "answered" reply
+  | Filled { hole; reply } ->
+      `Assoc [ ("filled", `Assoc [ ("hole", `String hole); ("reply", `String reply) ]) ]
   | Decided Apply -> text "decided" "apply"
   | Decided Discard -> text "decided" "discard"
   | Committed (Ok ()) -> `Assoc [ ("committed", `Null) ]
@@ -410,6 +456,8 @@ let event_of_json (json : Yojson.Safe.t) =
   | `Assoc [ ("ran", `String result) ] -> Ok (Ran result)
   | `Assoc [ ("guessed", `String reply) ] -> Ok (Guessed reply)
   | `Assoc [ ("answered", `String reply) ] -> Ok (Answered reply)
+  | `Assoc [ ("filled", `Assoc [ ("hole", `String hole); ("reply", `String reply) ]) ] ->
+      Ok (Filled { hole; reply })
   | `Assoc [ ("decided", `String "apply") ] -> Ok (Decided Apply)
   | `Assoc [ ("decided", `String "discard") ] -> Ok (Decided Discard)
   | `Assoc [ ("committed", `Null) ] -> Ok (Committed (Ok ()))

@@ -18,4 +18,4 @@
 
 (library
  (name driver)
- (libraries agent lang interp handler llm tools value lwt yojson))
+ (libraries agent lang interp handler llm run tools value lwt yojson))

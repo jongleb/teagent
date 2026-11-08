@@ -104,7 +104,7 @@ let () =
               match attempt with
               | `Reference -> (
                   match
-                    Lang.compile (read (Filename.concat !root ("programs/" ^ name ^ ".elm")))
+                    Lang.compile Lang.Calls.all (read (Filename.concat !root ("programs/" ^ name ^ ".elm")))
                   with
                   | Error report -> (Error ("the reference does not compile:\n" ^ report), [])
                   | Ok modules -> (
@@ -122,7 +122,8 @@ let () =
                               (Error ("the reference failed with " ^ Value.to_elm value), [ 1 ])
                           | Finished (Error (`Interp _)), () ->
                               (Error "the reference crashed", [ 1 ])
-                          | Stopped _, () -> (Error "the reference stopped", [ 1 ]))))
+                          | Stopped _, () -> (Error "the reference stopped", [ 1 ])
+                          | Reached _, () -> (Error "the reference reached a hole", [ 1 ]))))
               | `Model provider ->
                   let report =
                     Lwt_main.run
@@ -132,11 +133,13 @@ let () =
                            approve = (fun _ -> Lwt.return Driver.Apply);
                            handler = Handler.staged (Tools.at workspace) !shell;
                            commit = Tools.commit (Tools.at workspace);
+                           calls = Lang.Calls.all;
                          }
                          ~on:(fun event ->
                            match (!loud, event) with
                            | `Quiet, _ -> Lwt.return_unit
-                           | `Loud, (Wrote text | Refused text | Staged text | Ran text | Guessed text | Answered text)
+                           | `Loud, (Wrote text | Refused text | Staged text | Ran text | Guessed text | Answered text
+                                     | Filled { reply = text; _ })
                              ->
                                Lwt.return (Printf.printf "%s\n%s\n\n%!" name text)
                            | `Loud, (Performed _ | Deferred _ | Decided _ | Committed _) ->

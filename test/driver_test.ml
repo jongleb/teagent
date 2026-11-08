@@ -58,6 +58,7 @@ let () =
           approve = (fun _ -> Lwt.return decision);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
+          calls = Lang.Calls.all;
         }
     in
     (workspace, report, events, List.rev !asked)
@@ -98,13 +99,196 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
+          calls = Lang.Calls.all;
         }
     in
     (report, events, List.rev !asked)
   in
+  let nested =
+    let workspace = fresh () in
+    let holed =
+      "module Main exposing (main)\n\n\
+       import Agent exposing (..)\n\n\n\
+       main : Task IoErr String\n\
+       main =\n\
+      \    edit { path = \"lib/a.ml\", old = \"Foo.bar\", new = \"Foo.baz\" }\n\
+      \        |> andThen (\\_ -> read \"lib/a.ml\")\n\
+      \        |> andThen (\\text -> hole \"turn the text into the answer\")\n"
+    in
+    let replies =
+      ref
+        [
+          fenced holed;
+          fenced "hole \"count it\"\n    |> map (\\count -> String.toUpper text ++ count)\n";
+          fenced "succeed (String.fromInt (String.length text))\n";
+          "Done.";
+        ]
+    in
+    let asked = ref [] in
+    let report, events =
+      collected
+        {
+          ask =
+            (fun ~system:_ history ->
+              asked := history :: !asked;
+              match !replies with
+              | reply :: rest ->
+                  replies := rest;
+                  Lwt.return (Ok reply)
+              | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+          approve = (fun _ -> Lwt.return Driver.Apply);
+          handler = Handler.staged (Tools.at workspace) Handler.Open;
+          commit = Tools.commit (Tools.at workspace);
+          calls = Lang.Calls.all;
+        }
+    in
+    (workspace, report, events, List.rev !asked)
+  in
+  let port =
+    let socket = Lwt_unix.socket PF_INET SOCK_STREAM 0 in
+    Lwt_main.run (Lwt_unix.bind socket (ADDR_INET (Unix.inet_addr_loopback, 0)));
+    Lwt_unix.listen socket 8;
+    let rec accepted () =
+      Lwt.bind (Lwt_unix.accept socket) (fun (client, _) ->
+          let input = Lwt_io.of_fd ~mode:Input client
+          and output = Lwt_io.of_fd ~mode:Output client in
+          let rec headers () =
+            Lwt.bind (Lwt_io.read_line input) (fun line ->
+                match String.trim line with "" -> Lwt.return_unit | _ -> headers ())
+          in
+          Lwt.async (fun () ->
+              Lwt.bind (headers ()) (fun () ->
+                  Lwt.bind
+                    (Lwt_io.write output
+                       "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+                    (fun () -> Lwt.bind (Lwt_io.flush output) (fun () -> Lwt_unix.close client))));
+          accepted ())
+    in
+    Lwt.async accepted;
+    match Lwt_unix.getsockname socket with ADDR_INET (_, port) -> port | ADDR_UNIX _ -> 0
+  in
+  let fetching ~net =
+    let workspace = fresh () in
+    let replies =
+      ref
+        [
+          fenced
+            (Printf.sprintf
+               "module Main exposing (main)\n\n\
+                import Agent exposing (..)\n\
+                import Fetch\n\n\n\
+                main : Task Fetch.FetchErr ( Int, String )\n\
+                main =\n\
+               \    Fetch.get \"http://127.0.0.1:%d/x\"\n\
+               \        |> map (\\response -> ( response.status, response.body ))\n"
+               port);
+          "Fetched.";
+        ]
+    in
+    collected
+      {
+        ask =
+          (fun ~system:_ _ ->
+            match !replies with
+            | reply :: rest ->
+                replies := rest;
+                Lwt.return (Ok reply)
+            | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+        approve = (fun _ -> Lwt.return Driver.Apply);
+        handler = Handler.staged (Os.workspace (Os.granted workspace ~net)) Handler.Open;
+        commit = Tools.commit (Tools.at workspace);
+        calls = Lang.Calls.all;
+      }
+  in
+  let spawned =
+    let workspace = fresh () in
+    Sys.mkdir (Filename.concat workspace "secrets") 0o755;
+    Out_channel.with_open_text (Filename.concat workspace "secrets/key") (fun channel ->
+        Out_channel.output_string channel "KEY_VALUE\n");
+    let program =
+      "module Main exposing (main)\n\n\
+       import Agent exposing (..)\n\n\n\
+       type Err\n\
+      \    = Io IoErr\n\
+      \    | Clash (List Change)\n\n\n\
+       main : Task Err (List String)\n\
+       main =\n\
+      \    spawn [ Hidden \"secrets\" ]\n\
+      \        (read \"secrets/key\"\n\
+      \            |> onError (\\_ -> succeed \"denied\")\n\
+      \            |> andThen (\\seen -> shell \"cat secrets/key; echo\" |> map (\\ran -> [ seen, ran.out ]))\n\
+      \            |> andThen (\\seen -> edit { path = \"lib/a.ml\", old = \"Foo.bar\", new = \"Foo.child\" } |> map (\\_ -> seen))\n\
+      \        )\n\
+      \        |> mapErr Io\n\
+      \        |> andThen\n\
+      \            (\\child ->\n\
+      \                read \"lib/a.ml\"\n\
+      \                    |> mapErr Io\n\
+      \                    |> andThen (\\before -> merge child |> mapErr Clash |> map (\\seen -> seen ++ [ before ]))\n\
+      \            )\n\
+      \        |> andThen (\\seen -> read \"secrets/key\" |> mapErr Io |> map (\\key -> seen ++ [ key ]))\n\
+      \        |> andThen (\\seen -> read \"lib/a.ml\" |> mapErr Io |> map (\\after -> seen ++ [ after ]))\n\
+      \        |> andThen\n\
+      \            (\\seen ->\n\
+      \                spawn [] (write \"lib/b.ml\" \"child\")\n\
+      \                    |> mapErr Io\n\
+      \                    |> andThen (\\child -> write \"lib/b.ml\" \"parent\" |> mapErr Io |> map (\\_ -> child))\n\
+      \                    |> andThen\n\
+      \                        (\\child ->\n\
+      \                            merge child\n\
+      \                                |> map (\\_ -> \"merged\")\n\
+      \                                |> onError (\\clash -> succeed (\"clash \" ++ String.join \",\" (List.map .path clash)))\n\
+      \                        )\n\
+      \                    |> map (\\outcome -> seen ++ [ outcome ])\n\
+      \            )\n"
+    in
+    let replies = ref [ fenced program; "Done." ] in
+    let report, events =
+      collected
+        {
+          ask =
+            (fun ~system:_ _ ->
+              match !replies with
+              | reply :: rest ->
+                  replies := rest;
+                  Lwt.return (Ok reply)
+              | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+          approve = (fun _ -> Lwt.return Driver.Apply);
+          handler = Handler.staged (Tools.at workspace) Handler.Contained;
+          commit = Tools.commit (Tools.at workspace);
+          calls = Lang.Calls.all;
+        }
+    in
+    (workspace, report, events)
+  in
   let failures =
     List.filter_map Fun.id
       [
+        (match (fetching ~net:[ "127.0.0.1" ], fetching ~net:[]) with
+        | ( ( report,
+              ([ Wrote _; Performed { tool = Call { name = "fetch.get"; _ }; _ }; Ran fetched; Answered _ ]
+               as recorded) ),
+            (_, [ _; _; Ran refused; _ ]) ) -> (
+            match
+              ( fetched,
+                String.starts_with ~prefix:"main failed with:\nNotGranted" refused,
+                collected (Driver.replayed Lang.Calls.all recorded),
+                List.map
+                  (fun event ->
+                    Driver.event_of_json
+                      (Yojson.Safe.from_string (Yojson.Safe.to_string (Driver.event_to_json event))))
+                  recorded )
+            with
+            | "main finished with:\n( 200, \"hello\" )", true, (again, replayed), decoded
+              when again = report && replayed = recorded && decoded = List.map Result.ok recorded ->
+                None
+            | _ -> Some ("fetch: the result, the refusal, the replay or the log is wrong\n" ^ fetched ^ "\n" ^ refused))
+        | (_, events), _ ->
+            Some
+              ("fetch: the session went another way\n"
+              ^ String.concat "\n"
+                  (List.map (fun event -> Yojson.Safe.to_string (Driver.event_to_json event)) events)));
+
         (match applied with
         | ( workspace,
             { ending = Ok "Renamed Foo.bar to Foo.baz."; rounds = [ 2 ] },
@@ -175,6 +359,75 @@ let () =
              | true, false, true, true -> None
              | _ -> Some "stubborn: the model was not told what it repeats or guesses")
          | _ -> Some "stubborn: the session went another way");
+        (let contains text piece =
+           let rec at index =
+             index + String.length piece <= String.length text
+             && (String.equal (String.sub text index (String.length piece)) piece
+                || at (index + 1))
+           in
+           at 0
+         in
+         let last (history : Llm.message list) =
+           Option.fold ~none:"" ~some:(fun (message : Llm.message) -> message.text)
+             (List.nth_opt (List.rev history) 0)
+         in
+         match nested with
+         | ( workspace,
+             { ending = Ok "Done."; rounds = [ 1 ] },
+             ([
+                Wrote _;
+                Performed { tool = Edit _; _ };
+                Performed { tool = Read "lib/a.ml"; _ };
+                Filled { hole = "turn the text into the answer"; _ };
+                Filled { hole = "count it"; _ };
+                Staged _;
+                Decided Apply;
+                Committed (Ok ());
+                Ran "main finished with:\n\"LET X = FOO.BAZ 1\\n18\"";
+                Answered _;
+              ] as recorded),
+             [ _; outer; inner; _ ] ) -> (
+             match
+               ( contains (last outer) "text = \"let x = Foo.baz 1\\n\"",
+                 contains (last inner) "The program now reads"
+                 && not (contains (last inner) "#"),
+                 contents workspace "lib/a.ml",
+                 collected (Driver.replayed Lang.Calls.all recorded) )
+             with
+             | true, true, "let x = Foo.baz 1\n", (_, replayed) when replayed = recorded -> None
+             | _ -> Some ("holes: the hole messages, file or replay are wrong\n" ^ last outer))
+         | _, _, events, _ ->
+             Some
+               ("holes: the session went another way\n"
+               ^ String.concat "\n"
+                   (List.map
+                      (fun event -> Yojson.Safe.to_string (Driver.event_to_json event))
+                      events)));
+        (let workspace, report, events = spawned in
+         let ran =
+           List.find_map (function Driver.Ran text -> Some text | _ -> None) events
+           |> Option.value ~default:"no result"
+         in
+         match
+           ( String.starts_with ~prefix:"main finished with:\n[ \"denied\", \"cat: secrets/key: " ran
+             && String.ends_with
+                  ~suffix:
+                    "\"let x = Foo.bar 1\\n\", \"KEY_VALUE\\n\", \"let x = Foo.child 1\\n\", \"clash lib/b.ml\" ]"
+                  ran,
+             contents workspace "lib/a.ml",
+             contents workspace "lib/b.ml",
+             collected (Driver.replayed Lang.Calls.all events),
+             Driver.undone events )
+         with
+         | true, "let x = Foo.child 1\n", "parent", (again, replayed), [ _; _ ]
+           when again = report && replayed = events ->
+             None
+         | _ ->
+             Some
+               ("spawn: the child saw the hidden path, its changes leaked, the merge or the replay is wrong\n"
+               ^ ran ^ "\n"
+               ^ String.concat "\n"
+                   (List.map (fun event -> Yojson.Safe.to_string (Driver.event_to_json event)) events)));
         (match session ~decision:Driver.Discard with
         | workspace, { ending = Error Discarded; rounds = [ 2 ] }, _, _ -> (
             match contents workspace "lib/a.ml" with
@@ -182,7 +435,7 @@ let () =
             | _ -> Some "discard: the file changed")
         | _ -> Some "discard: the session went another way");
         (let _, report, recorded, _ = applied in
-         match collected (Driver.replayed recorded) with
+         match collected (Driver.replayed Lang.Calls.all recorded) with
          | again, replayed when replayed = recorded && again = report -> None
          | _ -> Some "replay: the replayed session differs from the log");
         (let _, report, recorded, _ = applied in
@@ -208,6 +461,7 @@ let () =
                     approve = (fun _ -> Lwt.return Driver.Apply);
                     handler = Handler.staged (Tools.at workspace) Handler.Open;
                     commit = Tools.commit (Tools.at workspace);
+                    calls = Lang.Calls.all;
                   })
            in
            match (again = report, events = recorded, !live_asks, contents workspace "lib/a.ml") with

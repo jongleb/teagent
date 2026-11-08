@@ -49,7 +49,7 @@ let () =
         "HOST  Let contained commands reach HOST, or every name under it as *.HOST; repeat it" );
       ( "--mcp",
         Arg.Unit (fun () -> mode := `Mcp),
-        "  Serve bash, read, write, edit and grep to another agent over MCP (stdio)" );
+        "  Serve bash, read, write, edit, grep, run and fill to another agent over MCP (stdio)" );
     ]
     (fun word -> words := word :: !words)
     "teagent [options] TASK...";
@@ -91,6 +91,7 @@ let () =
     | Ran result -> section "result" result
     | Guessed reply -> section "guess, sent back" reply
     | Answered reply -> section "answer" reply
+    | Filled { hole; reply } -> section ("hole " ^ Value.to_elm (V_string hole)) reply
   in
   let loaded file =
     match In_channel.with_open_text file In_channel.input_lines with
@@ -141,12 +142,13 @@ let () =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
     | Error reason -> failed reason
     | Ok provider ->
-        let workspace = Os.workspace (profiled ()) in
+        let os = profiled () in
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
-          handler = Handler.staged workspace !shell;
-          commit = Tools.commit workspace;
+          handler = Handler.staged (Os.workspace os) !shell;
+          commit = Tools.commit (Os.workspace os);
+          calls = Os.table os;
         }
   in
   let logged log ~skipped world task =
@@ -257,7 +259,7 @@ let () =
       let replayed = ref [] in
       let _report =
         Lwt_main.run
-          (Driver.solve (Driver.replayed recorded)
+          (Driver.solve (Driver.replayed (Os.table (profiled ())) recorded)
              ~on:(fun event ->
                replayed := event :: !replayed;
                printed event)
@@ -294,12 +296,13 @@ let () =
         | exception Sys_error reason -> failed reason
         | source -> source
       in
-      match Lang.compile source with
+      let os = profiled () in
+      match Lang.compile (Os.table os) source with
       | Error report ->
           print_endline report;
           exit 1
       | Ok _ ->
-          let workspace = Os.workspace (profiled ()) in
+          let workspace = Os.workspace os in
           let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
           finished
@@ -315,6 +318,7 @@ let () =
                  approve = approved;
                  handler = Handler.staged workspace !shell;
                  commit = Tools.commit workspace;
+                 calls = Os.table os;
                }
                task))
   | `Fresh -> (

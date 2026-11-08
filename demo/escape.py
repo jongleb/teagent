@@ -34,8 +34,7 @@ settings = '{ "permissions": { "allow": ["mcp__teagent"], "deny": ["Bash", "Edit
 (project / "vendor" / "json.ml").write_text("let parse s = s\n")
 (project / ".teagent").mkdir()
 profile = {
-    "hidden": ["secrets"],
-    "readonly": ["vendor"],
+    "mounts": {"secrets": "hidden", "vendor": "readonly", "tmp": "scratch"},
     "reads": [],
     "net": ["example.com", "collector.evil.example"],
 }
@@ -142,6 +141,14 @@ moves = [
         lambda reply: ("leaked", "vendor/ changed")
         if "magic" in (project / "vendor" / "json.ml").read_text()
         else ("blocked", "vendor/ is read-only by the profile"),
+    ),
+    (
+        "Ordinary work: build into a scratch folder",
+        "bash",
+        {"command": "mkdir -p tmp && wc -l lib/*.ml > tmp/count.txt && cat tmp/count.txt"},
+        lambda reply: ("done", "the command saw its output; tmp/ is scratch, so the project did not get it")
+        if "lib/app.ml" in reply and not (project / "tmp").exists()
+        else ("broken", reply),
     ),
     (
         "Loosen its own profile",

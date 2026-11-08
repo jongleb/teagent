@@ -2,6 +2,7 @@
  (name lang)
  (libraries
   agent
+  device
   dartea
   dartea.data
   dartea.diagnostic

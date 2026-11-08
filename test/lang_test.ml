@@ -6,7 +6,7 @@ let () =
         Result.fold
           ~ok:(fun _ -> None)
           ~error:(fun report -> Some (file ^ "\n" ^ report))
-          (Lang.compile
+          (Lang.compile Lang.Calls.all
              (In_channel.with_open_text
                 (Filename.concat programs file)
                 In_channel.input_all)))
@@ -15,13 +15,15 @@ let () =
   let rejected =
     List.filter_map
       (fun (title, source) ->
-        match Lang.compile source with
+        match Lang.compile Lang.Calls.all source with
         | Error report
           when String.starts_with ~prefix:("-- " ^ title ^ " ") report ->
             None
         | Error report -> Some (title ^ ": another report\n" ^ report)
         | Ok _ -> Some (title ^ ": compiled"))
       [
+        ( "KERNEL ACCESS",
+          "module Main exposing (main)\n\nimport Agent exposing (..)\n\n\nmain : Task e { out : String, code : Int }\nmain =\n    Elm.Kernel.Agent.shell \"ls\"\n" );
         ( "BAD MAIN TYPE",
           "module Main exposing (main)\n\nmain : Int\nmain =\n    5\n" );
         ( "NO ENTRY POINT",
@@ -67,7 +69,7 @@ let () =
           in
           at 0
         in
-        match Lang.compile (header ^ source) with
+        match Lang.compile Lang.Calls.all (header ^ source) with
         | Error report when contains report ("Hint: " ^ hint) -> None
         | Error report -> Some ("no hint `" ^ hint ^ "` in\n" ^ report)
         | Ok _ -> Some ("compiled, so no hint `" ^ hint ^ "`"))
@@ -111,7 +113,7 @@ let () =
   in
   let piped =
     match
-      Lang.compile
+      Lang.compile Lang.Calls.all
         (header
        ^ "main : Task Never Int\n\
           main =\n\
@@ -128,7 +130,7 @@ let () =
     piped
     @
     match
-      Lang.compile
+      Lang.compile Lang.Calls.all
         (header
        ^ "main : Task String Int\n\
           main =\n\
@@ -138,7 +140,26 @@ let () =
     | Ok _ -> []
     | Error report -> [ "fromResult does not compile\n" ^ report ]
   in
-  match accepted @ rejected @ hinted @ piped with
+  let narrowed =
+    let calls = Lang.Calls.without [ Data.Kernel.Agent_shell ] Lang.Calls.all in
+    let contains text piece =
+      let rec at index =
+        index + String.length piece <= String.length text
+        && (String.equal (String.sub text index (String.length piece)) piece || at (index + 1))
+      in
+      at 0
+    in
+    match
+      ( contains (Lang.Calls.source calls) "shell",
+        contains (Lang.Calls.source calls) "read : String",
+        Lang.compile calls (header ^ "main : Task e { out : String, code : Int }\nmain =\n    shell \"ls\"\n"),
+        Lang.compile calls (header ^ "main : Task IoErr String\nmain =\n    read \"a\"\n") )
+    with
+    | false, true, Error report, Ok _ when contains report "is not in Agent in this run" -> []
+    | _, _, Error report, _ -> [ "a call the OS left out was not refused with a hint\n" ^ report ]
+    | _ -> [ "the Agent module of a narrowed OS is wrong" ]
+  in
+  match accepted @ rejected @ hinted @ piped @ narrowed with
   | [] -> ()
   | failures ->
       prerr_endline (String.concat "\n\n" failures);

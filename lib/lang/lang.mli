@@ -5,4 +5,14 @@ type t = private {
   constructors : (Data.Name.t * int) list;  (** Constructors with arities. *)
 }
 
-val compile : string -> (t list, string) result
+(** The Agent module programs compile against: the calls one OS offers. *)
+module Calls : sig
+  type t
+
+  val all : t
+  val without : Data.Kernel.agent list -> t -> t
+  val unplugged : Device.t list -> t -> t
+  val source : t -> string
+end
+
+val compile : Calls.t -> string -> (t list, string) result

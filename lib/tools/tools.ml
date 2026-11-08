@@ -27,11 +27,34 @@ module Path = struct
 end
 
 type reads = Anywhere | Within of string list
-type limits = { hidden : Path.t list; readonly : Path.t list; reads : reads; net : string list }
+type mount = Hidden | Readonly | Scratch
+type limits = { mounts : (Path.t * mount) list; reads : reads; net : string list }
 type t = { root : string; limits : limits }
 
-let at root = { root; limits = { hidden = []; readonly = []; reads = Anywhere; net = [] } }
+let at root = { root; limits = { mounts = []; reads = Anywhere; net = [] } }
+
+let mounted workspace (inside : Path.t) =
+  List.fold_left
+    (fun strictest ((entry : Path.t), mount) ->
+      let entry = String.lowercase_ascii (entry :> string)
+      and path = String.lowercase_ascii (inside :> string) in
+      match (String.equal path entry || String.starts_with ~prefix:(entry ^ "/") path, strictest, mount) with
+      | false, _, _ -> strictest
+      | true, (Some Hidden as kept), _ | true, (Some Readonly as kept), (Readonly | Scratch) -> kept
+      | true, (None | Some Scratch), _ | true, Some Readonly, Hidden -> Some mount)
+    None workspace.limits.mounts
+
+let granted workspace host =
+  List.find_opt
+    (fun entry ->
+      String.equal entry host
+      || String.starts_with ~prefix:"*." entry
+         && String.ends_with ~suffix:(String.sub entry 1 (String.length entry - 1)) host)
+    workspace.limits.net
 let limited limits workspace = { workspace with limits }
+
+let mounting mounts workspace =
+  { workspace with limits = { workspace.limits with mounts = workspace.limits.mounts @ mounts } }
 
 let located workspace access (path : Path.t) =
   let denied = Error (`Tools (Denied (path :> string))) in
@@ -54,21 +77,9 @@ let located workspace access (path : Path.t) =
           | true ->
               Result.fold
                 ~ok:(fun (inside : Path.t) ->
-                  let covering entries =
-                    List.find_opt
-                      (fun (entry : Path.t) ->
-                        let entry = String.lowercase_ascii (entry :> string)
-                        and inside = String.lowercase_ascii (inside :> string) in
-                        String.equal inside entry || String.starts_with ~prefix:(entry ^ "/") inside)
-                      entries
-                  in
-                  match
-                    ( access,
-                      covering workspace.limits.hidden,
-                      covering workspace.limits.readonly )
-                  with
-                  | _, Some _, _ | `Writing, None, Some _ -> denied
-                  | `Reading, None, _ | `Writing, None, None ->
+                  match (access, mounted workspace inside) with
+                  | _, Some Hidden | `Writing, Some (Readonly | Scratch) -> denied
+                  | `Reading, (None | Some (Readonly | Scratch)) | `Writing, None ->
                       Ok (Filename.concat root (inside :> string)))
                 ~error:(fun _ -> denied)
                 (Path.of_string
@@ -486,12 +497,14 @@ let contained workspace staged command =
                   in
                   let* () =
                     Lwt_list.iter_s
-                      (fun (hidden : Path.t) ->
+                      (fun ((hidden : Path.t), _) ->
                         let* found = matching clone (String.split_on_char '/' (hidden :> string)) in
                         Lwt_list.iter_s
                           (fun path -> Lwt.catch (fun () -> removed path) (fun _ -> Lwt.return_unit))
                           found)
-                      workspace.limits.hidden
+                      (List.filter
+                         (function _, Hidden -> true | _, (Readonly | Scratch) -> false)
+                         workspace.limits.mounts)
                   in
                   let* () =
                     Lwt_list.iter_s (fun change -> Lwt.map ignore (placed shadow change)) staged
@@ -570,16 +583,7 @@ let contained workspace staged command =
                               match destination with
                               | None -> answered "400 Bad Request"
                               | Some (host, port, way) -> (
-                                  match
-                                    List.find_opt
-                                      (fun entry ->
-                                        String.equal entry host
-                                        || String.starts_with ~prefix:"*." entry
-                                           && String.ends_with
-                                                ~suffix:(String.sub entry 1 (String.length entry - 1))
-                                                host)
-                                      workspace.limits.net
-                                  with
+                                  match granted workspace host with
                                   | None ->
                                       connections := (host, port, `Blocked) :: !connections;
                                       answered "403 Forbidden"
@@ -767,3 +771,62 @@ let commit workspace changes =
             | Error _ as failure -> Lwt.return failure)
       in
       applied changes
+
+type fetched = { status : int; body : string }
+
+let fetch workspace url =
+  let authority =
+    List.find_map
+      (fun scheme ->
+        Option.map
+          (fun rest ->
+            List.fold_left
+              (fun authority stop ->
+                Option.fold ~none:authority
+                  ~some:(fun at -> String.sub authority 0 at)
+                  (String.index_opt authority stop))
+              rest [ '/'; '?'; '#' ])
+          (match String.starts_with ~prefix:scheme (String.lowercase_ascii url) with
+          | true -> Some (String.sub url (String.length scheme) (String.length url - String.length scheme))
+          | false -> None))
+      [ "http://"; "https://" ]
+  in
+  match authority with
+  | None -> Lwt.return (Error (`Unreachable ("not an http or https URL: " ^ url)))
+  | Some authority when String.contains authority '@' ->
+      Lwt.return (Error (`Unreachable ("a URL with a user in it: " ^ url)))
+  | Some authority -> (
+      let host =
+        String.lowercase_ascii
+          (Option.fold ~none:authority
+             ~some:(fun at -> String.sub authority 0 at)
+             (String.index_opt authority ':'))
+      in
+      match granted workspace host with
+      | None -> Lwt.return (Error (`Not_granted host))
+      | Some _ ->
+          Lwt_preemptive.detach
+            (fun () ->
+              let handle = Curl.init () in
+              let received = Buffer.create 4096 and limit = 10_000_000 in
+              Fun.protect
+                ~finally:(fun () -> Curl.cleanup handle)
+                (fun () ->
+                  match
+                    Curl.set_url handle url;
+                    Curl.set_proxy handle "";
+                    Curl.set_followlocation handle false;
+                    Curl.set_protocols handle [ Curl.CURLPROTO_HTTP; Curl.CURLPROTO_HTTPS ];
+                    Curl.set_connecttimeout handle 30;
+                    Curl.set_timeout handle 120;
+                    Curl.set_writefunction handle (fun chunk ->
+                        match Buffer.length received + String.length chunk > limit with
+                        | true -> 0
+                        | false ->
+                            Buffer.add_string received chunk;
+                            String.length chunk);
+                    Curl.perform handle
+                  with
+                  | () -> Ok { status = Curl.get_responsecode handle; body = Buffer.contents received }
+                  | exception Curl.CurlException (_, _, reason) -> Error (`Unreachable reason)))
+            ())

@@ -1,5 +1,12 @@
 (** A call an OS can offer an agent. *)
-type call = Bash | Read | Write | Edit | Grep
+type call =
+  | Bash
+  | Read
+  | Write
+  | Edit
+  | Grep
+  | Run  (** A Dartea program; it sees only the other calls this OS offers. *)
+  | Fetch  (** The [Fetch] module of programs, over the hosts granted with [--net]. *)
 
 val calls : (string * call) list
 
@@ -9,8 +16,7 @@ type t
 
 val granted : string -> net:string list -> t
 val only : call list -> t -> t
-val hiding : Tools.Path.t list -> t -> t
-val freezing : Tools.Path.t list -> t -> t
+val mounting : (Tools.Path.t * Tools.mount) list -> t -> t
 val reading : string list -> t -> t
 val reaching : string list -> t -> t
 val narrowed : Yojson.Safe.t -> t -> (t, string) result
@@ -18,11 +24,11 @@ val narrowed : Yojson.Safe.t -> t -> (t, string) result
 (** What an OS allows, to read; building one this way gives no OS. *)
 type view = {
   offers : call list;
-  hidden : Tools.Path.t list;
-  readonly : Tools.Path.t list;
+  mounts : (Tools.Path.t * Tools.mount) list;
   reads : Tools.reads;
   net : string list;
 }
 
 val view : t -> view
 val workspace : t -> Tools.t
+val table : t -> Lang.Calls.t

@@ -1,11 +1,19 @@
-type call = Bash | Read | Write | Edit | Grep
+type call = Bash | Read | Write | Edit | Grep | Run | Fetch
 
-let calls = [ ("bash", Bash); ("read", Read); ("write", Write); ("edit", Edit); ("grep", Grep) ]
+let calls =
+  [
+    ("bash", Bash);
+    ("read", Read);
+    ("write", Write);
+    ("edit", Edit);
+    ("grep", Grep);
+    ("run", Run);
+    ("fetch", Fetch);
+  ]
 
 type view = {
   offers : call list;
-  hidden : Tools.Path.t list;
-  readonly : Tools.Path.t list;
+  mounts : (Tools.Path.t * Tools.mount) list;
   reads : Tools.reads;
   net : string list;
 }
@@ -15,7 +23,7 @@ type t = { root : string; allows : view }
 let granted root ~net =
   {
     root;
-    allows = { offers = List.map snd calls; hidden = []; readonly = []; reads = Anywhere; net };
+    allows = { offers = List.map snd calls; mounts = []; reads = Anywhere; net };
   }
 
 let narrowing change os = { os with allows = change os.allows }
@@ -25,9 +33,7 @@ let only kept os =
       { allows with offers = List.filter (fun call -> List.mem call kept) allows.offers })
     os
 
-let hiding paths os = narrowing (fun allows -> { allows with hidden = allows.hidden @ paths }) os
-let freezing paths os =
-  narrowing (fun allows -> { allows with readonly = allows.readonly @ paths }) os
+let mounting mounts os = narrowing (fun allows -> { allows with mounts = allows.mounts @ mounts }) os
 
 let reading paths os =
   narrowing (fun allows ->
@@ -112,14 +118,15 @@ let narrowed json os =
   | `Assoc fields -> (
       match
         List.find_opt
-          (fun (key, _) -> not (List.mem key [ "tools"; "hidden"; "readonly"; "reads"; "net" ]))
+          (fun (key, _) ->
+            not (List.mem key [ "tools"; "mounts"; "hidden"; "readonly"; "reads"; "net" ]))
           fields
       with
       | Some (key, _) -> Error ("there is no setting called " ^ key)
       | None ->
           let inside text = Result.to_option (Tools.Path.of_string text) in
           Result.bind
-            (listed "tools" fields ~expected:"bash, read, write, edit or grep" (fun name ->
+            (listed "tools" fields ~expected:"bash, read, write, edit, grep, run or fetch" (fun name ->
                  List.assoc_opt name calls))
             (fun tools ->
               Result.bind (listed "hidden" fields ~expected:"a path in the project" inside)
@@ -127,15 +134,41 @@ let narrowed json os =
                   Result.bind (listed "readonly" fields ~expected:"a path in the project" inside)
                     (fun readonly ->
                       Result.bind
+                        (match List.assoc_opt "mounts" fields with
+                        | None -> Ok []
+                        | Some (`Assoc entries) ->
+                            List.fold_right
+                              (fun (path, kind) collected ->
+                                Result.bind collected (fun rest ->
+                                    match
+                                      ( inside path,
+                                        match kind with
+                                        | `String "hidden" -> Some Tools.Hidden
+                                        | `String "readonly" -> Some Tools.Readonly
+                                        | `String "scratch" -> Some Tools.Scratch
+                                        | _ -> None )
+                                    with
+                                    | Some path, Some mount -> Ok ((path, mount) :: rest)
+                                    | None, _ -> Error ("mounts: " ^ path ^ " is not a path in the project")
+                                    | Some _, None ->
+                                        Error ("mounts: " ^ path ^ " is not hidden, readonly or scratch")))
+                              entries (Ok [])
+                        | Some _ -> Error "mounts is not an object of paths")
+                        (fun mounts ->
+                      Result.bind
                         (listed "reads" fields ~expected:"an absolute path or one under ~/"
                            absolute) (fun reads ->
                           Result.map
                             (fun net ->
-                              os |> applied only tools |> applied hiding hidden
-                              |> applied freezing readonly |> applied reading reads
+                              os |> applied only tools
+                              |> mounting
+                                   (List.map (fun path -> (path, Tools.Hidden)) (Option.value ~default:[] hidden)
+                                   @ List.map (fun path -> (path, Tools.Readonly)) (Option.value ~default:[] readonly)
+                                   @ mounts)
+                              |> applied reading reads
                               |> applied reaching net)
                             (listed "net" fields
-                               ~expected:"a host such as registry.npmjs.org or *.crates.io" host))))))
+                               ~expected:"a host such as registry.npmjs.org or *.crates.io" host)))))))
   | _ -> Error "it is not a JSON object"
 
 let view os = os.allows
@@ -143,9 +176,28 @@ let view os = os.allows
 let workspace os =
   Tools.limited
     {
-      hidden = os.allows.hidden;
-      readonly = os.allows.readonly;
+      mounts = os.allows.mounts;
       reads = os.allows.reads;
       net = os.allows.net;
     }
     (Tools.at os.root)
+
+let table os =
+  let missing =
+    List.filter (fun (_, call) -> not (List.mem call os.allows.offers)) calls |> List.map snd
+  in
+  Lang.Calls.all
+  |> Lang.Calls.without
+       (List.filter_map
+          (function
+            | Bash -> Some Data.Kernel.Agent_shell
+            | Read -> Some Data.Kernel.Agent_read
+            | Write -> Some Data.Kernel.Agent_write
+            | Edit -> Some Data.Kernel.Agent_edit
+            | Grep -> Some Data.Kernel.Agent_grep
+            | Run | Fetch -> None)
+          missing)
+  |> Lang.Calls.unplugged
+       (List.filter_map
+          (function Fetch -> Some Device.Fetch | Bash | Read | Write | Edit | Grep | Run -> None)
+          missing)

@@ -42,7 +42,7 @@ teagent only accepts forms.
 | **model** | The AI that writes the programs. teagent talks to it over the network, or not at all in `--exec` mode. |
 | **program** | What the model writes for one step: one Dartea module called `Main` with a value `main`. |
 | **Dartea** | A small, strict language, a dialect of Elm. It has no files, no network and no `eval`. |
-| **Agent** | The only module through which a program can ask for something: read, write, edit, grep, shell. |
+| **Agent** | The only module through which a program can ask for something: read, write, edit, grep, shell, and `hole`, which asks the model to write a piece of the program once its data is known. |
 | **task** | A request that is not done yet, like "read this file, then…". `main` is one big task. |
 | **typecheck** | Checking a program before it runs. A program that does not fit together is refused. |
 | **report** | What the typecheck says when it refuses: the line, what is wrong, and often a `Hint:`. |
@@ -221,8 +221,7 @@ anything.
 ```json
 {
   "tools": ["read", "grep", "edit", "bash"],
-  "hidden": ["secrets", ".env.local"],
-  "readonly": ["vendor"],
+  "mounts": { "secrets": "hidden", ".env.local": "hidden", "vendor": "readonly", "_build": "scratch" },
   "reads": ["~/.opam"],
   "net": ["registry.npmjs.org", "*.crates.io"]
 }
@@ -230,9 +229,9 @@ anything.
 
 | Setting | What it does |
 | --- | --- |
-| `tools` | The tools served over MCP; the others do not exist for the agent. All five by default. |
-| `hidden` | Paths the agent can neither read nor write. They are also removed from the shell's copy. |
-| `readonly` | Paths the agent can read but not change, by a tool or by a command. |
+| `tools` | The tools served over MCP; the others do not exist for the agent. All by default. The `Agent` module of every program is cut to the same list: without `bash` there is no `shell`, and a program that calls it does not compile. `run` adds the `run` and `fill` tools; `fetch` gives programs the `Fetch` module. |
+| `mounts` | What a path is to the agent. `hidden`: it can neither read nor write it, and the shell's copy does not have it. `readonly`: it can read it; a write is refused, and a command's change to it stops the whole commit. `scratch`: programs and commands read and write it while a program runs, and nothing written there reaches the project or the diff you approve. Where several cover a path, the strictest holds. |
+| `hidden`, `readonly` | Lists of paths, a shorthand for the same kinds of mount. |
 | `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |
 | `net` | Which of the hosts you granted with `--net` commands may reach here. It can drop hosts, never add them. |
 

@@ -169,7 +169,7 @@ direction, not a plan.
 | 7 | Call classes as constructors; plan and replay keyed on them | an `Irreversible` driver call is held for approval in every mode |
 | 8 | ABI document with a version; image hash over OS, drivers and skills | a log made by one build replays under another build of the same ABI version |
 
-Steps 1 to 4 and 6 are done; step 5, the order of handler wrappers taken from the OS, is not. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
+Steps 1 to 4, 6 and 7 are done; step 5, the order of handler wrappers taken from the OS, is not. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
 `Os.table` turns it into `Lang.Calls.t`, which can only lose calls, and every program, the
 model's prompt and the MCP `run` tool see the `Agent` module cut to that table. Drivers go
 through one kernel, `Agent.call`; the first is `Fetch`, whose handler checks the host against
@@ -181,7 +181,10 @@ written as mounts. Processes are frames of the overlay: `spawn` pushes a copy of
 running frame with more mounts, `leave` pops it and hands its changes to the program as
 `List Change`, and `merge` takes them only where the file is still what the child started
 from. Settling and the diff look at the root frame only, so a child that is never merged leaves
-nothing behind.
+nothing behind. Every tool has a class, `Value.class_`: `Pure`, `Staged`, `Contained` or
+`Irreversible`, and a driver states the class of each of its calls. An irreversible call, the
+first is `Fetch.post`, asks the person through the handler; with no person it is declined, and
+the answer is logged, so a replay neither asks nor sends.
 
 ## Open questions
 

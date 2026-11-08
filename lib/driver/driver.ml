@@ -74,7 +74,9 @@ let solve { ask; approve; handler; commit; calls } ~on task =
           facts you found: names, paths, numbers.";
          "The modules this run offers: Agent, and drivers such as Fetch, which a program \
           imports by name (`import Fetch`). `Fetch.get` reaches only the hosts the user granted; \
-          the others fail with `NotGranted`.\n\n\
+          the others fail with `NotGranted`. `Fetch.post` sends data out, which cannot be \
+          taken back, so it goes only if the person says yes; otherwise it fails with \
+          `Declined`, and you should tell them what you wanted to send.\n\n\
           ```elm\n"
          ^ Lang.Calls.source calls ^ "```";
          "The examples below show the style only. Each solves a different task from yours; \

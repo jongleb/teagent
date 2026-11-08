@@ -86,7 +86,9 @@ let handled program json =
             written before seeing data, put `hole \"what goes here\"`: the run stops there, shows \
             the values in scope, and waits for `fill`. The core modules Basics, List, Maybe, \
             Result, String, Char, Tuple, Dict and Set are available. The modules this run \
-            offers, Agent and drivers such as Fetch that a program imports by name:\n\n"
+            offers, Agent and drivers such as Fetch that a program imports by name. A call that \
+            cannot be taken back, such as Fetch.post, needs a person's yes, so here it always \
+            fails with Declined:\n\n"
           ^ Lang.Calls.source program.calls)
           (schema [ ("program", "The whole Main module.") ] [ "program" ]);
         tool Os.Run "fill"

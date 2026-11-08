@@ -175,7 +175,15 @@ Fetch.get : String -> Task FetchErr { status : Int, body : String }
 type FetchErr = NotGranted String | Unreachable String
 ```
 
-It reaches only the hosts granted with `--net`; any other host fails with `NotGranted`. A
+`Fetch.post : String -> String -> Task FetchErr { status : Int, body : String }` sends a body.
+Both reach only the hosts granted with `--net`; any other host fails with `NotGranted`.
+
+Every call has a class, a constructor rather than a flag: `Pure` (it reads), `Staged` (it
+changes the overlay), `Contained` (a command in the sandboxed copy) or `Irreversible` (it
+reaches the world and cannot be taken back). `Fetch.post` is irreversible, so it goes out only
+when a person says yes: with `--ask` teagent shows what would be sent and asks; without a
+person, by default and over MCP, it fails with `Declined`. The answer is in the log, so a replay
+never sends it again. A
 driver is an Elm module over one generic call and the OCaml code that answers it, so its calls
 show in the log and replay like every other tool. A program cannot name `Elm.Kernel` itself:
 everything it does goes through these modules.
@@ -270,7 +278,7 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl                                 
 | `--effort LEVEL` | `low`, `medium`, `high` (default), `xhigh`, `max` |
 | `--openai URL` | an OpenAI-compatible `/chat/completions` server |
 | `--shell MODE` | `contained` (default), `open`, `off` |
-| `--ask` | ask before writing changes |
+| `--ask` | ask before writing changes, and before any call that cannot be taken back |
 | `--dry-run` | show the changes, write nothing |
 | `--undo FILE` | put back every file a session changed, unless you changed it since |
 | `--exec FILE` | run a program you wrote, with no model inside |

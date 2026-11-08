@@ -69,5 +69,13 @@ val commit : t -> change list -> (unit, [> `Tools of error ]) result Lwt.t
 (** What a server answered: the HTTP status and the body. *)
 type fetched = { status : int; body : string }
 
+(** What a fetch asks the server for. *)
+type request =
+  | Get
+  | Post of string  (** The body sent. *)
+
 val fetch :
-  t -> string -> (fetched, [> `Not_granted of string | `Unreachable of string ]) result Lwt.t
+  t ->
+  request ->
+  string ->
+  (fetched, [> `Not_granted of string | `Unreachable of string ]) result Lwt.t

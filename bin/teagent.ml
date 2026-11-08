@@ -77,7 +77,12 @@ let () =
     | Performed { tool; result; _ } ->
         let shown = Value.to_elm (Result.fold ~ok:Fun.id ~error:Fun.id result) in
         section
-          (Yojson.Safe.to_string (Value.tool_to_json tool))
+          ((match Handler.class_of tool with
+           | Pure -> "pure "
+           | Staged -> "staged "
+           | Contained -> "contained "
+           | Irreversible -> "irreversible ")
+          ^ Yojson.Safe.to_string (Value.tool_to_json tool))
           (if String.length shown <= 2_000 then shown
            else String.sub shown 0 2_000 ^ "… (cut)")
     | Deferred tool ->
@@ -138,6 +143,19 @@ let () =
         | "y" | "yes" -> Lwt.return Driver.Apply
         | _ -> Lwt.return Driver.Discard)
   in
+  let person what =
+    match !approval with
+    | `Auto | `Dry -> Lwt.return Device.Declines
+    | `Ask -> (
+        Printf.printf "\nThe program wants to %s\nThis cannot be taken back. Allow it? [y/N] " what;
+        flush stdout;
+        match
+          String.lowercase_ascii
+            (String.trim (Option.value ~default:"" (In_channel.input_line stdin)))
+        with
+        | "y" | "yes" -> Lwt.return Device.Agrees
+        | _ -> Lwt.return Device.Declines)
+  in
   let live () =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
     | Error reason -> failed reason
@@ -146,7 +164,7 @@ let () =
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
-          handler = Handler.staged (Os.workspace os) !shell;
+          handler = Handler.staged ~person (Os.workspace os) !shell;
           commit = Tools.commit (Os.workspace os);
           calls = Os.table os;
         }
@@ -316,7 +334,7 @@ let () =
                          Lwt.return (Ok reply)
                      | [] -> Lwt.return (Ok "Done."));
                  approve = approved;
-                 handler = Handler.staged workspace !shell;
+                 handler = Handler.staged ~person workspace !shell;
                  commit = Tools.commit workspace;
                  calls = Os.table os;
                }

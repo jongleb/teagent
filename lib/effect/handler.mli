@@ -31,6 +31,9 @@ type shell =
   | Disabled  (** Never; the program sees exit code 126. *)
 
 val shells : (string * shell) list
-val run : Tools.t -> unit t
-val staged : Tools.t -> shell -> Overlay.t t
+val class_of : Value.tool -> Value.class_
+
+val run : ?person:(string -> Device.consent Lwt.t) -> Tools.t -> unit t
+
+val staged : ?person:(string -> Device.consent Lwt.t) -> Tools.t -> shell -> Overlay.t t
 val interpret : 'state t -> Interp.t -> 'state -> Value.task -> (outcome * 'state) Lwt.t

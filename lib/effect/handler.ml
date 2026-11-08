@@ -191,7 +191,15 @@ let maybe text =
 let ran ({ out; code } : Tools.ran) =
   Value.V_record [ ("code", V_number (Float.of_int code)); ("out", V_string out) ]
 
-let run workspace =
+let nobody _ = Lwt.return Device.Declines
+
+let class_of : Value.tool -> Value.class_ = function
+  | Read _ | Grep _ -> Pure
+  | Write _ | Edit _ | Enter _ | Leave | Merge _ -> Staged
+  | Shell _ -> Contained
+  | Call { name; _ } -> Device.class_of name
+
+let run ?(person = nobody) workspace =
   let located path within =
     match Tools.Path.of_string path with
     | Error _ as denied -> Lwt.return (seen denied)
@@ -222,7 +230,7 @@ let run workspace =
     | Grep { pattern; glob } ->
         performed (Lwt.map (fun found -> Ok (matches found)) (Tools.grep workspace ~pattern ~glob))
     | Shell command -> performed (Lwt.map (fun done_ -> Ok (ran done_)) (Tools.shell workspace command))
-    | Call { name; argument } -> performed (Device.perform workspace ~name argument)
+    | Call { name; argument } -> performed (Device.perform workspace ~person ~name argument)
   in
   { perform }
 
@@ -230,7 +238,7 @@ type shell = Open | Contained | Disabled
 
 let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]
 
-let staged workspace shell =
+let staged ?(person = nobody) workspace shell =
   let within (overlay : Overlay.t) = Tools.mounting overlay.frame.mounts workspace in
   let current overlay (path : Tools.Path.t) =
     match Overlay.found overlay (path :> string) with
@@ -376,7 +384,9 @@ let staged workspace shell =
                         (Overlay.visible overlay)))),
             overlay )
     | Call { name; argument } ->
-        Lwt.map (fun result -> Performed (result, overlay)) (Device.perform workspace ~name argument)
+        Lwt.map
+          (fun result -> Performed (result, overlay))
+          (Device.perform (within overlay) ~person ~name argument)
     | Shell command -> (
         match (shell, Overlay.visible overlay, overlay.parents) with
         | Open, _, _ :: _ ->

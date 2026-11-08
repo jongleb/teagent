@@ -144,6 +144,7 @@ let () =
     in
     (workspace, report, events, List.rev !asked)
   in
+  let requests = ref [] in
   let port =
     let socket = Lwt_unix.socket PF_INET SOCK_STREAM 0 in
     Lwt_main.run (Lwt_unix.bind socket (ADDR_INET (Unix.inet_addr_loopback, 0)));
@@ -157,11 +158,13 @@ let () =
                 match String.trim line with "" -> Lwt.return_unit | _ -> headers ())
           in
           Lwt.async (fun () ->
-              Lwt.bind (headers ()) (fun () ->
-                  Lwt.bind
-                    (Lwt_io.write output
-                       "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
-                    (fun () -> Lwt.bind (Lwt_io.flush output) (fun () -> Lwt_unix.close client))));
+              Lwt.bind (Lwt_io.read_line input) (fun first ->
+                  requests := String.trim first :: !requests;
+                  Lwt.bind (headers ()) (fun () ->
+                      Lwt.bind
+                        (Lwt_io.write output
+                           "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+                        (fun () -> Lwt.bind (Lwt_io.flush output) (fun () -> Lwt_unix.close client)))));
           accepted ())
     in
     Lwt.async accepted;
@@ -261,9 +264,70 @@ let () =
     in
     (workspace, report, events)
   in
+  let posting person =
+    let workspace = fresh () in
+    let replies =
+      ref
+        [
+          fenced
+            (Printf.sprintf
+               "module Main exposing (main)\n\n\
+                import Agent exposing (..)\n\
+                import Fetch\n\n\n\
+                main : Task Fetch.FetchErr Int\n\
+                main =\n\
+               \    Fetch.post \"http://127.0.0.1:%d/upload\" \"the code\" |> map .status\n"
+               port);
+          "Posted.";
+        ]
+    in
+    collected
+      {
+        ask =
+          (fun ~system:_ _ ->
+            match !replies with
+            | reply :: rest ->
+                replies := rest;
+                Lwt.return (Ok reply)
+            | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+        approve = (fun _ -> Lwt.return Driver.Apply);
+        handler =
+          Handler.staged ~person
+            (Os.workspace (Os.granted workspace ~net:[ "127.0.0.1" ]))
+            Handler.Open;
+        commit = Tools.commit (Tools.at workspace);
+        calls = Lang.Calls.all;
+      }
+  in
   let failures =
     List.filter_map Fun.id
       [
+        (requests := [];
+         let declined = posting (fun _ -> Lwt.return Device.Declines) in
+         let sent_after_decline = !requests in
+         let agreed = posting (fun _ -> Lwt.return Device.Agrees) in
+         let sent_after_agree = !requests in
+         let ran (_, events) =
+           Option.value ~default:"no result"
+             (List.find_map (function Driver.Ran text -> Some text | _ -> None) events)
+         in
+         let report, events = agreed in
+         match
+           ( String.starts_with ~prefix:"main failed with:\nDeclined" (ran declined),
+             sent_after_decline,
+             ran agreed,
+             sent_after_agree,
+             collected (Driver.replayed Lang.Calls.all events),
+             !requests )
+         with
+         | true, [], "main finished with:\n200", [ "POST /upload HTTP/1.1" ], (again, replayed), [ _ ]
+           when again = report && replayed = events ->
+             None
+         | _ ->
+             Some
+               ("post: a request went out without consent, or the replay sent it again\n"
+               ^ ran declined ^ "\n" ^ ran agreed ^ "\n"
+               ^ String.concat "; " !requests));
         (match (fetching ~net:[ "127.0.0.1" ], fetching ~net:[]) with
         | ( ( report,
               ([ Wrote _; Performed { tool = Call { name = "fetch.get"; _ }; _ }; Ran fetched; Answered _ ]

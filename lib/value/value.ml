@@ -56,6 +56,13 @@ and tool =
 (** A file a child changed: what it held when the child began, and what the child left. *)
 and patch = { file : string; base : string option; content : string option }
 
+(** What it takes to undo a tool. *)
+type class_ =
+  | Pure  (** It only reads; there is nothing to undo. *)
+  | Staged  (** It changes the overlay, which is settled or dropped later. *)
+  | Contained  (** It runs a command in a sandboxed copy; what it writes is staged. *)
+  | Irreversible  (** It reaches the world outside, and nothing can take it back. *)
+
 let rec to_elm (value : t) =
   let nested (value : t) =
     match value with

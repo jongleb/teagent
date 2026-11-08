@@ -773,8 +773,9 @@ let commit workspace changes =
       applied changes
 
 type fetched = { status : int; body : string }
+type request = Get | Post of string
 
-let fetch workspace url =
+let fetch workspace request url =
   let authority =
     List.find_map
       (fun scheme ->
@@ -814,6 +815,12 @@ let fetch workspace url =
                 (fun () ->
                   match
                     Curl.set_url handle url;
+                    (match request with
+                    | Get -> ()
+                    | Post body ->
+                        Curl.set_post handle true;
+                        Curl.set_postfields handle body;
+                        Curl.set_postfieldsize handle (String.length body));
                     Curl.set_proxy handle "";
                     Curl.set_followlocation handle false;
                     Curl.set_protocols handle [ Curl.CURLPROTO_HTTP; Curl.CURLPROTO_HTTPS ];

@@ -184,14 +184,16 @@ from. Settling and the diff look at the root frame only, so a child that is neve
 nothing behind. Every tool has a class, `Value.class_`: `Pure`, `Staged`, `Contained` or
 `Irreversible`, and a driver states the class of each of its calls. An irreversible call, the
 first is `Fetch.post`, asks the person through the handler; with no person it is declined, and
-the answer is logged, so a replay neither asks nor sends.
+the answer is logged, so a replay neither asks nor sends. Skills are Elm modules in
+`.teagent/skills`. A skill needs the calls its `import Agent exposing (...)` names (all of them
+when it imports `Agent` whole) and the drivers and skills it imports. `Lang.Calls` installs only
+the skills whose needs the OS meets, and importing any other is a compile error that names the
+skill and what it lacks.
 
 ## Open questions
 
 - Where the OS value comes from when the user has none: a default OS equal to today's behaviour,
   or a refusal to start.
-- How a skill declares the calls it needs, so that importing it into an OS without them is a
-  compile error rather than a runtime failure.
 - Whether budgets belong to the OS (fixed at boot) or to `spawn` (chosen per child), or both
   with the smaller one winning.
 - How big an OS value may get before typechecking it at every boot is noticeable.

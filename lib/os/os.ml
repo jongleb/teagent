@@ -18,13 +18,16 @@ type view = {
   net : string list;
 }
 
-type t = { root : string; allows : view }
+type t = { root : string; allows : view; skills : Lang.Skill.t list }
 
 let granted root ~net =
   {
     root;
     allows = { offers = List.map snd calls; mounts = []; reads = Anywhere; net };
+    skills = [];
   }
+
+let taught skills os = { os with skills = os.skills @ skills }
 
 let narrowing change os = { os with allows = change os.allows }
 
@@ -201,3 +204,4 @@ let table os =
        (List.filter_map
           (function Fetch -> Some Device.Fetch | Bash | Read | Write | Edit | Grep | Run -> None)
           missing)
+  |> Lang.Calls.taught os.skills

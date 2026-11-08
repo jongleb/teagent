@@ -15,6 +15,7 @@ val calls : (string * call) list
 type t
 
 val granted : string -> net:string list -> t
+val taught : Lang.Skill.t list -> t -> t
 val only : call list -> t -> t
 val mounting : (Tools.Path.t * Tools.mount) list -> t -> t
 val reading : string list -> t -> t

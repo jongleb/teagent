@@ -59,7 +59,25 @@ let () =
   in
   let profiled () =
     let file = List.fold_left Filename.concat !directory [ ".teagent"; "profile.json" ] in
-    let granted = Os.granted !directory ~net:(List.rev !net) in
+    let granted =
+      let folder = List.fold_left Filename.concat !directory [ ".teagent"; "skills" ] in
+      Os.taught
+        (match Sys.readdir folder with
+        | exception Sys_error _ -> []
+        | names ->
+            List.filter_map
+              (fun name ->
+                Option.map
+                  (fun skill ->
+                    let file = Filename.concat folder name in
+                    Result.fold ~ok:Fun.id
+                      ~error:(fun reason -> failed (file ^ ": " ^ reason))
+                      (Lang.Skill.of_source ~name:skill
+                         (In_channel.with_open_text file In_channel.input_all)))
+                  (Filename.chop_suffix_opt ~suffix:".elm" name))
+              (List.sort String.compare (Array.to_list names)))
+        (Os.granted !directory ~net:(List.rev !net))
+    in
     match Sys.file_exists file with
     | false -> granted
     | true ->

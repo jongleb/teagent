@@ -6,6 +6,8 @@
   dartea
   dartea.data
   dartea.diagnostic
+  dartea.frontend
+  dartea.parse
   dartea.ir
   dartea.project
   dartea.reporting

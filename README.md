@@ -297,7 +297,8 @@ typechecked before anything runs, and its changes are applied together only if `
 When it reaches a `hole`, the run stops and returns the values in scope; the agent sends the
 code for that place with `fill`, and the run goes on without repeating the tools that already
 ran. A program sees only the calls the profile offers: without `bash`, `Agent` has no `shell`,
-and a program that calls it does not compile.
+and a program that calls it does not compile. The same holds for skills, Elm modules in `.teagent/skills`
+that programs import: one that imports `shell` is not installed without `bash`.
 
 Add it to a project and switch off Claude Code's own shell and editing, so every change goes
 through teagent:

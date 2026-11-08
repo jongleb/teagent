@@ -29,10 +29,95 @@ let found piece text =
   in
   at 0
 
-module Calls = struct
-  type t = { dropped : Data.Kernel.agent list; plugged : Device.t list }
+let parsed source =
+  Result.map_error
+    (fun error ->
+      Reporting.Report.to_string ~colours:false
+        (Reporting.Sources.report (Reporting.Sources.of_list [ ("Skill.elm", source) ]) error))
+    (Parse.Main.parse ~file:"Skill.elm" source)
 
-  let all = { dropped = []; plugged = Device.all }
+let imported impls =
+  List.filter_map
+    (function Frontend.Impl.Import (thing : Frontend.Import_thing.t) -> Some thing | _ -> None)
+    impls
+
+let named device =
+  match String.split_on_char ' ' (Device.source device) with
+  | "module" :: name :: _ -> name
+  | _ -> "Prelude"
+
+module Skill = struct
+  type agent = Whole | Naming of string list
+  type t = { name : string; source : string; agent : agent; modules : string list }
+
+  let of_source ~name:expected source =
+    match found "Elm.Kernel" source with
+    | Some _ ->
+        Error
+          "a skill cannot name `Elm.Kernel`: it reaches the world only through Agent and the \
+           driver modules it imports"
+    | None ->
+        Result.bind (parsed source) (fun impls ->
+            let imports = imported impls in
+            Result.bind
+              (Option.to_result
+                 ~none:("a skill starts with `module " ^ expected ^ " exposing (...)`")
+                 (List.find_map
+                    (function
+                      | Frontend.Impl.ModuleName name -> Some (Data.Located.unwrap name) | _ -> None)
+                    impls))
+              (fun name ->
+                match
+                  ( String.equal name expected,
+                    List.mem name ("Main" :: "Agent" :: List.map named Device.all) )
+                with
+                | true, false -> Ok name
+                | false, _ -> Error ("the module is called " ^ name ^ ", not " ^ expected)
+                | true, true -> Error (name ^ " is a module of teagent; give the skill another name"))
+            |> Result.map (fun name ->
+                   {
+                     name;
+                     source;
+                     agent =
+                       Option.fold ~none:(Naming [])
+                         ~some:(fun (import : Frontend.Import_thing.t) ->
+                           match import.exposing with
+                           | Explicit (_ :: _ as exposed) ->
+                               Naming
+                                 (List.filter_map
+                                    (function
+                                      | Frontend.Exposing.Lower name -> Some (Data.Located.unwrap name)
+                                      | Upper _ -> None)
+                                    exposed)
+                           | Explicit [] | Open -> Whole)
+                         (List.find_opt
+                            (fun (import : Frontend.Import_thing.t) ->
+                              String.equal (Data.Located.unwrap import.name) "Agent")
+                            imports);
+                     modules =
+                       List.map
+                         (fun (import : Frontend.Import_thing.t) -> Data.Located.unwrap import.name)
+                         imports;
+                   }))
+end
+
+module Calls = struct
+  type t = { dropped : Data.Kernel.agent list; plugged : Device.t list; skills : Skill.t list }
+
+  let all = { dropped = []; plugged = Device.all; skills = [] }
+
+  let taught skills calls =
+    {
+      calls with
+      skills =
+        List.fold_left
+          (fun kept (skill : Skill.t) ->
+            match List.find_opt (fun (other : Skill.t) -> String.equal other.name skill.name) kept with
+            | Some _ -> kept
+            | None -> kept @ [ skill ])
+          calls.skills skills;
+    }
+
   let without kernels calls = { calls with dropped = List.sort_uniq compare (kernels @ calls.dropped) }
 
   let unplugged devices calls =
@@ -79,8 +164,40 @@ module Calls = struct
             :: kept),
           names )
 
-  let modules calls = fst (cut calls) :: List.map Device.source calls.plugged
-  let source calls = String.concat "\n\n" (modules calls)
+  let settled calls =
+    let removed = snd (cut calls) in
+    let absent =
+      List.map named (List.filter (fun device -> not (List.mem device calls.plugged)) Device.all)
+    in
+    let lacking installed (skill : Skill.t) =
+      (match skill.agent with
+      | Whole -> removed
+      | Naming names -> List.filter (fun name -> List.mem name removed) names)
+      @ List.filter
+          (fun name ->
+            List.mem name absent
+            || List.exists (fun (other : Skill.t) -> String.equal other.name name) calls.skills
+               && not (List.exists (fun (other : Skill.t) -> String.equal other.name name) installed))
+          skill.modules
+    in
+    let rec settle installed =
+      match List.partition (fun skill -> List.is_empty (lacking installed skill)) installed with
+      | kept, [] -> kept
+      | kept, _ :: _ -> settle kept
+    in
+    let installed = settle calls.skills in
+    ( installed,
+      List.filter_map
+        (fun skill ->
+          match lacking installed skill with [] -> None | missing -> Some (skill.Skill.name, missing))
+        calls.skills )
+
+  let modules calls skills =
+    (("Agent", fst (cut calls))
+    :: List.map (fun device -> (named device, Device.source device)) calls.plugged)
+    @ List.map (fun (skill : Skill.t) -> (skill.name, skill.source)) skills
+
+  let source calls = String.concat "\n\n" (List.map snd (modules calls (fst (settled calls))))
 end
 
 let compile calls source =
@@ -91,18 +208,36 @@ let compile calls source =
          A program cannot name `Elm.Kernel` directly: everything it does goes through Agent \
          and the other modules of this run, so write the call with them."
   | None ->
+      let installed, withheld = Calls.settled calls in
+      let rec reached names =
+        match
+          List.filter
+            (fun (skill : Skill.t) ->
+              (not (List.mem skill.name names))
+              && List.exists
+                   (fun (other : Skill.t) ->
+                     List.mem other.name names && List.mem skill.name other.modules)
+                   installed)
+            installed
+        with
+        | [] -> List.filter (fun (skill : Skill.t) -> List.mem skill.name names) installed
+        | more -> reached (names @ List.map (fun (skill : Skill.t) -> skill.name) more)
+      in
       let outcome =
         Compiler.compile_modules ~entry:(Some "Main")
           (Project.Sources.of_list
              (List.map
-                (fun module_source ->
-                  Project.Elm_file.of_path
-                    ~path:
-                      (match String.split_on_char ' ' module_source with
-                      | "module" :: name :: _ -> name ^ ".elm"
-                      | _ -> "Prelude.elm")
-                    module_source)
-                (Calls.modules calls)
+                (fun (name, module_source) ->
+                  Project.Elm_file.of_path ~path:(name ^ ".elm") module_source)
+                (Calls.modules calls
+                   (reached
+                      (Result.fold ~error:(fun _ -> [])
+                         ~ok:(fun impls ->
+                           List.map
+                             (fun (import : Frontend.Import_thing.t) ->
+                               Data.Located.unwrap import.name)
+                             (imported impls))
+                         (parsed source))))
              @ [ Project.Elm_file.of_path ~path:"Main.elm" source ]))
       in
       let sources = Reporting.Sources.of_list outcome.sources in
@@ -146,6 +281,15 @@ let compile calls source =
                     ^ "` is not in Agent in this run: the OS the task runs under does not offer it, \
                        so solve the task without it." ))
                 (snd (Calls.cut calls))
+            @ List.map
+                (fun (name, missing) ->
+                  ( [ "`" ^ name ^ "`" ],
+                    "`" ^ name
+                    ^ "` is a skill this run does not install: it imports "
+                    ^ String.concat " and " (List.map (fun piece -> "`" ^ piece ^ "`") missing)
+                    ^ ", which the OS the task runs under does not offer, so solve the task \
+                       without it." ))
+                withheld
             @ List.map
                 (fun word ->
                   ( [ "I was not expecting `" ^ word ^ "`" ],

@@ -256,6 +256,39 @@ own copy) or well-known secrets in your home folder: `~/.ssh`, `~/.aws`, `~/.gnu
 profile, and teagent stops each one. `demo/escape.py --live` prepares the same project for a real
 Claude Code session.
 
+## Skills
+
+A skill is an Elm module in `.teagent/skills` that programs can import, one module per file,
+named after the file: `.teagent/skills/Testing.elm` holds `module Testing exposing (...)`. The
+model is shown every skill the OS can install, next to `Agent`. Like the profile, the folder is
+off limits to the agent.
+
+A skill needs what it imports:
+
+```elm
+module Testing exposing (failing)
+
+import Agent exposing (Task, IoErr, shell, map)
+```
+
+This one needs `shell`. `import Fetch` needs the `fetch` tool. `import Agent exposing (..)`, or
+`import Agent` with no list, needs every call. Importing another skill needs that skill, so a
+skill is left out together with the ones it imports.
+
+A skill whose needs the OS does not meet is not installed: the model is not shown it, and a
+program that imports it does not compile. The report says why:
+
+```
+Hint: `Testing` is a skill this run does not install: it imports `shell`, which the OS the task
+runs under does not offer, so solve the task without it.
+```
+
+A skill cannot name `Elm.Kernel` or take the name `Main`, `Agent` or `Fetch`. A program is
+compiled only with the skills it imports, so a broken skill breaks only the programs that use
+it. Only the import list decides whether a skill is installed. A skill that writes `Agent.write`
+without listing `write` is installed in an OS without `write` too, and the programs that import
+it then fail to compile, still before anything runs.
+
 ## Logs, replay and resume
 
 Every session writes `~/.teagent/sessions/NNNN.jsonl`: the task on the first line, then one

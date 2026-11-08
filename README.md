@@ -159,7 +159,7 @@ succeed, fail, andThen, map, mapErr, onError, batch, fromResult
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/os-dark.svg">
-  <img src="assets/os.svg" alt="The profile cuts what a program can name: Agent calls and the Fetch driver; main spawns a child that sees less and merges back what nobody moved; the workspace has hidden, readonly, scratch and staged paths, and only staged changes reach the disk" width="100%">
+  <img src="assets/os.svg" alt="teagent as a small OS in five layers: the program; system calls cut by the profile, with shell struck out when bash is not allowed; processes, where main spawns a child that cannot see secrets and merges it back; the file system with hidden, readonly, scratch and staged paths; and the outside, where only approved changes reach the disk and only --net hosts the network. Each layer is matched to its OS term: syscall table, fork and join, mount table, devices and firewall" width="100%">
 </picture>
 
 `spawn` runs a task as a child process. The child starts from the parent's changes, with the
@@ -182,7 +182,7 @@ everything it does goes through these modules.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/holes-dark.svg">
-  <img src="assets/holes.svg" alt="A program with a hole stops there; the agent sees the values in scope and writes one expression; it is typechecked in place of the hole; the program runs again with the tools that ran answered from what they returned; the new code may hold holes of its own" width="100%">
+  <img src="assets/holes.svg" alt="Left: a program whose hole fix the call was filled with an edit, inside which a second hole run the tests was filled with shell dune test, drawn as nested boxes. Right: a grid of tools by run: read runs in run 1 and is reused after; the first hole asks in run 1; edit runs in run 2; the second hole asks in run 2; shell runs in run 3. Each tool runs once and the agent is asked once per hole" width="100%">
 </picture>
 
 `hole "what goes here"` stands for code the model cannot write before it sees data. When `main`

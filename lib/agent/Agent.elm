@@ -8,7 +8,7 @@ module Agent exposing
     , hole
     , spawn
     , merge
-    , succeed, fail, andThen, map, mapErr, onError, batch, fromResult
+    , succeed, fail, andThen, map, map2, mapErr, onError, batch, fromResult
     )
 
 
@@ -106,6 +106,11 @@ andThen =
 map : (a -> b) -> Task e a -> Task e b
 map =
     Elm.Kernel.Agent.map
+
+
+map2 : (a -> b -> c) -> Task e a -> Task e b -> Task e c
+map2 combine first second =
+    first |> andThen (\one -> second |> map (\other -> combine one other))
 
 
 mapErr : (e -> f) -> Task e a -> Task f a

@@ -756,6 +756,48 @@ let () =
             Some
               ("seen: code written after the model saw a file sent data without the person: "
               ^ String.concat "; " (asked @ ran @ asked_hole @ ran_hole)));
+        (let workspace = fresh () in
+         let asked = ref 0 in
+         let replies =
+           ref
+             [
+               fenced
+                 "module Main exposing (main)\n\n\
+                  import Agent exposing (..)\n\
+                  import Fetch\n\n\n\
+                  main : Task Fetch.FetchErr (List Int)\n\
+                  main =\n\
+                 \    read \"lib/a.ml\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
+                 \        |> andThen (\\text ->\n\
+                 \            List.map (\\i -> Fetch.get (\"http://127.0.0.1:9/?\" ++ i ++ text) |> map .status |> onError (\\_ -> succeed 0)) [ \"1\", \"2\", \"3\", \"4\", \"5\" ]\n\
+                 \                |> batch)\n";
+               "Done.";
+             ]
+         in
+         let _ =
+           collected
+             {
+               ask =
+                 (fun ~system:_ _ ->
+                   match !replies with
+                   | reply :: rest ->
+                       replies := rest;
+                       Lwt.return (Ok reply)
+                   | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+               approve = (fun _ -> Lwt.return Driver.Apply);
+               person =
+                 (fun _ ->
+                   incr asked;
+                   Lwt.return Device.Declines);
+               handler = Handler.staged (Tools.at workspace) Handler.Open;
+               commit = Tools.commit (Tools.at workspace);
+               os = Os.granted "/project" ~net:[];
+               recorded = [];
+             }
+         in
+         match !asked with
+         | 3 -> None
+         | times -> Some (Printf.sprintf "breaker: the person was asked %d times, not 3" times));
         (let held person =
            let workspace = fresh () in
            let replies =

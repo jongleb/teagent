@@ -109,7 +109,8 @@ keys in this order:
  "net": ["host", ...],
  "boot": [{"budget": 200}, "journal", "policy"],
  "drivers": ["<Elm source of each offered driver>"],
- "skills": ["<Elm source of each skill>"]}
+ "skills": ["<Elm source of each skill>"],
+ "seconds": 1800}
 ```
 
 `offers` follows the order above. `mounts`, `reads`, `net` and `skills` are sorted. The project's
@@ -143,4 +144,4 @@ every call performed before it in the session. Labels are never logged: the inte
 computes them again on replay.
 
 Version 2 added the `Egress` class, the `held` and `exposed` events, the paths in `committed`,
-and hidden `.env` files.
+hidden `.env` files, and `seconds` in the image.

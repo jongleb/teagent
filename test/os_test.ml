@@ -226,6 +226,15 @@ let () =
           ->
             None
         | _ -> Some "exposure: a program with all three legs passed, or one without them was held");
+        (match
+           ( Result.bind
+               (narrowed {|{ "seconds": 60 }|} (Os.granted "/w" ~net:[]))
+               (narrowed {|{ "seconds": 600 }|}),
+             narrowed {|{ "seconds": 0 }|} (Os.granted "/w" ~net:[]),
+             (Os.view (Os.granted "/w" ~net:[])).seconds )
+         with
+        | Ok os, Error _, 1800 when (Os.view os).seconds = 60 -> None
+        | _ -> Some "seconds: a profile raised the time limit, or took zero");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

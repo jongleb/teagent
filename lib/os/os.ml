@@ -17,6 +17,7 @@ type view = {
   reads : Tools.reads;
   net : string list;
   boot : Handler.Boot.t;
+  seconds : int;
 }
 
 type t = { root : string; allows : view; skills : Lang.Skill.t list }
@@ -25,7 +26,14 @@ let granted root ~net =
   {
     root;
     allows =
-      { offers = List.map snd calls; mounts = []; reads = Anywhere; net; boot = Handler.Boot.standard };
+      {
+        offers = List.map snd calls;
+        mounts = [];
+        reads = Anywhere;
+        net;
+        boot = Handler.Boot.standard;
+        seconds = 1800;
+      };
     skills = [];
   }
 
@@ -124,7 +132,8 @@ let narrowed json os =
       match
         List.find_opt
           (fun (key, _) ->
-            not (List.mem key [ "tools"; "mounts"; "hidden"; "readonly"; "reads"; "net"; "boot" ]))
+            not
+              (List.mem key [ "tools"; "mounts"; "hidden"; "readonly"; "reads"; "net"; "boot"; "seconds" ]))
           fields
       with
       | Some (key, _) -> Error ("there is no setting called " ^ key)
@@ -186,6 +195,12 @@ let narrowed json os =
                                      (Handler.Boot.of_layers layers)))
                         | Some _ -> Error "boot is not a list of layers")
                         (fun boot ->
+                      Result.bind
+                        (match List.assoc_opt "seconds" fields with
+                        | None -> Ok None
+                        | Some (`Int seconds) when seconds > 0 -> Ok (Some seconds)
+                        | Some _ -> Error "seconds is not a whole number above zero")
+                        (fun seconds ->
                           Result.map
                             (fun net ->
                               let booting later os =
@@ -200,9 +215,14 @@ let narrowed json os =
                                    @ mounts)
                               |> applied reading reads
                               |> applied reaching net
-                              |> applied booting boot)
+                              |> applied booting boot
+                              |> applied
+                                   (fun seconds ->
+                                     narrowing (fun allows ->
+                                         { allows with seconds = min allows.seconds seconds }))
+                                   seconds)
                             (listed "net" fields
-                               ~expected:"a host such as registry.npmjs.org or *.crates.io" host))))))))
+                               ~expected:"a host such as registry.npmjs.org or *.crates.io" host)))))))))
   | _ -> Error "it is not a JSON object"
 
 let view os = os.allows
@@ -214,6 +234,7 @@ let workspace os =
       mounts = os.allows.mounts;
       reads = os.allows.reads;
       net = os.allows.net;
+      seconds = os.allows.seconds;
     }
     (Tools.at os.root)
 
@@ -328,4 +349,5 @@ let image os =
                       (os.allows.boot :> Handler.Boot.layer list)) );
                ("drivers", texts (List.map Device.source (List.filter_map device os.allows.offers)));
                ("skills", texts (List.sort String.compare (List.map Lang.Skill.source os.skills)));
+               ("seconds", `Int os.allows.seconds);
              ])))

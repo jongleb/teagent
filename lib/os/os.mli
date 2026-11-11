@@ -29,6 +29,7 @@ type view = {
   reads : Tools.reads;
   net : string list;
   boot : Handler.Boot.t;  (** The layers around the tools; a narrower OS only lowers the budget. *)
+  seconds : int;  (** How long one command may run; a narrower OS only lowers it. *)
 }
 
 val view : t -> view

@@ -160,7 +160,11 @@ compile after 4 rounds."
    Seatbelt profile denies everything it does not list, so a command cannot read the
    clipboard, ask the keychain, send Apple events to other apps, look at other processes,
    connect to unix sockets such as ssh-agent or Docker, or resolve names itself. It can still
-   list launchd's services, but not start or change one.
+   list launchd's services, but not start or change one. Every command, contained or not, runs
+   in its own process group with limits: 30 minutes by the clock and of CPU time per process
+   (`seconds` in the profile lowers both), files up to 4 GiB, and at most 1024 processes more
+   than you already run. A command that runs out of time is killed with all its children, and
+   its output ends with `teagent: the command ran out of its N seconds and was stopped`.
 4. When the command ends, teagent looks at which files in the copy were written or deleted.
    Each one becomes a staged change, exactly like an edit by the program.
 5. The copy is deleted.
@@ -206,7 +210,9 @@ practice the first program may fetch freely; once the model has seen a file, a f
 A shell command under `--net` cannot be followed that way: it can read the project and reach the
 network by itself. A program that runs one and also reads the project asks you once, up front.
 Without `--ask`, with `--dry-run` and over MCP every such question is answered no, and the model
-is told. With `--net`, run teagent with `--ask`.
+is told. With `--net`, run teagent with `--ask`. After you say no three times in a row, or twenty
+times in a session, teagent stops asking and answers no by itself, so a program cannot wear you
+down with questions.
 
 Files that other programs run or obey after the session are shown apart, under "files run
 outside the sandbox": git hooks and attributes, CI workflows, `package.json` and npm or yarn
@@ -270,6 +276,7 @@ anything.
 | `hidden`, `readonly` | Lists of paths, a shorthand for the same kinds of mount. |
 | `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |
 | `net` | Which of the hosts you granted with `--net` commands may reach here. It can drop hosts, never add them. |
+| `seconds` | How long one shell command may run, by the clock and in CPU time per process; 1800 by default. It can only be lowered. |
 | `boot` | The layers around the tools, outermost first. `journal` writes each call that reaches it to the session log, and a replay answers there from the log. `policy` asks you before a call that cannot be taken back. `{ "budget": n }` lets n calls through in a run; at the next one the program stops. `journal` and `policy` appear once each, the journal outside the policy, so the log holds every answer you give. The default is `["journal", "policy"]`, with no budget. A budget outside the journal is not logged when it stops a call; one inside the policy does not count the calls you declined. A second profile can only lower a budget. |
 
 Network is the one right a profile cannot give: you grant hosts on the command line, with

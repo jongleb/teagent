@@ -32,6 +32,7 @@ type limits = {
   mounts : (Path.t * mount) list;  (** Where several cover a path, the strictest holds. *)
   reads : reads;
   net : string list;  (** Hosts a contained command may reach through the proxy, such as [*.npmjs.org]. *)
+  seconds : int;  (** How long a command may run, by the clock and in CPU time per process. *)
 }
 
 val at : string -> t

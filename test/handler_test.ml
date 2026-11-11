@@ -213,6 +213,7 @@ let () =
                  @ List.map (fun path -> (path, Tools.Readonly)) (paths [ "vendor" ])
                  @ List.map (fun path -> (path, Tools.Scratch)) (paths [ "tmp" ]);
                reads = Within [];
+               seconds = 1800;
                net = [];
              }
              (Tools.at workspace)
@@ -295,7 +296,7 @@ let () =
          Lwt.async (fun () -> Lwt.catch served (fun _ -> Lwt.return_unit));
          let limited =
            Tools.limited
-             { mounts = []; reads = Anywhere; net = [ "127.0.0.1" ] }
+             { mounts = []; reads = Anywhere; net = [ "127.0.0.1" ]; seconds = 1800 }
              (Tools.at workspace)
          in
          match
@@ -447,6 +448,28 @@ let () =
                when not (Sys.file_exists (Filename.concat workspace "marker")) ->
                  None
              | _ -> Some "no shell: the command ran or the program saw another code"));
+        (let workspace = fresh () in
+         let quick =
+           Tools.limited { mounts = []; reads = Anywhere; net = []; seconds = 2 } (Tools.at workspace)
+         in
+         let started_at = Unix.gettimeofday () in
+         let contained, _ =
+           Lwt_main.run
+             (Tools.contained quick [] "ulimit -t; ulimit -f; ulimit -u; sleep 20; echo late")
+         in
+         let opened = Lwt_main.run (Tools.shell quick "sleep 20; echo late") in
+         let took = Unix.gettimeofday () -. started_at in
+         match (String.split_on_char '\n' contained.out, opened.out) with
+         | "2" :: "8388608" :: processes :: stopped :: _, opened
+           when took < 15.
+                && Option.is_some (int_of_string_opt processes)
+                && String.starts_with ~prefix:"teagent: the command ran out of its 2 seconds" stopped
+                && String.starts_with ~prefix:"teagent: the command ran out of its 2 seconds" opened ->
+             None
+         | _ ->
+             Some
+               (Printf.sprintf "limits: a command ran past its time or without limits (%.0fs):\n%s\n%s"
+                  took contained.out opened.out));
         (let flows body =
            let seen = ref [] in
            let watching =

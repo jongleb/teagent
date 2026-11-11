@@ -55,10 +55,15 @@ end
 
 type reads = Anywhere | Within of string list
 type mount = Hidden | Readonly | Scratch
-type limits = { mounts : (Path.t * mount) list; reads : reads; net : string list }
+type limits = {
+  mounts : (Path.t * mount) list;
+  reads : reads;
+  net : string list;
+  seconds : int;
+}
 type t = { root : string; limits : limits }
 
-let at root = { root; limits = { mounts = []; reads = Anywhere; net = [] } }
+let at root = { root; limits = { mounts = []; reads = Anywhere; net = []; seconds = 1800 } }
 
 let dotenv name =
   let name = String.lowercase_ascii name in
@@ -309,8 +314,47 @@ let ran_in ~cwd ?env program arguments =
           }))
     (fun problem -> Lwt.return { out = Printexc.to_string problem; code = 127 })
 
+let guarded workspace command =
+  let+ counted =
+    ran_in ~cwd:"/" "/bin/ps" [| "ps"; "-o"; "pid="; "-U"; string_of_int (Unix.getuid ()) |]
+  in
+  let seconds = workspace.limits.seconds in
+  [
+    "/bin/sh";
+    "-c";
+    Printf.sprintf
+      "ulimit -t %d 2>/dev/null\n\
+       ulimit -f 8388608 2>/dev/null\n\
+       %s\
+       set -m\n\
+       /bin/sh -c \"$1\" </dev/null 2>&1 &\n\
+       job=$!\n\
+       exec 2>/dev/null\n\
+       ( sleep %d; kill -9 -$job ) >/dev/null 2>&1 &\n\
+       watch=$!\n\
+       wait $job\n\
+       code=$?\n\
+       if kill -0 $watch 2>/dev/null; then kill -9 -$watch 2>/dev/null; else echo \"teagent: the \
+       command ran out of its %d seconds and was stopped\"; fi\n\
+       exit $code\n"
+      seconds
+      (match counted.code with
+      | 0 ->
+          Printf.sprintf "ulimit -u %d 2>/dev/null\n"
+            (1024
+            + List.length
+                (List.filter
+                   (fun line -> not (String.equal (String.trim line) ""))
+                   (String.split_on_char '\n' counted.out)))
+      | _ -> "")
+      seconds seconds;
+    "teagent";
+    command;
+  ]
+
 let shell workspace command =
-  ran_in ~cwd:workspace.root "/bin/sh" [| "/bin/sh"; "-c"; "exec 2>&1\n" ^ command |]
+  let* arguments = guarded workspace command in
+  ran_in ~cwd:workspace.root "/bin/sh" (Array.of_list arguments)
 
 let bridged = 3128
 
@@ -449,6 +493,7 @@ let contained workspace staged command =
         | Anywhere -> None
         | Within extra -> Some (existing (system @ home [ ".gitconfig"; ".config/git" ] @ extra))
       in
+      let* guarded = guarded workspace command in
       let copying, arguments =
         match sandbox with
         | `Seatbelt ->
@@ -456,7 +501,8 @@ let contained workspace staged command =
               String.concat " " (List.map (fun (_, real) -> Printf.sprintf "(subpath %S)" real) paths)
             in
             ( [| "cp"; "-cR"; workspace.root ^ "/."; clone |],
-              [|
+              Array.of_list
+                ([
                 "sandbox-exec";
                 "-p";
                 Printf.sprintf
@@ -486,10 +532,8 @@ let contained workspace staged command =
                           "/private/var/select"; "/private/var/db"; "/dev"; "/opt";
                           "/Applications"; base ]))
                   (subpaths secrets) base;
-                "/bin/sh";
-                "-c";
-                "exec 2>&1\n" ^ command;
-              |] )
+              ]
+              @ guarded) )
         | `Bubblewrap ->
             ( [| "cp"; "-a"; "--reflink=auto"; workspace.root ^ "/."; clone |],
               Array.of_list
@@ -512,7 +556,7 @@ let contained workspace staged command =
                 @ Option.fold ~none:[]
                     ~some:(fun _ -> [ Sys.executable_name; "--teagent-bridge"; socket ])
                     proxy
-                @ [ "/bin/sh"; "-c"; "exec 2>&1\n" ^ command ]) )
+                @ guarded) )
       in
       Lwt.finalize
         (fun () ->

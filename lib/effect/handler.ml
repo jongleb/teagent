@@ -463,6 +463,7 @@ let booted boot ~class_of ~person ~journal base =
       match layer with
       | Journal -> journal inner
       | Policy ->
+          let answers = ref [] in
           {
             perform =
               (fun tool sources state ->
@@ -478,10 +479,21 @@ let booted boot ~class_of ~person ~journal base =
                     sources
                 in
                 let asked question declined =
-                  let* consent = person question in
-                  match consent with
-                  | Device.Agrees -> inner.perform tool sources state
-                  | Declines -> Lwt.return (Performed (declined, state))
+                  match
+                    ( !answers,
+                      List.length (List.filter (function `Declined -> true | `Agreed -> false) !answers) )
+                  with
+                  | `Declined :: `Declined :: `Declined :: _, _ -> Lwt.return (Performed (declined, state))
+                  | _, refusals when refusals >= 20 -> Lwt.return (Performed (declined, state))
+                  | _, _ -> (
+                      let* consent = person question in
+                      match consent with
+                      | Device.Agrees ->
+                          answers := `Agreed :: !answers;
+                          inner.perform tool sources state
+                      | Declines ->
+                          answers := `Declined :: !answers;
+                          Lwt.return (Performed (declined, state)))
                 in
                 match ((class_of tool : Value.class_), carried) with
                 | Irreversible { question; declined }, [] -> asked question (Error declined)

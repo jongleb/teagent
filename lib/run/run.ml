@@ -101,7 +101,7 @@ let performed hole = hole.run.recorded
 
 let question hole =
   let shown value =
-    let text = Value.to_elm value and limit = 4_000 in
+    let text = Tools.redacted (Value.to_elm value) and limit = 4_000 in
     match String.length text <= limit with
     | true -> text
     | false ->

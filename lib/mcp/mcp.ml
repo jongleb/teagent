@@ -124,7 +124,7 @@ let handled program json =
   let text body failed =
     `Assoc
       [
-        ("content", `List [ `Assoc [ ("type", `String "text"); ("text", `String body) ] ]);
+        ("content", `List [ `Assoc [ ("type", `String "text"); ("text", `String (Tools.redacted body)) ] ]);
         ("isError", `Bool failed);
       ]
   in

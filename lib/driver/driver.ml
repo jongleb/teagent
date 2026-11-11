@@ -179,7 +179,7 @@ let solve world ~on task =
     found 0
   in
   let shown value =
-    let text = Value.to_elm value and limit = 20_000 in
+    let text = Tools.redacted (Value.to_elm value) and limit = 20_000 in
     if String.length text <= limit then text
     else
       Printf.sprintf "%s… (%d more characters cut)" (String.sub text 0 limit)

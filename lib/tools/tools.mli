@@ -68,6 +68,7 @@ val shell : t -> string -> ran Lwt.t
 val contained : t -> change list -> string -> (ran * change list) Lwt.t
 
 val commit : t -> change list -> (unit, [> `Tools of error ]) result Lwt.t
+val redacted : string -> string
 
 (** What a server answered: the HTTP status and the body. *)
 type fetched = { status : int; body : string }

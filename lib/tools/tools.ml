@@ -60,16 +60,30 @@ type t = { root : string; limits : limits }
 
 let at root = { root; limits = { mounts = []; reads = Anywhere; net = [] } }
 
+let dotenv name =
+  let name = String.lowercase_ascii name in
+  String.equal name ".env"
+  || String.starts_with ~prefix:".env." name
+     && not
+          (List.exists
+             (fun suffix -> String.ends_with ~suffix name)
+             [ ".example"; ".sample"; ".template"; ".dist" ])
+
 let mounted workspace (inside : Path.t) =
-  List.fold_left
-    (fun strictest ((entry : Path.t), mount) ->
-      let entry = String.lowercase_ascii (entry :> string)
-      and path = String.lowercase_ascii (inside :> string) in
-      match (String.equal path entry || String.starts_with ~prefix:(entry ^ "/") path, strictest, mount) with
-      | false, _, _ -> strictest
-      | true, (Some Hidden as kept), _ | true, (Some Readonly as kept), (Readonly | Scratch) -> kept
-      | true, (None | Some Scratch), _ | true, Some Readonly, Hidden -> Some mount)
-    None workspace.limits.mounts
+  match dotenv (Filename.basename inside) with
+  | true -> Some Hidden
+  | false ->
+      List.fold_left
+        (fun strictest ((entry : Path.t), mount) ->
+          let entry = String.lowercase_ascii (entry :> string)
+          and path = String.lowercase_ascii (inside :> string) in
+          match
+            (String.equal path entry || String.starts_with ~prefix:(entry ^ "/") path, strictest, mount)
+          with
+          | false, _, _ -> strictest
+          | true, (Some Hidden as kept), _ | true, (Some Readonly as kept), (Readonly | Scratch) -> kept
+          | true, (None | Some Scratch), _ | true, Some Readonly, Hidden -> Some mount)
+        None workspace.limits.mounts
 
 let granted workspace host =
   List.find_opt
@@ -402,7 +416,14 @@ let contained workspace staged command =
           :: home
                [ ".ssh"; ".aws"; ".gnupg"; ".netrc"; ".config/gh"; ".docker"; ".kube";
                  ".git-credentials"; ".npmrc"; ".pypirc"; ".teagent"; ".claude"; ".codex";
-                 "Library/Keychains" ])
+                 "Library/Keychains"; ".config/gcloud"; ".azure"; ".cargo/credentials";
+                 ".cargo/credentials.toml"; ".gem/credentials"; ".vault-token";
+                 ".terraform.d/credentials.tfrc.json"; ".password-store"; ".config/op";
+                 ".config/hub"; ".bash_history"; ".zsh_history"; ".python_history";
+                 ".mozilla"; ".config/google-chrome"; ".config/chromium";
+                 "Library/Application Support/Google/Chrome"; "Library/Application Support/Firefox";
+                 "Library/Application Support/BraveSoftware"; "Library/Cookies"; "Library/Mail";
+                 "Library/Messages" ])
       in
       let socket = Filename.concat base "proxy.sock" in
       let proxy =
@@ -540,6 +561,34 @@ let contained workspace staged command =
                       (List.filter
                          (function _, Hidden -> true | _, (Readonly | Scratch) -> false)
                          workspace.limits.mounts)
+                  in
+                  let* () =
+                    let rec cleared directory =
+                      let* names =
+                        Lwt.catch
+                          (fun () -> Lwt_stream.to_list (Lwt_unix.files_of_directory directory))
+                          (fun _ -> Lwt.return [])
+                      in
+                      Lwt_list.iter_s
+                        (fun name ->
+                          let path = Filename.concat directory name in
+                          match (name, dotenv name) with
+                          | ("." | ".."), _ -> Lwt.return_unit
+                          | _, true -> Lwt.catch (fun () -> removed path) (fun _ -> Lwt.return_unit)
+                          | _, false -> (
+                              let* stats =
+                                Lwt.catch
+                                  (fun () -> Lwt.map Option.some (Lwt_unix.lstat path))
+                                  (fun _ -> Lwt.return None)
+                              in
+                              match stats with
+                              | Some { st_kind = S_DIR; _ } -> cleared path
+                              | Some { st_kind = S_REG | S_CHR | S_BLK | S_LNK | S_FIFO | S_SOCK; _ }
+                              | None ->
+                                  Lwt.return_unit))
+                        names
+                    in
+                    cleared clone
                   in
                   let* () =
                     Lwt_list.iter_s (fun change -> Lwt.map ignore (placed shadow change)) staged
@@ -876,3 +925,76 @@ let fetch workspace request url =
                   | () -> Ok { status = Curl.get_responsecode handle; body = Buffer.contents received }
                   | exception Curl.CurlException (_, _, reason) -> Error (`Unreachable reason)))
             ())
+
+let redacted text =
+  let hidden = "[redacted secret]" in
+  let found piece text from =
+    let rec at index =
+      match index + String.length piece <= String.length text with
+      | false -> None
+      | true -> (
+          match String.equal (String.sub text index (String.length piece)) piece with
+          | true -> Some index
+          | false -> at (index + 1))
+    in
+    at from
+  in
+  let rec keyless text from =
+    match found "-----BEGIN " text from with
+    | None -> text
+    | Some start -> (
+        match found "PRIVATE KEY-----" text start with
+        | None -> text
+        | Some _ -> (
+            match found "-----END " text start with
+            | None -> text
+            | Some finish ->
+                let ending =
+                  Option.fold ~none:(String.length text)
+                    ~some:(fun at -> at + String.length "-----")
+                    (found "-----" text (finish + String.length "-----END "))
+                in
+                keyless
+                  (String.sub text 0 start ^ hidden
+                  ^ String.sub text ending (String.length text - ending))
+                  (start + String.length hidden)))
+  in
+  let tokens text =
+    let buffer = Buffer.create (String.length text) in
+    let token_char = function 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' | '-' -> true | _ -> false in
+    let shaped token =
+      let length = String.length token and starts prefix = String.starts_with ~prefix token in
+      (starts "AKIA" || starts "ASIA")
+      && length = 20
+      && String.for_all (function 'A' .. 'Z' | '0' .. '9' -> true | _ -> false) token
+      || List.exists starts [ "ghp_"; "gho_"; "ghu_"; "ghs_"; "ghr_" ] && length >= 40
+      || starts "github_pat_" && length >= 30
+      || starts "sk-" && length >= 24
+      || List.exists starts [ "xoxb-"; "xoxp-"; "xoxa-"; "xoxs-"; "xapp-" ] && length >= 20
+      || starts "AIza" && length = 39
+      || List.exists starts [ "sk_live_"; "rk_live_"; "glpat-" ] && length >= 20
+      || starts "npm_" && length = 40
+    in
+    let rec scanned index =
+      match index < String.length text with
+      | false -> ()
+      | true -> (
+          match token_char text.[index] with
+          | false ->
+              Buffer.add_char buffer text.[index];
+              scanned (index + 1)
+          | true ->
+              let rec ending at =
+                match at < String.length text && token_char text.[at] with
+                | true -> ending (at + 1)
+                | false -> at
+              in
+              let stop = ending index in
+              let token = String.sub text index (stop - index) in
+              Buffer.add_string buffer (match shaped token with true -> hidden | false -> token);
+              scanned stop)
+    in
+    scanned 0;
+    Buffer.contents buffer
+  in
+  tokens (keyless text 0)

@@ -88,7 +88,8 @@ shown apart (`held`), and only the person can allow them; the rest are approved 
 `.devcontainer/`, `.idea/` (editors); `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`,
 `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, `.continue/` (other agents).
 No path may contain `.git`, `.claude`, `.codex`, `.cursor`, `.mcp.json`, `.teagent`, `.envrc` or
-`.vscode` at any depth.
+`.vscode` at any depth. A file named `.env` or `.env.*`, at any depth, is hidden as if mounted
+`hidden`, except names ending in `.example`, `.sample`, `.template` or `.dist`.
 
 A replay answers each call from the log at the journal's place among the boot layers, in log
 order. The first call that differs from the log ends the replay; from there the session runs
@@ -123,4 +124,5 @@ version too. A change to a driver's or a skill's source changes only the image.
 `test/sessions/abi2.jsonl` is a session logged under version 2. Every build of version 2 must
 replay it exactly.
 
-Version 2 added the `Egress` class, the `held` event, and the paths in `committed`.
+Version 2 added the `Egress` class, the `held` event, the paths in `committed`, and hidden
+`.env` files.

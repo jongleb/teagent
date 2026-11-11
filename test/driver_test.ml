@@ -586,6 +586,50 @@ let () =
          with
          | decoded when decoded = List.map Result.ok recorded -> None
          | _ -> Some "json: an event does not survive the log");
+        (let workspace = fresh () in
+         Out_channel.with_open_text (Filename.concat workspace "lib/keys.txt") (fun channel ->
+             Out_channel.output_string channel "aws AKIAIOSFODNN7EXAMPLE\n");
+         let replies =
+           ref
+             [
+               fenced
+                 "module Main exposing (main)\n\n\
+                  import Agent exposing (..)\n\n\n\
+                  main : Task IoErr String\n\
+                  main =\n\
+                 \    read \"lib/keys.txt\"\n";
+               "Done.";
+             ]
+         in
+         let report, events =
+           collected
+             {
+               ask =
+                 (fun ~system:_ _ ->
+                   match !replies with
+                   | reply :: rest ->
+                       replies := rest;
+                       Lwt.return (Ok reply)
+                   | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+               approve = (fun _ -> Lwt.return Driver.Apply);
+               person = (fun _ -> Lwt.return Device.Declines);
+               handler = Handler.staged (Tools.at workspace) Handler.Open;
+               boot = Handler.Boot.standard;
+               commit = Tools.commit (Tools.at workspace);
+               calls = Lang.Calls.all;
+               recorded = [];
+             }
+         in
+         match
+           ( List.filter_map (function Driver.Ran text -> Some text | _ -> None) events,
+             List.filter_map
+               (function Driver.Performed { result = Ok (V_string text); _ } -> Some text | _ -> None)
+               events,
+             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events) = (report, events) )
+         with
+         | [ "main finished with:\n\"aws [redacted secret]\\n\"" ], [ "aws AKIAIOSFODNN7EXAMPLE\n" ], true ->
+             None
+         | ran, _, _ -> Some ("redaction: the model saw a key, or replay changed: " ^ String.concat "; " ran));
         (let held person =
            let workspace = fresh () in
            let replies =

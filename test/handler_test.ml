@@ -447,6 +447,48 @@ let () =
                when not (Sys.file_exists (Filename.concat workspace "marker")) ->
                  None
              | _ -> Some "no shell: the command ran or the program saw another code"));
+        (match
+           Tools.redacted
+             "id AKIAIOSFODNN7EXAMPLE and ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789ab, \
+              sk-ant-api03-abcdefghijklmnopqrstuvwxyz\n\
+              -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk=\n-----END OPENSSH PRIVATE KEY-----\n\
+              keep sk-learn lib/sk-config.ml AKIA_CONFIG"
+         with
+         | "id [redacted secret] and [redacted secret], [redacted secret]\n[redacted secret]\n\
+            keep sk-learn lib/sk-config.ml AKIA_CONFIG" ->
+             None
+         | other -> Some ("redaction: " ^ other));
+        (let workspace = fresh () in
+         List.iter
+           (fun (name, text) ->
+             Out_channel.with_open_text (Filename.concat workspace name) (fun channel ->
+                 Out_channel.output_string channel text))
+           [ (".env", "TOKEN=hunter2-dotenv\n"); ("lib/.env.local", "TOKEN=hunter2-local\n");
+             (".env.example", "TOKEN=\n") ];
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\n\n\
+              main : Task IoErr String\n\
+              main =\n\
+             \    read \".env\"\n\
+             \        |> onError (\\_ -> succeed \"denied\")\n\
+             \        |> andThen (\\first -> read \".env.example\"\n\
+             \        |> andThen (\\example -> grep { pattern = \"hunter2\", glob = \"**\" }\n\
+             \        |> andThen (\\found -> shell \"cat .env lib/.env.local 2>/dev/null; true\"\n\
+             \        |> map (\\ran -> first ++ \"|\" ++ example ++ \"|\" ++ String.fromInt (List.length found) ++ \"|\" ++ ran.out))))\n"
+         with
+         | Error error -> explained "dotenv" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged (Tools.at workspace) Handler.Contained)
+                    program Handler.Overlay.empty task)
+             with
+             | Finished (Ok (V_string "denied|TOKEN=\n|0|")), _ -> None
+             | Finished (Ok value), _ -> Some ("dotenv: a .env file reached the program: " ^ Value.to_elm value)
+             | _ -> Some "dotenv: the program did not finish"));
         (let workspace = fresh () in
          let attempts =
            [

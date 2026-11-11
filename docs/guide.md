@@ -221,6 +221,14 @@ Rules for paths: they are relative to the folder you gave with `-C`, and may not
 folders are off limits at any depth, in any letter case: `.git`, `.claude`, `.codex`, `.cursor`,
 `.mcp.json`, `.teagent`, `.envrc` and `.vscode`. They hold an agent's permissions, hooks that
 run outside the sandbox, and often secrets. Such a path gets `Denied` and nothing is touched.
+`.env` and `.env.*` files are hidden everywhere, as if mounted `hidden`; `.env.example` and the
+like stay readable.
+
+What the model sees of a run (the value of `main`, the values at a hole, MCP replies) has
+secret-shaped text replaced with `[redacted secret]`: AWS access keys, GitHub, OpenAI and
+Anthropic tokens, Slack, Google, Stripe, GitLab and npm tokens, and private key blocks. The
+program itself and the session log keep the real values, so a program can still edit a file
+that holds one, and a replay stays exact.
 
 `grep` uses Emacs-style patterns: write `a\|b` for "a or b"; there is no `\d`. It skips folders
 whose name starts with `.`, and `_build` and `node_modules`.

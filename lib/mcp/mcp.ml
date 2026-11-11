@@ -91,8 +91,11 @@ let handled program json =
              ]
              [ "path"; "old_string"; "new_string" ]);
         tool Os.Grep "grep"
-          "Find the lines that match an Emacs-style regular expression (write a\\|b for 'a or b') \
-           in files whose path matches a glob such as src/**/*.ml."
+          "Find the lines that match a regular expression in files whose path matches a glob \
+           such as src/**/*.ml. The expression knows . * + ? [...] ^ $ | (...) \\d \\s \\w \\b; \
+           a backslash makes a character literal; there is no {n,m}. Returns path:line: text, \
+           lines counted from 1. Names starting with a dot, _build and node_modules are not \
+           searched."
           (schema
              [
                ("pattern", "The regular expression.");

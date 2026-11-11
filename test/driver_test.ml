@@ -59,6 +59,9 @@ let () =
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
           calls = Lang.Calls.all;
+          person = (fun _ -> Lwt.return Device.Declines);
+          boot = Handler.Boot.standard;
+          recorded = [];
         }
     in
     (workspace, report, events, List.rev !asked)
@@ -100,6 +103,9 @@ let () =
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
           calls = Lang.Calls.all;
+          person = (fun _ -> Lwt.return Device.Declines);
+          boot = Handler.Boot.standard;
+          recorded = [];
         }
     in
     (report, events, List.rev !asked)
@@ -140,6 +146,9 @@ let () =
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
           calls = Lang.Calls.all;
+          person = (fun _ -> Lwt.return Device.Declines);
+          boot = Handler.Boot.standard;
+          recorded = [];
         }
     in
     (workspace, report, events, List.rev !asked)
@@ -201,6 +210,9 @@ let () =
         handler = Handler.staged (Os.workspace (Os.granted workspace ~net)) Handler.Open;
         commit = Tools.commit (Tools.at workspace);
         calls = Lang.Calls.all;
+        person = (fun _ -> Lwt.return Device.Declines);
+        boot = Handler.Boot.standard;
+        recorded = [];
       }
   in
   let spawned =
@@ -260,6 +272,9 @@ let () =
           handler = Handler.staged (Tools.at workspace) Handler.Contained;
           commit = Tools.commit (Tools.at workspace);
           calls = Lang.Calls.all;
+          person = (fun _ -> Lwt.return Device.Declines);
+          boot = Handler.Boot.standard;
+          recorded = [];
         }
     in
     (workspace, report, events)
@@ -292,11 +307,14 @@ let () =
             | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
         approve = (fun _ -> Lwt.return Driver.Apply);
         handler =
-          Handler.staged ~person
+          Handler.staged
             (Os.workspace (Os.granted workspace ~net:[ "127.0.0.1" ]))
             Handler.Open;
+        person;
+        boot = Handler.Boot.standard;
         commit = Tools.commit (Tools.at workspace);
         calls = Lang.Calls.all;
+        recorded = [];
       }
   in
   let failures =
@@ -317,7 +335,7 @@ let () =
              sent_after_decline,
              ran agreed,
              sent_after_agree,
-             collected (Driver.replayed Lang.Calls.all events),
+             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events),
              !requests )
          with
          | true, [], "main finished with:\n200", [ "POST /upload HTTP/1.1" ], (again, replayed), [ _ ]
@@ -336,7 +354,7 @@ let () =
             match
               ( fetched,
                 String.starts_with ~prefix:"main failed with:\nNotGranted" refused,
-                collected (Driver.replayed Lang.Calls.all recorded),
+                collected (Driver.replayed Lang.Calls.all Handler.Boot.standard recorded),
                 List.map
                   (fun event ->
                     Driver.event_of_json
@@ -456,7 +474,7 @@ let () =
                  contains (last inner) "The program now reads"
                  && not (contains (last inner) "#"),
                  contents workspace "lib/a.ml",
-                 collected (Driver.replayed Lang.Calls.all recorded) )
+                 collected (Driver.replayed Lang.Calls.all Handler.Boot.standard recorded) )
              with
              | true, true, "let x = Foo.baz 1\n", (_, replayed) when replayed = recorded -> None
              | _ -> Some ("holes: the hole messages, file or replay are wrong\n" ^ last outer))
@@ -480,7 +498,7 @@ let () =
                   ran,
              contents workspace "lib/a.ml",
              contents workspace "lib/b.ml",
-             collected (Driver.replayed Lang.Calls.all events),
+             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events),
              Driver.undone events )
          with
          | true, "let x = Foo.child 1\n", "parent", (again, replayed), [ _; _ ]
@@ -499,7 +517,7 @@ let () =
             | _ -> Some "discard: the file changed")
         | _ -> Some "discard: the session went another way");
         (let _, report, recorded, _ = applied in
-         match collected (Driver.replayed Lang.Calls.all recorded) with
+         match collected (Driver.replayed Lang.Calls.all Handler.Boot.standard recorded) with
          | again, replayed when replayed = recorded && again = report -> None
          | _ -> Some "replay: the replayed session differs from the log");
         (let _, report, recorded, _ = applied in
@@ -516,7 +534,6 @@ let () =
            let live_asks = ref 0 in
            let again, events =
              collected
-               (Driver.resumed (cut recorded)
                   {
                     ask =
                       (fun ~system:_ _ ->
@@ -526,7 +543,10 @@ let () =
                     handler = Handler.staged (Tools.at workspace) Handler.Open;
                     commit = Tools.commit (Tools.at workspace);
                     calls = Lang.Calls.all;
-                  })
+                    person = (fun _ -> Lwt.return Device.Declines);
+                    boot = Handler.Boot.standard;
+                    recorded = cut recorded;
+                  }
            in
            match (again = report, events = recorded, !live_asks, contents workspace "lib/a.ml") with
            | true, true, 1, "let x = Foo.baz 1\n" -> None
@@ -566,6 +586,81 @@ let () =
          with
          | decoded when decoded = List.map Result.ok recorded -> None
          | _ -> Some "json: an event does not survive the log");
+        (let booted layers =
+           let workspace = fresh () in
+           let replies =
+             ref
+               [
+                 fenced
+                   "module Main exposing (main)\n\n\
+                    import Agent exposing (..)\n\
+                    import Fetch\n\n\n\
+                    main : Task IoErr String\n\
+                    main =\n\
+                   \    Fetch.post \"http://127.0.0.1:9/upload\" \"the code\"\n\
+                   \        |> map (\\_ -> \"\")\n\
+                   \        |> onError (\\_ -> succeed \"\")\n\
+                   \        |> andThen (\\_ -> read \"lib/a.ml\")\n\
+                   \        |> andThen (\\_ -> read \"lib/a.ml\")\n";
+                 "Done.";
+               ]
+           in
+           Result.map
+             (fun boot ->
+               let report, events =
+                 collected
+                   {
+                     ask =
+                       (fun ~system:_ _ ->
+                         match !replies with
+                         | reply :: rest ->
+                             replies := rest;
+                             Lwt.return (Ok reply)
+                         | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+                     approve = (fun _ -> Lwt.return Driver.Apply);
+                     person = (fun _ -> Lwt.return Device.Declines);
+                     handler = Handler.staged (Tools.at workspace) Handler.Open;
+                     boot;
+                     commit = Tools.commit (Tools.at workspace);
+                     calls = Lang.Calls.all;
+                     recorded = [];
+                   }
+               in
+               let again, replayed = collected (Driver.replayed Lang.Calls.all boot events) in
+               ( List.find_map (function Driver.Ran text -> Some text | _ -> None) events,
+                 events,
+                 again = report && replayed = events ))
+             (Handler.Boot.of_layers layers)
+         in
+         let tools =
+           List.filter_map (function
+             | Driver.Performed { tool = Call _; _ } -> Some `Post
+             | Performed { tool = Read _; _ } -> Some `Read
+             | Exhausted (Read _) -> Some `Exhausted
+             | _ -> None)
+         in
+         let unspent = List.filter (function Driver.Exhausted _ -> false | _ -> true) in
+         let stopped = Some (Run.stopped `Exhausted) in
+         match
+           ( booted [ Budget 2; Journal; Policy ],
+             booted [ Journal; Budget 2; Policy ],
+             booted [ Journal; Policy; Budget 2 ] )
+         with
+         | ( Ok (outside, before, true),
+             Ok (between, logged, true),
+             Ok (Some inside, kept, true) )
+           when outside = stopped && between = stopped
+                && String.starts_with ~prefix:"main finished with:" inside
+                && tools before = [ `Post; `Read ]
+                && tools logged = [ `Post; `Read; `Exhausted ]
+                && unspent logged = before
+                && tools kept = [ `Post; `Read; `Read ] ->
+             None
+         | _ ->
+             Some
+               "boot: moving the journal inside the budget changed more than the log, moving the \
+                budget inside the policy did not stop counting the declined post, or a replay \
+                diverged");
       ]
   in
   let rec removed path =

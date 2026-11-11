@@ -28,6 +28,7 @@ type view = {
   mounts : (Tools.Path.t * Tools.mount) list;
   reads : Tools.reads;
   net : string list;
+  boot : Handler.Boot.t;  (** The layers around the tools; a narrower OS only lowers the budget. *)
 }
 
 val view : t -> view

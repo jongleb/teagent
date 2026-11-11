@@ -7,11 +7,5 @@ type consent = Agrees | Declines
 
 val all : t list
 val source : t -> string
-val class_of : string -> Value.class_
-
-val perform :
-  Tools.t ->
-  person:(string -> consent Lwt.t) ->
-  name:string ->
-  Value.t ->
-  (Value.t, Value.t) result Lwt.t
+val class_of : name:string -> Value.t -> Value.class_
+val perform : Tools.t -> name:string -> Value.t -> (Value.t, Value.t) result Lwt.t

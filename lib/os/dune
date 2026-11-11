@@ -1,3 +1,3 @@
 (library
  (name os)
- (libraries dartea.data device lang tools yojson))
+ (libraries dartea.data device handler lang tools yojson))

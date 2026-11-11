@@ -120,7 +120,7 @@ let () =
                           | Finished (Ok value), () -> (Ok (Value.to_elm value), [ 1 ])
                           | Finished (Error (`Failed value)), () ->
                               (Error ("the reference failed with " ^ Value.to_elm value), [ 1 ])
-                          | Finished (Error (`Interp _)), () ->
+                          | Finished (Error (`Interp _ | `Exhausted)), () ->
                               (Error "the reference crashed", [ 1 ])
                           | Stopped _, () -> (Error "the reference stopped", [ 1 ])
                           | Reached _, () -> (Error "the reference reached a hole", [ 1 ]))))
@@ -131,9 +131,12 @@ let () =
                          {
                            ask = (fun ~system history -> Llm.complete provider ~system history);
                            approve = (fun _ -> Lwt.return Driver.Apply);
+                           person = (fun _ -> Lwt.return Device.Declines);
                            handler = Handler.staged (Tools.at workspace) !shell;
+                           boot = Handler.Boot.standard;
                            commit = Tools.commit (Tools.at workspace);
                            calls = Lang.Calls.all;
+                           recorded = [];
                          }
                          ~on:(fun event ->
                            match (!loud, event) with
@@ -142,7 +145,7 @@ let () =
                                      | Filled { reply = text; _ })
                              ->
                                Lwt.return (Printf.printf "%s\n%s\n\n%!" name text)
-                           | `Loud, (Performed _ | Deferred _ | Decided _ | Committed _) ->
+                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Committed _) ->
                                Lwt.return_unit)
                          (read (Filename.concat task "task.md")))
                   in

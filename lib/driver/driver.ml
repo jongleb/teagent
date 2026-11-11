@@ -11,6 +11,7 @@ type event =
       staged : Tools.change list;
     }
   | Deferred of Value.tool
+  | Exhausted of Value.tool
   | Staged of string
   | Decided of decision
   | Committed of (unit, string) result
@@ -25,12 +26,53 @@ type report = { ending : (string, stop) result; rounds : int list }
 type world = {
   ask : system:string -> Llm.message list -> (string, [ `Llm of Llm.error ]) result Lwt.t;
   approve : string -> decision Lwt.t;
+  person : string -> Device.consent Lwt.t;
   handler : Handler.Overlay.t Handler.t;
+  boot : Handler.Boot.t;
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
   calls : Lang.Calls.t;
+  recorded : event list;
 }
 
-let solve { ask; approve; handler; commit; calls } ~on task =
+let solve world ~on task =
+  let queued pick = ref (List.filter_map pick world.recorded) in
+  let next queue =
+    match !queue with
+    | first :: rest ->
+        queue := rest;
+        Some first
+    | [] -> None
+  in
+  let replies =
+    queued (function
+      | Wrote text | Guessed text | Answered text | Filled { reply = text; _ } -> Some text
+      | _ -> None)
+  in
+  let steps =
+    queued (function
+      | Performed { tool; result; staged } -> Some (tool, `Performed (result, staged))
+      | Deferred tool -> Some (tool, `Deferred)
+      | Exhausted tool -> Some (tool, `Exhausted)
+      | _ -> None)
+  in
+  let decisions = queued (function Decided decision -> Some decision | _ -> None) in
+  let commits = queued (function Committed outcome -> Some outcome | _ -> None) in
+  let ask ~system history =
+    match next replies with
+    | Some reply -> Lwt.return (Ok reply)
+    | None -> world.ask ~system history
+  in
+  let approve diff =
+    match next decisions with
+    | Some decision -> Lwt.return decision
+    | None -> world.approve diff
+  in
+  let commit changes =
+    match next commits with
+    | Some (Ok ()) -> Lwt.return (Ok ())
+    | Some (Error reason) -> Lwt.return (Error (`Tools (Tools.Conflict reason)))
+    | None -> world.commit changes
+  in
   let system =
     String.concat "\n\n"
       ([
@@ -78,25 +120,43 @@ let solve { ask; approve; handler; commit; calls } ~on task =
           taken back, so it goes only if the person says yes; otherwise it fails with \
           `Declined`, and you should tell them what you wanted to send.\n\n\
           ```elm\n"
-         ^ Lang.Calls.source calls ^ "```";
+         ^ Lang.Calls.source world.calls ^ "```";
          "The examples below show the style only. Each solves a different task from yours; \
           write a new program for your task instead of copying one.";
        ]
       @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
   in
   let watched =
-    {
-      Handler.perform =
-        (fun tool overlay ->
-          let* step = handler.perform tool overlay in
-          match step with
-          | Handler.Performed (result, after) ->
-              let* () = on (Performed { tool; result; staged = Handler.Overlay.since overlay after }) in
-              Lwt.return step
-          | Handler.Blocked ->
-              let* () = on (Deferred tool) in
+    Handler.booted world.boot ~person:world.person
+      ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
+        {
+          perform =
+            (fun tool overlay ->
+              let* step =
+                match next steps with
+                | Some (recorded, `Performed (result, staged)) when recorded = tool ->
+                    Lwt.return (Handler.Performed (result, Handler.Overlay.after overlay tool staged))
+                | Some (recorded, `Deferred) when recorded = tool -> Lwt.return Handler.Blocked
+                | Some (recorded, `Exhausted) when recorded = tool -> Lwt.return Handler.Exhausted
+                | Some _ ->
+                    replies := [];
+                    steps := [];
+                    decisions := [];
+                    commits := [];
+                    inner.perform tool overlay
+                | None -> inner.perform tool overlay
+              in
+              let* () =
+                on
+                  (match step with
+                  | Handler.Performed (result, after) ->
+                      Performed { tool; result; staged = Handler.Overlay.since overlay after }
+                  | Handler.Blocked -> Deferred tool
+                  | Handler.Exhausted -> Exhausted tool)
+              in
               Lwt.return step);
-    }
+        })
+      world.handler
   in
   let program_in reply =
     let opening = "```elm\n" in
@@ -163,7 +223,7 @@ let solve { ask; approve; handler; commit; calls } ~on task =
           match outcome with
           | Finished (Ok value) -> finished history ("main finished with:\n" ^ shown value)
           | Finished (Error (`Failed value)) -> finished history ("main failed with:\n" ^ shown value)
-          | Finished (Error (`Interp error)) -> finished history (Run.stopped error)
+          | Finished (Error ((`Interp _ | `Exhausted) as stop)) -> finished history (Run.stopped stop)
           | Unfillable reason -> finished history reason
           | Reached hole ->
               let rec asked history round =
@@ -245,7 +305,7 @@ let solve { ask; approve; handler; commit; calls } ~on task =
         | Some source, _, _ -> (
             let* () = on (Wrote text) in
             let history = history @ [ { Llm.role = Assistant; text } ] in
-            match Run.compiled calls source with
+            match Run.compiled world.calls source with
             | Error report when round >= 4 ->
                 let* () = on (Refused report) in
                 Lwt.return { ending = Error (Never_compiled report); rounds = List.rev rounds }
@@ -304,79 +364,22 @@ let explained = function
   | Discarded -> "Stopped: the changes were not applied."
   | Too_many_programs -> "Stopped after 8 programs without an answer."
 
-let resumed events live =
-  let queued pick = ref (List.filter_map pick events) in
-  let next queue =
-    match !queue with
-    | first :: rest ->
-        queue := rest;
-        Some first
-    | [] -> None
-  in
-  let replies =
-    queued (function
-      | Wrote text | Guessed text | Answered text | Filled { reply = text; _ } -> Some text
-      | _ -> None)
-  in
-  let steps =
-    queued (function
-      | Performed { tool; result; staged } -> Some (tool, `Performed (result, staged))
-      | Deferred tool -> Some (tool, `Deferred)
-      | _ -> None)
-  in
-  let decisions = queued (function Decided decision -> Some decision | _ -> None) in
-  let commits = queued (function Committed outcome -> Some outcome | _ -> None) in
+let replayed calls boot recorded =
   {
-    ask =
-      (fun ~system history ->
-        match next replies with
-        | Some reply -> Lwt.return (Ok reply)
-        | None -> live.ask ~system history);
-    approve =
-      (fun diff ->
-        match next decisions with
-        | Some decision -> Lwt.return decision
-        | None -> live.approve diff);
+    calls;
+    boot;
+    recorded;
+    ask = (fun ~system:_ _ -> Lwt.return (Error (`Llm (Llm.Transport "the log has no more replies"))));
+    approve = (fun _ -> Lwt.return Discard);
+    person = (fun _ -> Lwt.return Device.Declines);
     handler =
       {
         perform =
-          (fun tool overlay ->
-            match next steps with
-            | Some (recorded, `Performed (result, staged)) when recorded = tool ->
-                Lwt.return (Handler.Performed (result, Handler.Overlay.after overlay tool staged))
-            | Some (recorded, `Deferred) when recorded = tool -> Lwt.return Handler.Blocked
-            | Some _ ->
-                replies := [];
-                steps := [];
-                decisions := [];
-                commits := [];
-                live.handler.perform tool overlay
-            | None -> live.handler.perform tool overlay);
+          (fun _ overlay ->
+            Lwt.return (Handler.Performed (Error (Value.V_string "the log has no such tool here"), overlay)));
       };
-    calls = live.calls;
-    commit =
-      (fun changes ->
-        match next commits with
-        | Some (Ok ()) -> Lwt.return (Ok ())
-        | Some (Error reason) -> Lwt.return (Error (`Tools (Tools.Conflict reason)))
-        | None -> live.commit changes);
+    commit = (fun _ -> Lwt.return (Error (`Tools (Tools.Conflict "the log has no commit here"))));
   }
-
-let replayed calls events =
-  resumed events
-    {
-      calls;
-      ask = (fun ~system:_ _ -> Lwt.return (Error (`Llm (Llm.Transport "the log has no more replies"))));
-      approve = (fun _ -> Lwt.return Discard);
-      handler =
-        {
-          perform =
-            (fun _ overlay ->
-              Lwt.return
-                (Handler.Performed (Error (Value.V_string "the log has no such tool here"), overlay)));
-        };
-      commit = (fun _ -> Lwt.return (Error (`Tools (Tools.Conflict "the log has no commit here"))));
-    }
 
 let undone events =
   let committed, _ =
@@ -386,7 +389,7 @@ let undone events =
         | Performed { tool; staged; _ } -> (committed, Handler.Overlay.after overlay tool staged)
         | Committed (Ok ()) -> (committed @ Handler.Overlay.changes overlay, Handler.Overlay.empty)
         | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
-        | Wrote _ | Refused _ | Deferred _ | Staged _ | Decided Apply | Ran _ | Guessed _
+        | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Ran _ | Guessed _
         | Answered _ | Filled _ ->
             (committed, overlay))
       ([], Handler.Overlay.empty) events
@@ -423,6 +426,7 @@ let event_to_json event : Yojson.Safe.t =
   | Committed (Ok ()) -> `Assoc [ ("committed", `Null) ]
   | Committed (Error reason) -> text "committed" reason
   | Deferred tool -> `Assoc [ ("deferred", Value.tool_to_json tool) ]
+  | Exhausted tool -> `Assoc [ ("exhausted", Value.tool_to_json tool) ]
   | Performed { tool; result; staged } ->
       `Assoc
         [
@@ -465,6 +469,7 @@ let event_of_json (json : Yojson.Safe.t) =
   | `Assoc [ ("committed", `Null) ] -> Ok (Committed (Ok ()))
   | `Assoc [ ("committed", `String reason) ] -> Ok (Committed (Error reason))
   | `Assoc [ ("deferred", tool) ] -> Result.map (fun tool -> Deferred tool) (Value.tool_of_json tool)
+  | `Assoc [ ("exhausted", tool) ] -> Result.map (fun tool -> Exhausted tool) (Value.tool_of_json tool)
   | `Assoc
       [ ("performed", `Assoc [ ("tool", tool); ("result", result); ("staged", `List staged) ]) ]
     ->

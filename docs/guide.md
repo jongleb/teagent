@@ -223,7 +223,8 @@ anything.
   "tools": ["read", "grep", "edit", "bash"],
   "mounts": { "secrets": "hidden", ".env.local": "hidden", "vendor": "readonly", "_build": "scratch" },
   "reads": ["~/.opam"],
-  "net": ["registry.npmjs.org", "*.crates.io"]
+  "net": ["registry.npmjs.org", "*.crates.io"],
+  "boot": [{ "budget": 200 }, "journal", "policy"]
 }
 ```
 
@@ -234,6 +235,7 @@ anything.
 | `hidden`, `readonly` | Lists of paths, a shorthand for the same kinds of mount. |
 | `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |
 | `net` | Which of the hosts you granted with `--net` commands may reach here. It can drop hosts, never add them. |
+| `boot` | The layers around the tools, outermost first. `journal` writes each call that reaches it to the session log, and a replay answers there from the log. `policy` asks you before a call that cannot be taken back. `{ "budget": n }` lets n calls through in a run; at the next one the program stops. `journal` and `policy` appear once each, the journal outside the policy, so the log holds every answer you give. The default is `["journal", "policy"]`, with no budget. A budget outside the journal is not logged when it stops a call; one inside the policy does not count the calls you declined. A second profile can only lower a budget. |
 
 Network is the one right a profile cannot give: you grant hosts on the command line, with
 `--net registry.npmjs.org` or `--net '*.crates.io'` (every name under `crates.io`), repeated as

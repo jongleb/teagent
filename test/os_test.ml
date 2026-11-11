@@ -151,6 +151,33 @@ let () =
                        (String.split_on_char '\n' (Lang.Calls.source (Os.table os)))) ->
             None
         | _ -> Some "the Agent module kept a call the profile dropped");
+        (match
+           Result.bind
+             (narrowed {|{ "boot": [{ "budget": 5 }, "journal", "policy"] }|} (Os.granted "/w" ~net:[]))
+             (narrowed {|{ "boot": ["journal", "policy", { "budget": 9 }] }|})
+         with
+        | Ok os when ((Os.view os).boot :> Handler.Boot.layer list) = [ Journal; Policy; Budget 5 ] -> None
+        | _ -> Some "a second boot did not keep its order with the smaller budget");
+        (match
+           Result.bind
+             (narrowed {|{ "boot": [{ "budget": 5 }, "journal", "policy"] }|} (Os.granted "/w" ~net:[]))
+             (narrowed {|{ "boot": ["journal", "policy"] }|})
+         with
+        | Ok os when ((Os.view os).boot :> Handler.Boot.layer list) = [ Budget 5; Journal; Policy ] -> None
+        | _ -> Some "a boot without a budget dropped the earlier one");
+        (match
+           List.map
+             (fun text -> narrowed text (Os.granted "/w" ~net:[]))
+             [
+               {|{ "boot": ["policy", "journal"] }|};
+               {|{ "boot": ["journal"] }|};
+               {|{ "boot": ["journal", "policy", "journal"] }|};
+               {|{ "boot": [{ "budget": 1 }, "journal", "policy", { "budget": 2 }] }|};
+               {|{ "boot": [{ "budget": -1 }, "journal", "policy"] }|};
+             ]
+         with
+        | [ Error _; Error _; Error _; Error _; Error _ ] -> None
+        | _ -> Some "a boot without one policy inside one journal, or with a bad budget, was accepted");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

@@ -99,13 +99,15 @@ let () =
            | Pure -> "pure "
            | Staged -> "staged "
            | Contained -> "contained "
-           | Irreversible -> "irreversible ")
+           | Irreversible _ -> "irreversible ")
           ^ Yojson.Safe.to_string (Value.tool_to_json tool))
           (if String.length shown <= 2_000 then shown
            else String.sub shown 0 2_000 ^ "… (cut)")
     | Deferred tool ->
         section "deferred until the changes are settled"
           (Yojson.Safe.to_string (Value.tool_to_json tool))
+    | Exhausted tool ->
+        section "stopped: no tool calls left in the budget" (Yojson.Safe.to_string (Value.tool_to_json tool))
     | Staged diff -> section "changes" diff
     | Decided Apply -> section "decision" "apply"
     | Decided Discard -> section "decision" "discard"
@@ -182,9 +184,12 @@ let () =
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
-          handler = Handler.staged ~person (Os.workspace os) !shell;
+          person;
+          handler = Handler.staged (Os.workspace os) !shell;
+          boot = (Os.view os).boot;
           commit = Tools.commit (Os.workspace os);
           calls = Os.table os;
+          recorded = [];
         }
   in
   let logged log ~skipped world task =
@@ -292,10 +297,10 @@ let () =
               exit 1))
   | `Replay file -> (
       let task, _, recorded = loaded file in
-      let replayed = ref [] in
+      let replayed = ref [] and os = profiled () in
       let _report =
         Lwt_main.run
-          (Driver.solve (Driver.replayed (Os.table (profiled ())) recorded)
+          (Driver.solve (Driver.replayed (Os.table os) (Os.view os).boot recorded)
              ~on:(fun event ->
                replayed := event :: !replayed;
                printed event)
@@ -325,7 +330,7 @@ let () =
       let task, place, recorded = loaded file in
       Option.iter (fun place -> directory := place) place;
       finished
-        (logged file ~skipped:(List.length recorded) (Driver.resumed recorded (live ())) task)
+        (logged file ~skipped:(List.length recorded) { (live ()) with recorded } task)
   | `Exec file -> (
       let source =
         match In_channel.with_open_text file In_channel.input_all with
@@ -352,9 +357,12 @@ let () =
                          Lwt.return (Ok reply)
                      | [] -> Lwt.return (Ok "Done."));
                  approve = approved;
-                 handler = Handler.staged ~person workspace !shell;
+                 person;
+                 handler = Handler.staged workspace !shell;
+                 boot = (Os.view os).boot;
                  commit = Tools.commit workspace;
                  calls = Os.table os;
+                 recorded = [];
                }
                task))
   | `Fresh -> (

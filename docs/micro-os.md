@@ -102,11 +102,13 @@ A handler is already `{ perform : tool -> state -> step }`. A driver is a functi
 handler to a handler, so the boot order is plain composition:
 
 ```
-budget ∘ policy ∘ journal ∘ mounts ∘ net ∘ drivers ∘ run
+budget ∘ journal ∘ policy ∘ tools
 ```
 
-The order is part of the OS and visible in it. Moving `journal` outward logs denied calls too;
-moving `budget` inward stops counting calls that the policy refused. Nothing else changes.
+The order is part of the OS and visible in it. Moving `journal` outward logs the calls the budget
+stopped too; moving `budget` inside `policy` stops counting calls the person declined. Nothing
+else changes. The journal always sits outside the policy: the person's answers are then in the
+log, and a replay never asks again.
 
 ## Processes: spawn and fork
 
@@ -169,7 +171,7 @@ direction, not a plan.
 | 7 | Call classes as constructors; plan and replay keyed on them | an `Irreversible` driver call is held for approval in every mode |
 | 8 | ABI document with a version; image hash over OS, drivers and skills | a log made by one build replays under another build of the same ABI version |
 
-Steps 1 to 4, 6 and 7 are done; step 5, the order of handler wrappers taken from the OS, is not. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
+Steps 1 to 7 are done; step 8 is not. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
 `Os.table` turns it into `Lang.Calls.t`, which can only lose calls, and every program, the
 model's prompt and the MCP `run` tool see the `Agent` module cut to that table. Drivers go
 through one kernel, `Agent.call`; the first is `Fetch`, whose handler checks the host against
@@ -188,7 +190,13 @@ the answer is logged, so a replay neither asks nor sends. Skills are Elm modules
 `.teagent/skills`. A skill needs the calls its `import Agent exposing (...)` names (all of them
 when it imports `Agent` whole) and the drivers and skills it imports. `Lang.Calls` installs only
 the skills whose needs the OS meets, and importing any other is a compile error that names the
-skill and what it lacks.
+skill and what it lacks. The OS boots `Handler.Boot.t` around the tools: `budget`, `policy` and
+`journal` in the order the profile gives, outermost first. The journal sits outside the policy,
+so the log holds every answer of the person and a replay never asks; a replay answers at the
+journal's place, and only the layers outside it run again. Moving the journal inside the budget
+logs the call the budget stopped; moving the budget inside the policy stops counting the calls
+the person declined. Mounts and the net stay in the tools: they shape what a command's copy
+holds and which hosts its proxy reaches, which a wrapper around a call cannot do.
 
 ## Open questions
 

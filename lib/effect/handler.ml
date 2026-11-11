@@ -148,11 +148,11 @@ module Overlay = struct
     String.concat "" (List.map rendered (changes overlay))
 end
 
-type 'state step = Performed of (Value.t, Value.t) result * 'state | Blocked
+type 'state step = Performed of (Value.t, Value.t) result * 'state | Blocked | Exhausted
 type 'state t = { perform : Value.tool -> 'state -> 'state step Lwt.t }
 
 type outcome =
-  | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error ]) result
+  | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error | `Exhausted ]) result
   | Stopped of Value.task
   | Reached of Value.hole
 
@@ -191,15 +191,13 @@ let maybe text =
 let ran ({ out; code } : Tools.ran) =
   Value.V_record [ ("code", V_number (Float.of_int code)); ("out", V_string out) ]
 
-let nobody _ = Lwt.return Device.Declines
-
 let class_of : Value.tool -> Value.class_ = function
   | Read _ | Grep _ -> Pure
   | Write _ | Edit _ | Enter _ | Leave | Merge _ -> Staged
   | Shell _ -> Contained
-  | Call { name; _ } -> Device.class_of name
+  | Call { name; argument } -> Device.class_of ~name argument
 
-let run ?(person = nobody) workspace =
+let run workspace =
   let located path within =
     match Tools.Path.of_string path with
     | Error _ as denied -> Lwt.return (seen denied)
@@ -230,7 +228,7 @@ let run ?(person = nobody) workspace =
     | Grep { pattern; glob } ->
         performed (Lwt.map (fun found -> Ok (matches found)) (Tools.grep workspace ~pattern ~glob))
     | Shell command -> performed (Lwt.map (fun done_ -> Ok (ran done_)) (Tools.shell workspace command))
-    | Call { name; argument } -> performed (Device.perform workspace ~person ~name argument)
+    | Call { name; argument } -> performed (Device.perform workspace ~name argument)
   in
   { perform }
 
@@ -238,7 +236,7 @@ type shell = Open | Contained | Disabled
 
 let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]
 
-let staged ?(person = nobody) workspace shell =
+let staged workspace shell =
   let within (overlay : Overlay.t) = Tools.mounting overlay.frame.mounts workspace in
   let current overlay (path : Tools.Path.t) =
     match Overlay.found overlay (path :> string) with
@@ -386,7 +384,7 @@ let staged ?(person = nobody) workspace shell =
     | Call { name; argument } ->
         Lwt.map
           (fun result -> Performed (result, overlay))
-          (Device.perform (within overlay) ~person ~name argument)
+          (Device.perform (within overlay) ~name argument)
     | Shell command -> (
         match (shell, Overlay.visible overlay, overlay.parents) with
         | Open, _, _ :: _ ->
@@ -420,6 +418,66 @@ let staged ?(person = nobody) workspace shell =
   in
   { perform }
 
+module Boot = struct
+  type layer = Budget of int | Policy | Journal
+  type t = layer list
+
+  let standard = [ Journal; Policy ]
+
+  let of_layers layers =
+    match
+      ( List.filter (function Budget _ -> false | Policy | Journal -> true) layers,
+        List.filter_map (function Budget calls -> Some calls | Policy | Journal -> None) layers )
+    with
+    | [ Journal; Policy ], [] -> Ok layers
+    | [ Journal; Policy ], [ calls ] when calls >= 0 -> Ok layers
+    | [ Journal; Policy ], [ _ ] -> Error "a budget of tool calls cannot be below zero"
+    | [ Journal; Policy ], _ :: _ :: _ -> Error "boot has more than one budget"
+    | _ ->
+        Error
+          "boot lists journal once and policy once, journal first, so the log holds every \
+           answer the person gives"
+
+  let narrowed earlier later =
+    let budget = List.find_map (function Budget calls -> Some calls | Policy | Journal -> None) in
+    match (budget earlier, budget later) with
+    | None, _ -> later
+    | Some calls, None -> Budget calls :: later
+    | Some calls, Some fewer ->
+        List.map (function Budget _ -> Budget (min calls fewer) | (Policy | Journal) as layer -> layer) later
+end
+
+let booted boot ~person ~journal base =
+  List.fold_right
+    (fun (layer : Boot.layer) inner ->
+      match layer with
+      | Journal -> journal inner
+      | Policy ->
+          {
+            perform =
+              (fun tool state ->
+                match class_of tool with
+                | Irreversible { question; declined } -> (
+                    let* consent = person question in
+                    match consent with
+                    | Device.Agrees -> inner.perform tool state
+                    | Declines -> Lwt.return (Performed (Error declined, state)))
+                | Pure | Staged | Contained -> inner.perform tool state);
+          }
+      | Budget calls ->
+          let spent = ref 0 in
+          {
+            perform =
+              (fun tool state ->
+                match !spent < calls with
+                | false -> Lwt.return Exhausted
+                | true ->
+                    let+ step = inner.perform tool state in
+                    (match step with Performed _ -> incr spent | Blocked | Exhausted -> ());
+                    step);
+          })
+    boot base
+
 let rec interpret handler program state (task : Value.task) =
   let continued callback value state =
     match Interp.apply program callback value with
@@ -443,7 +501,8 @@ let rec interpret handler program state (task : Value.task) =
       match step with
       | Performed (result, state) ->
           (Finished (Result.map_error (fun value -> `Failed value) result), state)
-      | Blocked -> (Stopped task, state))
+      | Blocked -> (Stopped task, state)
+      | Exhausted -> (Finished (Error `Exhausted), state))
   | Hole hole -> Lwt.return (Reached hole, state)
   | And_then { callback; task } -> (
       let* outcome, state = interpret handler program state task in
@@ -468,13 +527,13 @@ let rec interpret handler program state (task : Value.task) =
               Finished
                 (Result.bind (Interp.apply program callback value) (fun value ->
                      Error (`Failed value)))
-          | Finished (Ok _ | Error (`Interp _)) | Stopped _ | Reached _ -> outcome),
+          | Finished (Ok _ | Error (`Interp _ | `Exhausted)) | Stopped _ | Reached _ -> outcome),
           state )
   | On_error { callback; task } -> (
       let* outcome, state = interpret handler program state task in
       match outcome with
       | Finished (Error (`Failed value)) -> continued callback value state
-      | Finished (Ok _ | Error (`Interp _)) | Reached _ -> Lwt.return (outcome, state)
+      | Finished (Ok _ | Error (`Interp _ | `Exhausted)) | Reached _ -> Lwt.return (outcome, state)
       | Stopped rest -> Lwt.return (Stopped (On_error { callback; task = rest }), state))
   | Batch tasks ->
       let rec each done_ state = function

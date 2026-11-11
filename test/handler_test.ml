@@ -40,6 +40,7 @@ let () =
     | `Interp (Interp.Stuck reason) -> Some (name ^ ": stuck, " ^ reason)
     | `Interp (Interp.Crashed reason) -> Some (name ^ ": crashed, " ^ reason)
     | `Interp Interp.Budget_exhausted -> Some (name ^ ": out of budget")
+    | `Exhausted -> Some (name ^ ": out of tool calls")
   in
   let finished name check = function
     | Handler.Finished (Ok value) -> check value

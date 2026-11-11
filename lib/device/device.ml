@@ -1,20 +1,28 @@
-open Lwt.Syntax
-
 type t = Fetch
 type consent = Agrees | Declines
 
 let all = [ Fetch ]
 let source = function Fetch -> Fetch_elm.source
 
-let class_of = function
-  | "fetch.post" -> Value.Irreversible
+let failed constructor detail =
+  Value.V_constr
+    { constructor = { module_name = "Fetch"; name = constructor }; arguments = [ V_string detail ] }
+
+let class_of ~name argument =
+  match (name, argument) with
+  | "fetch.post", Value.V_record [ ("body", V_string body); ("url", V_string url) ] ->
+      Value.Irreversible
+        {
+          question =
+            Printf.sprintf "send %d bytes to %s:\n%s" (String.length body) url
+              (match String.length body <= 2_000 with
+              | true -> body
+              | false -> String.sub body 0 2_000 ^ "… (cut)");
+          declined = failed "Declined" "the person did not let this request go out; ask them first";
+        }
   | _ -> Value.Pure
 
-let perform workspace ~person ~name argument =
-  let failed constructor detail =
-    Value.V_constr
-      { constructor = { module_name = "Fetch"; name = constructor }; arguments = [ V_string detail ] }
-  in
+let perform workspace ~name argument =
   let fetched request url =
     Lwt.map
       (function
@@ -27,17 +35,6 @@ let perform workspace ~person ~name argument =
   in
   match (name, argument) with
   | "fetch.get", Value.V_string url -> fetched Tools.Get url
-  | "fetch.post", Value.V_record [ ("body", V_string body); ("url", V_string url) ] -> (
-      let* consent =
-        person
-          (Printf.sprintf "send %d bytes to %s:\n%s" (String.length body) url
-             (match String.length body <= 2_000 with
-             | true -> body
-             | false -> String.sub body 0 2_000 ^ "… (cut)"))
-      in
-      match consent with
-      | Agrees -> fetched (Tools.Post body) url
-      | Declines ->
-          Lwt.return
-            (Error (failed "Declined" "the person did not let this request go out; ask them first")))
+  | "fetch.post", Value.V_record [ ("body", V_string body); ("url", V_string url) ] ->
+      fetched (Tools.Post body) url
   | _ -> Lwt.return (Error (Value.V_string ("no driver answers the call " ^ name)))

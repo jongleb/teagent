@@ -16,7 +16,7 @@ type t = {
 type hole = { run : t; reached : Value.hole; needle : string; spots : int list }
 
 type outcome =
-  | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error ]) result
+  | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error | `Exhausted ]) result
   | Reached of hole
   | Unfillable of string
 
@@ -43,7 +43,7 @@ let run t (handler : Handler.Overlay.t Handler.t) ~settle =
               | Handler.Performed (result, after) ->
                   performed :=
                     { tool; result; staged = Handler.Overlay.since overlay after; after } :: !performed
-              | Handler.Blocked -> ());
+              | Handler.Blocked | Handler.Exhausted -> ());
               Lwt.return outcome);
     }
   in
@@ -90,10 +90,11 @@ let run t (handler : Handler.Overlay.t Handler.t) ~settle =
   | Ok task -> stepped task
   | Error failure -> Lwt.return (Ok (Finished (Error failure), Handler.Overlay.empty))
 
-let stopped : Interp.error -> string = function
-  | Crashed reason -> "main crashed: " ^ reason
-  | Budget_exhausted -> "main ran out of steps; it probably loops forever."
-  | Stuck reason -> "The harness failed to run main (a bug in teagent): " ^ reason
+let stopped = function
+  | `Interp (Interp.Crashed reason) -> "main crashed: " ^ reason
+  | `Interp Budget_exhausted -> "main ran out of steps; it probably loops forever."
+  | `Interp (Stuck reason) -> "The harness failed to run main (a bug in teagent): " ^ reason
+  | `Exhausted -> "main stopped at a tool: this OS allows no more tool calls in the session."
 
 let description hole = hole.reached.description
 let performed hole = hole.run.recorded

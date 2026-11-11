@@ -13,7 +13,24 @@ type t = {
 let start os shell ~on =
   {
     workspace = Os.workspace os;
-    handler = Handler.staged (Os.workspace os) shell;
+    handler =
+      Handler.booted (Os.view os).boot
+        ~person:(fun _ -> Lwt.return Device.Declines)
+        ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
+          {
+            perform =
+              (fun tool overlay ->
+                let* step = inner.perform tool overlay in
+                let* () =
+                  match step with
+                  | Handler.Performed (result, after) ->
+                      on (Driver.Performed { tool; result; staged = Handler.Overlay.since overlay after })
+                  | Handler.Blocked -> Lwt.return_unit
+                  | Handler.Exhausted -> on (Driver.Exhausted tool)
+                in
+                Lwt.return step);
+          })
+        (Handler.staged (Os.workspace os) shell);
     serves = (Os.view os).offers;
     calls = Os.table os;
     on;
@@ -166,27 +183,12 @@ let handled program json =
       | Error reason -> text (body ^ "\n\nNot applied, nothing was written: " ^ reason) true
     in
     let rec went run =
-      let watched =
-        {
-          Handler.perform =
-            (fun tool overlay ->
-              let* step = program.handler.perform tool overlay in
-              let* () =
-                match step with
-                | Handler.Performed (result, after) ->
-                    program.on
-                      (Performed { tool; result; staged = Handler.Overlay.since overlay after })
-                | Handler.Blocked -> Lwt.return_unit
-              in
-              Lwt.return step);
-        }
-      in
       let dropped body =
         let* () = program.on (Decided Discard) in
         Lwt.return (text (body ^ "\n\nThe changes of this run were dropped.") true)
       in
       let* outcome =
-        Run.run run watched ~settle:(fun overlay ->
+        Run.run run program.handler ~settle:(fun overlay ->
             Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
       in
       match outcome with
@@ -197,7 +199,7 @@ let handled program json =
           Lwt.map (reported body) (applied (Handler.Overlay.changes overlay))
       | Ok (Finished (Error (`Failed value)), _) ->
           dropped ("main failed with:\n" ^ Value.to_elm value)
-      | Ok (Finished (Error (`Interp error)), _) -> dropped (Run.stopped error)
+      | Ok (Finished (Error ((`Interp _ | `Exhausted) as stop)), _) -> dropped (Run.stopped stop)
       | Ok (Unfillable reason, _) -> dropped reason
       | Ok (Reached hole, _) ->
           program.started <- program.started + 1;
@@ -242,9 +244,10 @@ let handled program json =
         let* step = program.handler.perform tool Handler.Overlay.empty in
         match step with
         | Handler.Blocked -> Lwt.return (text "The tool was held back; try again." true)
+        | Handler.Exhausted ->
+            Lwt.return (text "This OS allows no more tool calls in the session." true)
         | Handler.Performed (result, overlay) ->
             let staged = Handler.Overlay.changes overlay in
-            let* () = program.on (Performed { tool; result; staged }) in
             let* applied = applied staged in
             let body =
               match (tool, result) with

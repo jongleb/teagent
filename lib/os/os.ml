@@ -16,6 +16,7 @@ type view = {
   mounts : (Tools.Path.t * Tools.mount) list;
   reads : Tools.reads;
   net : string list;
+  boot : Handler.Boot.t;
 }
 
 type t = { root : string; allows : view; skills : Lang.Skill.t list }
@@ -23,7 +24,8 @@ type t = { root : string; allows : view; skills : Lang.Skill.t list }
 let granted root ~net =
   {
     root;
-    allows = { offers = List.map snd calls; mounts = []; reads = Anywhere; net };
+    allows =
+      { offers = List.map snd calls; mounts = []; reads = Anywhere; net; boot = Handler.Boot.standard };
     skills = [];
   }
 
@@ -122,7 +124,7 @@ let narrowed json os =
       match
         List.find_opt
           (fun (key, _) ->
-            not (List.mem key [ "tools"; "mounts"; "hidden"; "readonly"; "reads"; "net" ]))
+            not (List.mem key [ "tools"; "mounts"; "hidden"; "readonly"; "reads"; "net"; "boot" ]))
           fields
       with
       | Some (key, _) -> Error ("there is no setting called " ^ key)
@@ -161,17 +163,46 @@ let narrowed json os =
                       Result.bind
                         (listed "reads" fields ~expected:"an absolute path or one under ~/"
                            absolute) (fun reads ->
+                      Result.bind
+                        (match List.assoc_opt "boot" fields with
+                        | None -> Ok None
+                        | Some (`List layers) ->
+                            Result.bind
+                              (List.fold_right
+                                 (fun layer collected ->
+                                   Result.bind collected (fun rest ->
+                                       match layer with
+                                       | `String "journal" -> Ok (Handler.Boot.Journal :: rest)
+                                       | `String "policy" -> Ok (Handler.Boot.Policy :: rest)
+                                       | `Assoc [ ("budget", `Int calls) ] -> Ok (Handler.Boot.Budget calls :: rest)
+                                       | other ->
+                                           Error
+                                             ("boot: " ^ Yojson.Safe.to_string other
+                                            ^ " is not \"journal\", \"policy\" or {\"budget\": calls}")))
+                                 layers (Ok []))
+                              (fun layers ->
+                                Result.map Option.some
+                                  (Result.map_error (fun reason -> "boot: " ^ reason)
+                                     (Handler.Boot.of_layers layers)))
+                        | Some _ -> Error "boot is not a list of layers")
+                        (fun boot ->
                           Result.map
                             (fun net ->
+                              let booting later os =
+                                narrowing
+                                  (fun allows -> { allows with boot = Handler.Boot.narrowed allows.boot later })
+                                  os
+                              in
                               os |> applied only tools
                               |> mounting
                                    (List.map (fun path -> (path, Tools.Hidden)) (Option.value ~default:[] hidden)
                                    @ List.map (fun path -> (path, Tools.Readonly)) (Option.value ~default:[] readonly)
                                    @ mounts)
                               |> applied reading reads
-                              |> applied reaching net)
+                              |> applied reaching net
+                              |> applied booting boot)
                             (listed "net" fields
-                               ~expected:"a host such as registry.npmjs.org or *.crates.io" host)))))))
+                               ~expected:"a host such as registry.npmjs.org or *.crates.io" host))))))))
   | _ -> Error "it is not a JSON object"
 
 let view os = os.allows

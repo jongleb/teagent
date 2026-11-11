@@ -14,7 +14,7 @@ type step = {
 
 (** Where a run stopped. *)
 type outcome =
-  | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error ]) result
+  | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error | `Exhausted ]) result
   | Reached of hole  (** [filled] gives the run that goes on from it. *)
   | Unfillable of string  (** Why the hole it reached cannot be filled. *)
 
@@ -26,7 +26,7 @@ val run :
   settle:(Handler.Overlay.t -> (unit, 'e) result Lwt.t) ->
   (outcome * Handler.Overlay.t, 'e) result Lwt.t
 
-val stopped : Interp.error -> string
+val stopped : [ `Interp of Interp.error | `Exhausted ] -> string
 val description : hole -> string
 val question : hole -> string
 val performed : hole -> step list

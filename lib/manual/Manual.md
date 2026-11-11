@@ -3,7 +3,9 @@
 - One module: `module Main exposing (main)`, `import Agent exposing (..)`, and `main : Task e a`.
   The language is Elm 0.19.1 without ports. The core modules Basics, List, Maybe, Result,
   String, Char, Tuple, Dict and Set are there, plus `List.unique`; there is no Html, Json,
-  Regex, Debug, Random, Time and no `List.Extra`. `port`, `type`, `as` and `where` are reserved.
+  Regex, Debug, Random, Time and no `List.Extra`. `List.unique` keeps the first of each value,
+  in order. `port`, `type`, `as` and `where` cannot name a value, an argument or a record field;
+  `type` and `type alias` declarations are fine.
 - Write the Agent functions without a prefix: `succeed`, `andThen`, not `Task.succeed`.
   `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), not a
   `Result`. `fromResult` turns a `Result` into a task.
@@ -41,7 +43,8 @@
   relative to the root, files in path order. Several matches in one file give several
   `Match`es with the same path; use `List.unique` on the paths. `pattern` is a regular
   expression with `.`, `*`, `+`, `?`, `[...]`, `^`, `$`, `|`, `(...)`, `\d`, `\s`, `\w` (and
-  `\D`, `\S`, `\W`) and `\b`; write a backslash twice in an Elm string (`"\\s+"`). There is no
+  `\D`, `\S`, `\W`) and `\b`. A backslash makes any of these characters literal (`\.`,
+  `\(`, `\|`), and is written twice in an Elm string (`"\\s+"`, `"Foo\\.bar"`). There is no
   `{n,m}` and no lookaround, and a pattern grep cannot read finds nothing. `glob`: `*` and `?`
   within one folder, `**` across any number of folders, so `**/*.ml` and `lib/**` work and
   `**` alone is every file. Folders and files whose names start with a dot, `_build` and
@@ -74,7 +77,8 @@ a file changed on disk since it was staged).
 - Files that other programs run or obey are written only with a person's yes: git hooks and
   attributes (`.husky/`, `.pre-commit-config.yaml`, `.gitattributes`, `.gitmodules`), CI
   workflows (`.github/workflows/`, `.gitlab-ci.yml` and the like), the `scripts` of
-  `package.json` and npm or yarn settings, editor containers (`.devcontainer/`, `.idea/`), and
+  `package.json` (a change that leaves `scripts` as they were, such as a new version, needs no
+  one) and npm or yarn settings, editor containers (`.devcontainer/`, `.idea/`), and
   instructions for agents (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules` and the like).
   The rest of the changes are still written, and the reply names the files that were not.
 - teagent labels every value with where its content came from. A `Fetch` request, or a shell

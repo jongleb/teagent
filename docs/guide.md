@@ -156,7 +156,11 @@ compile after 4 rounds."
    folder, so `npm install` and `pip download` work; the caches go when the command ends.
    The command gets only the environment variables a toolchain needs (`PATH`, `HOME`, the
    locale, `TERM`, and the opam, cargo, go, node, python and Xcode ones), never API keys or
-   tokens, and npm runs no install scripts (`npm_config_ignore_scripts=true`).
+   tokens, and npm runs no install scripts (`npm_config_ignore_scripts=true`). On macOS the
+   Seatbelt profile denies everything it does not list, so a command cannot read the
+   clipboard, ask the keychain, send Apple events to other apps, look at other processes,
+   connect to unix sockets such as ssh-agent or Docker, or resolve names itself. It can still
+   list launchd's services, but not start or change one.
 4. When the command ends, teagent looks at which files in the copy were written or deleted.
    Each one becomes a staged change, exactly like an edit by the program.
 5. The copy is deleted.

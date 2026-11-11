@@ -412,8 +412,16 @@ let contained workspace staged command =
                 "sandbox-exec";
                 "-p";
                 Printf.sprintf
-                  "(version 1)\n(allow default)\n(deny network*)\n%s%s(deny file-read* %s)\n\
-                   (deny file-write*)\n\
+                  "(version 1)\n(deny default)\n(allow process-exec process-fork)\n\
+                   (allow signal (target same-sandbox))\n(allow process-info* (target self))\n\
+                   (allow sysctl-read)\n(allow file-read*)\n\
+                   (allow file-ioctl (literal \"/dev/null\") (regex #\"^/dev/fd/\") \
+                   (regex #\"^/dev/tty\"))\n\
+                   (allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") \
+                   (global-name \"com.apple.system.notification_center\") \
+                   (global-name \"com.apple.system.logger\"))\n\
+                   (allow ipc-posix-shm-read-data ipc-posix-shm-read-metadata)\n\
+                   %s%s(deny file-read* %s)\n\
                    (allow file-write* (subpath %S) (literal \"/dev/null\") \
                    (literal \"/dev/zero\") (regex #\"^/dev/fd/\") (regex #\"^/dev/tty\"))\n"
                   (Option.fold ~none:""

@@ -448,6 +448,45 @@ let () =
                  None
              | _ -> Some "no shell: the command ran or the program saw another code"));
         (let workspace = fresh () in
+         let attempts =
+           [
+             ("clipboard", "pbpaste");
+             ("apple-events", "osascript -e 'tell application \\\"System Events\\\" to get name of first process'");
+             ("launchd", "launchctl submit -l teagent.escape -- /usr/bin/true && launchctl remove teagent.escape");
+             ( "ssh-agent",
+               "nc -U "
+               ^ Option.value ~default:"/nonexistent" (Sys.getenv_opt "SSH_AUTH_SOCK")
+               ^ " </dev/null" );
+             ("docker", "nc -U /var/run/docker.sock </dev/null");
+             ("parent", "ps eww -p $PPID | grep -q PATH=");
+             ("dns", "nslookup example.com | grep -q '^Address' && nslookup example.com | tail -2 | grep -q Address");
+           ]
+         in
+         match
+           started
+             ("module Main exposing (main)\n\n\
+               import Agent exposing (..)\n\n\n\
+               main : Task IoErr String\n\
+               main =\n\
+              \    shell \""
+             ^ String.concat "; "
+                 (List.map
+                    (fun (name, command) -> "(" ^ command ^ ") >/dev/null 2>&1 && echo LEAK-" ^ name)
+                    attempts)
+             ^ "; echo done\" |> map .out\n")
+         with
+         | Error error -> explained "escapes" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged (Tools.at workspace) Handler.Contained)
+                    program Handler.Overlay.empty task)
+             with
+             | Finished (Ok (V_string "done\n")), _ -> None
+             | Finished (Ok (V_string out)), _ -> Some ("escapes: a contained command reached outside:\n" ^ out)
+             | _ -> Some "escapes: the program did not finish"));
+        (let workspace = fresh () in
          Unix.putenv "ANTHROPIC_API_KEY" "sk-canary-key";
          Unix.putenv "GITHUB_TOKEN" "ghp-canary-token";
          match

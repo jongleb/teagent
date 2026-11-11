@@ -537,6 +537,21 @@ let () =
             in
             Some
               ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six ])));
+        (let lines pattern text =
+           List.map (fun (found : Tools.found) -> found.line) (Tools.search ~pattern ~glob:"**" ~path:"a.py" text)
+         in
+         let source = "import os\n\ndef parse_config(path):\n    return 1\ndef parse_configs():\n    pass\n" in
+         match
+           ( lines "^\\s*def\\s+parse_config\\b" source,
+             lines "import|return" source,
+             lines "(def|pass) " source,
+             lines "[\\w]+\\(path\\)" source,
+             lines "\\d" "a\nb2\n",
+             lines "^" "a\nb\n",
+             lines "a\\|b" "a|b\nab\n" )
+         with
+        | [ 3 ], [ 1; 4 ], [ 3; 5 ], [ 3 ], [ 2 ], [ 1; 2 ], [ 1 ] -> None
+        | _ -> Some "grep: a common regular expression did not match as written, or a phantom line came back");
         (match
            Tools.redacted
              "id AKIAIOSFODNN7EXAMPLE and ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789ab, \

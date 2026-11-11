@@ -63,7 +63,14 @@ type limits = {
 }
 type t = { root : string; limits : limits }
 
-let at root = { root; limits = { mounts = []; reads = Anywhere; net = []; seconds = 1800 } }
+let at root =
+  {
+    root =
+      (match Filename.is_relative root with
+      | true -> Filename.concat (Sys.getcwd ()) root
+      | false -> root);
+    limits = { mounts = []; reads = Anywhere; net = []; seconds = 1800 };
+  }
 
 let dotenv name =
   let name = String.lowercase_ascii name in
@@ -245,9 +252,77 @@ let search ~pattern ~glob ~path text =
         letters 0 0 && segments pattern path
     | [], _ :: _ | _ :: _, [] -> false
   in
+  let translated =
+    let buffer = Buffer.create (String.length pattern * 2) in
+    let classes = function
+      | 'd' -> Some ("0-9", false)
+      | 'D' -> Some ("0-9", true)
+      | 's' -> Some (" \t\r\n", false)
+      | 'S' -> Some (" \t\r\n", true)
+      | 'w' -> Some ("A-Za-z0-9_", false)
+      | 'W' -> Some ("A-Za-z0-9_", true)
+      | _ -> None
+    in
+    let rec outside at =
+      match at < String.length pattern with
+      | false -> ()
+      | true -> (
+          match (pattern.[at], at + 1 < String.length pattern) with
+          | '\\', true -> (
+              let next = pattern.[at + 1] in
+              (match (classes next, next) with
+              | Some (members, false), _ -> Buffer.add_string buffer ("[" ^ members ^ "]")
+              | Some (members, true), _ -> Buffer.add_string buffer ("[^" ^ members ^ "]")
+              | None, 'b' -> Buffer.add_string buffer "\\b"
+              | None, 't' -> Buffer.add_char buffer '\t'
+              | None, 'n' -> Buffer.add_char buffer '\n'
+              | None, ('(' | ')' | '|' | '{' | '}') -> Buffer.add_char buffer next
+              | None, ('.' | '*' | '+' | '?' | '[' | ']' | '^' | '$' | '\\') ->
+                  Buffer.add_char buffer '\\';
+                  Buffer.add_char buffer next
+              | None, _ -> Buffer.add_char buffer next);
+              outside (at + 2))
+          | '(', _ ->
+              Buffer.add_string buffer "\\(";
+              outside (at + 1)
+          | ')', _ ->
+              Buffer.add_string buffer "\\)";
+              outside (at + 1)
+          | '|', _ ->
+              Buffer.add_string buffer "\\|";
+              outside (at + 1)
+          | '[', _ ->
+              Buffer.add_char buffer '[';
+              inside (at + 1) `First
+          | char, _ ->
+              Buffer.add_char buffer char;
+              outside (at + 1))
+    and inside at position =
+      match at < String.length pattern with
+      | false -> ()
+      | true -> (
+          match (pattern.[at], position) with
+          | ']', `Later ->
+              Buffer.add_char buffer ']';
+              outside (at + 1)
+          | '\\', _ when at + 1 < String.length pattern ->
+              (match classes pattern.[at + 1] with
+              | Some (members, false) -> Buffer.add_string buffer members
+              | Some (_, true) | None -> Buffer.add_char buffer pattern.[at + 1]);
+              inside (at + 2) `Later
+          | '^', `First ->
+              Buffer.add_char buffer '^';
+              inside (at + 1) `First
+          | char, _ ->
+              Buffer.add_char buffer char;
+              inside (at + 1) `Later)
+    in
+    outside 0;
+    Buffer.contents buffer
+  in
   match
     ( segments (String.split_on_char '/' glob) (String.split_on_char '/' path),
-      Str.regexp pattern )
+      Str.regexp translated )
   with
   | exception Failure _ -> []
   | false, _ -> []
@@ -258,7 +333,9 @@ let search ~pattern ~glob ~path text =
              match Str.search_forward expression line 0 with
              | _ -> Some { path; line = index + 1; text = line }
              | exception Not_found -> None)
-           (String.split_on_char '\n' text))
+           (match List.rev (String.split_on_char '\n' text) with
+           | "" :: lines -> List.rev lines
+           | lines -> List.rev lines))
 
 let rec walked root relative =
   let* names =
@@ -854,7 +931,11 @@ let contained workspace staged command =
                       untouched
                   in
                   Lwt.return (done_, written @ deleted)
-              | _ -> refused ("Could not clone the workspace: " ^ copied.out))
+              | code ->
+                  refused
+                    (Printf.sprintf "Could not clone the workspace %s (cp exited with %d)%s"
+                       workspace.root code
+                       (match String.trim copied.out with "" -> "" | out -> ": " ^ out)))
             (fun problem -> refused ("Could not run the contained shell: " ^ Printexc.to_string problem)))
         (fun () ->
           Option.iter

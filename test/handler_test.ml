@@ -448,6 +448,40 @@ let () =
                  None
              | _ -> Some "no shell: the command ran or the program saw another code"));
         (let workspace = fresh () in
+         Unix.putenv "ANTHROPIC_API_KEY" "sk-canary-key";
+         Unix.putenv "GITHUB_TOKEN" "ghp-canary-token";
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\n\n\
+              main : Task IoErr String\n\
+              main =\n\
+             \    shell \"env\" |> map .out\n"
+         with
+         | Error error -> explained "environment" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged (Tools.at workspace) Handler.Contained)
+                    program Handler.Overlay.empty task)
+             with
+             | Finished (Ok (V_string out)), _ -> (
+                 let lines = String.split_on_char '\n' out in
+                 match
+                   ( List.filter
+                       (fun line ->
+                         List.exists
+                           (fun prefix -> String.starts_with ~prefix line)
+                           [ "ANTHROPIC_API_KEY="; "GITHUB_TOKEN=" ])
+                       lines,
+                     List.mem "npm_config_ignore_scripts=true" lines,
+                     List.exists (String.starts_with ~prefix:"PATH=") lines )
+                 with
+                 | [], true, true -> None
+                 | _ -> Some ("environment: a contained shell saw the parent's secrets or lost PATH:\n" ^ out))
+             | _ -> Some "environment: the program did not finish"));
+        (let workspace = fresh () in
          match
            started
              "module Main exposing (main)\n\n\

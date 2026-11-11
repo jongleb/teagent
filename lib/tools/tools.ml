@@ -644,6 +644,7 @@ let contained workspace staged command =
                                  (fun (name, folder) -> name ^ "=" ^ Filename.concat scratch folder)
                                  [ ("TMPDIR", ""); ("XDG_CACHE_HOME", "cache");
                                    ("npm_config_cache", "npm"); ("PIP_CACHE_DIR", "pip") ]
+                              @ [ "npm_config_ignore_scripts=true" ]
                               @ Option.fold ~none:[]
                                    ~some:(fun (_, port) ->
                                      List.map
@@ -654,17 +655,20 @@ let contained workspace staged command =
                            (Array.of_list
                               (List.filter
                                  (fun binding ->
-                                   match
-                                     String.lowercase_ascii
-                                       (Option.fold ~none:binding
-                                          ~some:(fun at -> String.sub binding 0 at)
-                                          (String.index_opt binding '='))
-                                   with
-                                   | "tmpdir" | "xdg_cache_home" | "npm_config_cache"
-                                   | "pip_cache_dir" | "http_proxy" | "https_proxy" | "all_proxy"
-                                   | "no_proxy" ->
-                                       false
-                                   | _ -> true)
+                                   let name =
+                                     Option.fold ~none:binding
+                                       ~some:(fun at -> String.sub binding 0 at)
+                                       (String.index_opt binding '=')
+                                   in
+                                   String.starts_with ~prefix:"LC_" name
+                                   || List.mem name
+                                        [ "PATH"; "HOME"; "USER"; "LOGNAME"; "SHELL"; "LANG";
+                                          "LANGUAGE"; "TERM"; "TZ"; "OPAMROOT"; "OPAM_SWITCH_PREFIX";
+                                          "OCAMLPATH"; "OCAMLFIND_CONF"; "CAML_LD_LIBRARY_PATH";
+                                          "OCAML_TOPLEVEL_PATH"; "MANPATH"; "PKG_CONFIG_PATH";
+                                          "CARGO_HOME"; "RUSTUP_HOME"; "GOPATH"; "GOROOT";
+                                          "JAVA_HOME"; "NVM_DIR"; "NODE_PATH"; "PYENV_ROOT";
+                                          "VIRTUAL_ENV"; "DEVELOPER_DIR"; "SDKROOT" ])
                                  (Array.to_list (Unix.environment ())))))
                       program arguments
                   in

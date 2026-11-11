@@ -154,6 +154,9 @@ compile after 4 rounds."
    **writing only inside the copy** and its own temporary folder, and reading as
    [the profile](#the-profile) allows. Package managers keep their caches in that temporary
    folder, so `npm install` and `pip download` work; the caches go when the command ends.
+   The command gets only the environment variables a toolchain needs (`PATH`, `HOME`, the
+   locale, `TERM`, and the opam, cargo, go, node, python and Xcode ones), never API keys or
+   tokens, and npm runs no install scripts (`npm_config_ignore_scripts=true`).
 4. When the command ends, teagent looks at which files in the copy were written or deleted.
    Each one becomes a staged change, exactly like an edit by the program.
 5. The copy is deleted.

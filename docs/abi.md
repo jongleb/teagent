@@ -85,7 +85,8 @@ shown apart (`held`), and only the person can allow them; the rest are approved 
 `.githooks/`, `.pre-commit-config.yaml`, `lefthook.yml`, `.lefthook.yml`, `.gitattributes`,
 `.gitmodules` (git); `.github/workflows/`, `.github/actions/`, `.circleci/`, `.buildkite/`,
 `.gitlab-ci.yml`, `.travis.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `Jenkinsfile`
-(CI); `package.json`, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs` (install);
+(CI); `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, and `package.json` when its
+`scripts` change (install);
 `.devcontainer/`, `.idea/` (editors); `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`,
 `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, `.continue/` (other agents).
 No path may contain `.git`, `.claude`, `.codex`, `.cursor`, `.mcp.json`, `.teagent`, `.envrc` or

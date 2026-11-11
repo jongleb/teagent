@@ -201,7 +201,7 @@ let solve world ~on task =
   let settled overlay =
     let outside, inside =
       List.partition
-        (fun (change : Tools.change) -> Option.is_some (Tools.Path.runner change.path))
+        (fun (change : Tools.change) -> Option.is_some (Tools.runner change))
         (Handler.Overlay.changes overlay)
     in
     let* decision =
@@ -235,7 +235,7 @@ let solve world ~on task =
                                 (fun (change : Tools.change) ->
                                   Option.map
                                     (fun runner -> "  " ^ (change.path :> string) ^ ", run by " ^ runner)
-                                    (Tools.Path.runner change.path))
+                                    (Tools.runner change))
                                 outside)
                          ^ "\n\n" ^ diff))
               in

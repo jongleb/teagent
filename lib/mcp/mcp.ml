@@ -169,7 +169,7 @@ let handled program json =
     let applied staged =
       let outside, inside =
         List.partition
-          (fun (change : Tools.change) -> Option.is_some (Tools.Path.runner change.path))
+          (fun (change : Tools.change) -> Option.is_some (Tools.runner change))
           staged
       in
       let paths = List.map (fun (change : Tools.change) -> (change.path :> string)) in
@@ -210,7 +210,7 @@ let handled program json =
                 "\n\nNot written, because other programs run them outside the sandbox and only \
                  a person at teagent's own prompt can allow that: "
                 ^ String.concat ", " withheld)
-            false
+            (match withheld with [] -> false | _ :: _ -> true)
       | Error reason -> text (body ^ "\n\nNot applied, nothing was written: " ^ reason) true
     in
     let rec went run =

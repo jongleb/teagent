@@ -232,6 +232,7 @@ let () =
           recorded = [];
         }
   in
+  let held = ref 0 in
   let logged log ~skipped os world task =
     Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
         let written json =
@@ -243,6 +244,7 @@ let () =
           Lwt_main.run
             (Driver.solve world
                ~on:(fun event ->
+                 (match event with Held { decision = Discard; _ } -> incr held | _ -> ());
                  incr seen;
                  if !seen > skipped then written (Driver.event_to_json event);
                  printed os event)
@@ -277,6 +279,10 @@ let () =
   in
   let finished (report : Driver.report) =
     match report.ending with
+    | Ok _ when !held > 0 ->
+        prerr_endline
+          "\nSome changes were not written: files that other programs run need --ask and a yes.";
+        exit 3
     | Ok _ -> ()
     | Error Discarded when !approval = `Dry ->
         print_endline "\nNothing was written: this was a dry run."

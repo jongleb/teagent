@@ -220,8 +220,8 @@ times in a session, teagent stops asking and answers no by itself, so a program 
 down with questions.
 
 Files that other programs run or obey after the session are shown apart, under "files run
-outside the sandbox": git hooks and attributes, CI workflows, `package.json` and npm or yarn
-settings, editor containers, and instructions for other agents such as `AGENTS.md` or
+outside the sandbox": git hooks and attributes, CI workflows, the `scripts` of `package.json`
+and npm or yarn settings, editor containers, and instructions for other agents such as `AGENTS.md` or
 `CLAUDE.md` ([`abi.md`](abi.md) has the full list). Only you can allow them, at teagent's own
 prompt with `--ask`. Without `--ask`, with `--dry-run` and over MCP they are never written; the
 rest of the changes still are, and the model is told which files were left out.

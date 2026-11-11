@@ -1147,3 +1147,20 @@ let revealed text =
   in
   scanned 0;
   Buffer.contents buffer
+
+let runner (change : change) =
+  Option.bind (Path.runner change.path) (fun runner ->
+      let scripts text =
+        match Option.map Yojson.Safe.from_string text with
+        | None -> `Scripts None
+        | Some (`Assoc fields) -> `Scripts (List.assoc_opt "scripts" fields)
+        | Some _ | (exception Yojson.Json_error _) -> `Unreadable
+      in
+      match
+        ( String.lowercase_ascii (Filename.basename (change.path :> string)),
+          scripts change.before,
+          scripts change.after )
+      with
+      | "package.json", `Scripts before, `Scripts after when Option.equal Yojson.Safe.equal before after ->
+          None
+      | _ -> Some runner)

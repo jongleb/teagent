@@ -305,6 +305,14 @@ let solve world ~on task =
       match went with
       | Error problem -> Lwt.return (refused history problem)
       | Ok (outcome, overlay) -> (
+          let dropped history text =
+            Lwt.return
+              (Ok
+                 ( history,
+                   match Handler.Overlay.changes overlay with
+                   | [] -> text
+                   | _ :: _ -> text ^ "\n\nmain did not succeed, so nothing it changed was written." ))
+          in
           let finished history text =
             Lwt.map
               (Result.fold
@@ -324,9 +332,9 @@ let solve world ~on task =
           in
           match outcome with
           | Finished (Ok value) -> finished history ("main finished with:\n" ^ shown value)
-          | Finished (Error (`Failed value)) -> finished history ("main failed with:\n" ^ shown value)
-          | Finished (Error ((`Interp _ | `Exhausted) as stop)) -> finished history (Run.stopped stop)
-          | Unfillable reason -> finished history reason
+          | Finished (Error (`Failed value)) -> dropped history ("main failed with:\n" ^ shown value)
+          | Finished (Error ((`Interp _ | `Exhausted) as stop)) -> dropped history (Run.stopped stop)
+          | Unfillable reason -> dropped history reason
           | Reached hole ->
               let rec asked history round =
                 let* reply = ask ~system history in
@@ -338,7 +346,7 @@ let solve world ~on task =
                     let again problem =
                       match round >= 4 with
                       | true ->
-                          finished history
+                          dropped history
                             ("main stopped at the hole "
                             ^ Value.to_elm (V_string (Run.description hole))
                             ^ ": none of 4 replies for it compiled.")

@@ -880,6 +880,47 @@ readsSecrets call =\n\
             Some
               ("rules: the session did not follow the rules: " ^ String.concat "; " asked ^ " / "
               ^ Option.value ~default:"" ran));
+        (let workspace = fresh () in
+         let replies =
+           ref
+             [
+               fenced
+                 "module Main exposing (main)\n\n\
+                  import Agent exposing (..)\n\n\n\
+                  main : Task String ()\n\
+                  main =\n\
+                 \    write \"lib/new.ml\" \"x\" |> mapErr (\\_ -> \"io\")\n\
+                 \        |> andThen (\\_ -> fail \"the check did not pass\")\n";
+               "Done.";
+             ]
+         in
+         let _, events =
+           collected
+             {
+               ask =
+                 (fun ~system:_ _ ->
+                   match !replies with
+                   | reply :: rest ->
+                       replies := rest;
+                       Lwt.return (Ok reply)
+                   | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+               approve = (fun _ -> Lwt.return Driver.Apply);
+               person = (fun _ -> Lwt.return Device.Declines);
+               handler = Handler.staged (Tools.at workspace) Handler.Open;
+               commit = Tools.commit (Tools.at workspace);
+               os = Os.granted "/project" ~net:[];
+               recorded = [];
+             }
+         in
+         match
+           ( Sys.file_exists (Filename.concat workspace "lib/new.ml"),
+             List.exists (function Driver.Committed _ | Staged _ -> true | _ -> false) events,
+             List.find_map (function Driver.Ran text -> Some text | _ -> None) events )
+         with
+        | false, false, Some ran
+          when String.ends_with ~suffix:"main did not succeed, so nothing it changed was written." ran ->
+            None
+        | _ -> Some "failed main: a program that failed still wrote its changes");
         (let held person =
            let workspace = fresh () in
            let replies =

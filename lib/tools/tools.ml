@@ -1042,3 +1042,27 @@ let redacted text =
     Buffer.contents buffer
   in
   tokens (keyless text 0)
+
+let revealed text =
+  let buffer = Buffer.create (String.length text) in
+  let rec scanned at =
+    match at < String.length text with
+    | false -> ()
+    | true ->
+        let decoded = String.get_utf_8_uchar text at in
+        let length = Uchar.utf_decode_length decoded in
+        let code = Uchar.to_int (Uchar.utf_decode_uchar decoded) in
+        (match
+           (code = 0xAD || code = 0x180E || code = 0xFEFF)
+           || (code >= 0x200B && code <= 0x200F)
+           || (code >= 0x202A && code <= 0x202E)
+           || (code >= 0x2060 && code <= 0x2064)
+           || (code >= 0x2066 && code <= 0x2069)
+           || (code >= 0xE0000 && code <= 0xE007F)
+         with
+        | true -> Buffer.add_string buffer (Printf.sprintf "<U+%04X>" code)
+        | false -> Buffer.add_string buffer (String.sub text at length));
+        scanned (at + length)
+  in
+  scanned 0;
+  Buffer.contents buffer

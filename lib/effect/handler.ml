@@ -137,7 +137,7 @@ module Overlay = struct
              (List.map
                 (fun line ->
                   (match line.mark with Kept -> " " | Removed -> "-" | Added -> "+")
-                  ^ line.text ^ "\n")
+                  ^ Tools.revealed line.text ^ "\n")
                 span))
       in
       Printf.sprintf "--- %s\n+++ %s\n%s"

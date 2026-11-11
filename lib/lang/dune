@@ -3,6 +3,7 @@
  (libraries
   agent
   policy
+  tools
   device
   dartea
   dartea.data

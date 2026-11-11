@@ -51,12 +51,22 @@ module Skill = struct
   type t = { name : string; source : string; agent : agent; modules : string list }
 
   let of_source ~name:expected source =
-    match found "Elm.Kernel" source with
-    | Some _ ->
+    match
+      ( found "Elm.Kernel" source,
+        List.find_opt
+          (fun (_, line) -> not (String.equal (Tools.revealed line) line))
+          (List.mapi (fun index line -> (index + 1, line)) (String.split_on_char '\n' source)) )
+    with
+    | _, Some (number, line) ->
+        Error
+          (Printf.sprintf
+             "line %d holds a character that does not show, which can hide text from a reader: %s"
+             number (Tools.revealed line))
+    | Some _, None ->
         Error
           "a skill cannot name `Elm.Kernel`: it reaches the world only through Agent and the \
            driver modules it imports"
-    | None ->
+    | None, None ->
         Result.bind (parsed source) (fun impls ->
             let imports = imported impls in
             Result.bind

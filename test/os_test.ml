@@ -283,6 +283,27 @@ readsSecrets call =\n\
                 None
             | _ -> Some "rules: a decision came out wrong, a failing rule did not deny, or the image ignored them")
         | _ -> Some "rules: good rules were refused");
+        (match
+           ( Lang.Skill.of_source ~name:"Sneaky"
+               "module Sneaky exposing (x)\n\n\n-- \u{202E}evil hidden\nx : Int\nx =\n    1\n",
+             Lang.Skill.of_source ~name:"Spaced" "module Spaced exposing (x)\n\n\nx : String\nx =\n    \"a\u{200B}b\"\n",
+             Tools.revealed "a\u{202E}b\u{FEFF}c",
+             String.equal
+               (Tools.revealed (Lang.Calls.source Lang.Calls.all))
+               (Lang.Calls.source Lang.Calls.all),
+             Handler.Overlay.diff
+               (List.filter_map
+                  (fun path ->
+                    Result.to_option
+                      (Result.map
+                         (fun path -> { Tools.path; before = Some "x\n"; after = Some "x\u{2066}y\n" })
+                         (Tools.Path.of_string path)))
+                  [ "a.ml" ]) )
+         with
+        | Error first, Error second, "a<U+202E>b<U+FEFF>c", true, diff
+          when holds "<U+202E>" first && holds "<U+200B>" second && holds "+x<U+2066>y" diff ->
+            None
+        | _ -> Some "unicode: a hidden character passed into a skill, a diff, or teagent's own modules");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

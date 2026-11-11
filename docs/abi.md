@@ -127,9 +127,17 @@ replay it exactly.
 
 Before a program or the code for a hole runs, teagent looks at the calls it can reach. If it
 can read the project (`read`, `grep`, `shell`), take in text from outside (a driver call, a
-`hole`, `shell` when `--net` grants hosts) and send data out (a driver call, `shell` when
-`--net` grants hosts), it runs only if the person says yes, and the answer is logged as
-`exposed`.
+`hole`, `shell` when `--net` grants hosts) and send data out (`shell` when `--net` grants
+hosts, or a driver call when the program also has a `hole`), it runs only if the person says
+yes, and the answer is logged as `exposed`.
+
+While a program runs, the interpreter labels each value with where its content came from: a
+file `read` returned, lines `grep` found, a command's output, a child's changes, a driver's
+answer. Labels pass through every operation, and an `if` or `case` on a labelled value labels
+what its branch returns. A call is performed with the labels of its arguments and of the
+choices that led to it. An `Egress` call that carries labels of the project, or an
+`Irreversible` one, asks the person; a refusal is the call's result and is logged as any other.
+Labels are never logged: the interpreter computes them again on replay.
 
 Version 2 added the `Egress` class, the `held` and `exposed` events, the paths in `committed`,
 and hidden `.env` files.

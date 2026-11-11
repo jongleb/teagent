@@ -99,7 +99,7 @@ let () =
            | Pure -> "pure "
            | Staged -> "staged "
            | Contained -> "contained "
-           | Egress -> "egress "
+           | Egress _ -> "egress "
            | Irreversible _ -> "irreversible ")
           ^ Yojson.Safe.to_string (Value.tool_to_json tool))
           (if String.length shown <= 2_000 then shown

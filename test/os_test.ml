@@ -197,7 +197,7 @@ let () =
              Os.class_of (Os.granted "/w" ~net:[])
                (Value.Call { name = "fetch.get"; argument = V_string "https://example.com" }) )
          with
-        | Contained, Egress, Egress -> None
+        | Contained, Egress _, Egress _ -> None
         | _ -> Some "classes: a shell with granted hosts or Fetch.get is not Egress");
         (let reach os body imports =
            Result.map
@@ -212,13 +212,18 @@ let () =
              reach offline "read \"a\" |> andThen (\\t -> write \"b\" t) |> map (\\_ -> 0)" "",
              reach offline "shell \"ls\" |> map .code" "",
              reach online "shell \"npm ci\" |> map .code" "",
-             reach offline "read \"a\" |> andThen (\\_ -> hole \"later\")" "" )
+             reach offline "read \"a\" |> andThen (\\_ -> hole \"later\")" "",
+             reach offline
+               "read \"a\" |> andThen (\\_ -> hole \"later\") |> andThen (\\t -> Fetch.get t |> map .status |> mapErr (\\_ -> NotFound \"\"))"
+               "import Fetch" )
          with
-        | ( Ok (Some { reads = [ "read" ]; inward = [ "fetch.get" ]; outward = [ "fetch.get" ] }),
+        | ( Ok None,
             Ok None,
             Ok None,
             Ok (Some { reads = [ "shell with --net" ]; _ }),
-            Ok None ) ->
+            Ok None,
+            Ok (Some { reads = [ "read" ]; inward = [ "hole"; "fetch.get" ]; outward = [ "fetch.get" ] }) )
+          ->
             None
         | _ -> Some "exposure: a program with all three legs passed, or one without them was held");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with

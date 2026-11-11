@@ -14,13 +14,13 @@ let start os shell ~on =
   {
     workspace = Os.workspace os;
     handler =
-      Handler.booted (Os.view os).boot
+      Handler.booted (Os.view os).boot ~class_of:(Os.class_of os)
         ~person:(fun _ -> Lwt.return Device.Declines)
         ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
           {
             perform =
-              (fun tool overlay ->
-                let* step = inner.perform tool overlay in
+              (fun tool sources overlay ->
+                let* step = inner.perform tool sources overlay in
                 let* () =
                   match step with
                   | Handler.Performed (result, after) ->
@@ -105,9 +105,10 @@ let handled program json =
             Result, String, Char, Tuple, Dict and Set are available. The modules this run \
             offers, Agent and drivers such as Fetch that a program imports by name. A call that \
             cannot be taken back, such as Fetch.post, needs a person's yes, so here it always \
-            fails with Declined. A program that reads the project, takes in outside text (a \
-            driver, a hole) and sends data out (a driver) is refused before it runs, because it \
-            could leak the project; split such work over several programs:\n\n"
+            fails with Declined. teagent tracks where every value came from, and a driver call \
+            that carries what the program read from the project fails with Declined too; a \
+            program that reads the project and has both a hole and a driver call is refused \
+            before it runs:\n\n"
           ^ Lang.Calls.source (Os.table program.os))
           (schema [ ("program", "The whole Main module.") ] [ "program" ]);
         tool Os.Run "fill"
@@ -282,7 +283,7 @@ let handled program json =
         | Ok run -> went run)
     | Ok (`Fill (name, code)) -> resumed name code
     | Ok (`Tool tool) -> (
-        let* step = program.handler.perform tool Handler.Overlay.empty in
+        let* step = program.handler.perform tool [] Handler.Overlay.empty in
         match step with
         | Handler.Blocked -> Lwt.return (text "The tool was held back; try again." true)
         | Handler.Exhausted ->

@@ -195,12 +195,18 @@ The diff lists every staged file. A deleted file shows `+++ /dev/null`.
 - **You ran with `--yes`.** teagent applies without asking. Use it only when you trust the
   task.
 
-Before a program runs, teagent checks which calls it can reach. A program that can read the
-project, take in text from outside (`Fetch`, a hole, a shell command under `--net`) and send
-data out (`Fetch`, a shell command under `--net`) could leak your code, so teagent shows you
-which calls give each of the three and asks once. Without `--ask`, with `--dry-run` and over MCP
-the answer is no, and the model is told to split the work. A shell command under `--net` gives
-all three by itself, so with `--net` run teagent with `--ask`.
+teagent tracks where every value of a program came from: a file it read, lines grep found, a
+command's output. When a `Fetch` call or a shell command under `--net` would carry such
+content, or was chosen because of it (`if secret == "x" then Fetch.get a else Fetch.get b`),
+teagent asks you first and names the files the content came from. A `Fetch.get` built from the
+program's own text goes without a question.
+
+Some programs cannot be followed that way, so teagent checks them before they run: a shell
+command under `--net` can read the project and reach the network by itself, and the code for a
+hole is written by the model after it has seen values. A program that can read the project,
+take in text from outside and send data out through one of these asks you once, up front.
+Without `--ask`, with `--dry-run` and over MCP every such question is answered no, and the model
+is told. With `--net`, run teagent with `--ask`.
 
 Files that other programs run or obey after the session are shown apart, under "files run
 outside the sandbox": git hooks and attributes, CI workflows, `package.json` and npm or yarn

@@ -237,13 +237,31 @@ let table os =
 
 let class_of os (tool : Value.tool) =
   match (tool, os.allows.net) with
-  | Shell _, _ :: _ -> Value.Egress
+  | Shell _, _ :: _ ->
+      Value.Egress
+        {
+          declined =
+            Ok
+              (V_record
+              [
+                ("code", V_number 126.);
+                ( "out",
+                  V_string
+                    "the person did not let this command run: it carries content of the project \
+                     and can reach the network" );
+               ]);
+        }
   | _, _ -> Handler.class_of tool
 
 type exposure = { reads : string list; inward : string list; outward : string list }
 
 let exposure os calls =
   let networked = match os.allows.net with [] -> `Offline | _ :: _ -> `Networked in
+  let filled =
+    match List.find_opt (( = ) (Lang.Kernel Agent_hole)) calls with
+    | Some _ -> `Filled
+    | None -> `Written
+  in
   let legs (call : Lang.call) =
     match (call, networked) with
     | Kernel Agent_read, _ -> Some ("read", [ `Reads ])
@@ -251,7 +269,10 @@ let exposure os calls =
     | Kernel Agent_shell, `Offline -> Some ("shell", [ `Reads ])
     | Kernel Agent_shell, `Networked -> Some ("shell with --net", [ `Reads; `Inward; `Outward ])
     | Kernel Agent_hole, _ -> Some ("hole", [ `Inward ])
-    | Driver name, _ -> Some (name, [ `Inward; `Outward ])
+    | Driver name, _ -> (
+        match filled with
+        | `Filled -> Some (name, [ `Inward; `Outward ])
+        | `Written -> Some (name, [ `Inward ]))
     | Computed, _ -> Some ("a driver call", [ `Inward; `Outward ])
     | ( Kernel
           ( Agent_write | Agent_edit | Agent_enter | Agent_leave | Agent_merge | Agent_call

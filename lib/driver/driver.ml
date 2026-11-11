@@ -115,11 +115,12 @@ let solve world ~on task =
           cannot see what `mounts` hide, and keeps its own changes apart. They reach yours \
           only through `merge`, which fails with the changes that clash if a file moved \
           meanwhile. Use it to try something you may throw away.\n\
-          - A program that reads the project (read, grep, shell), takes in text from outside \
-          (a driver such as Fetch, a hole, shell under --net) and sends data out (a driver, shell \
-          under --net) can leak the project, so it runs only if the person says yes before it \
-          starts. Keep reading the project and reaching the network in separate programs when \
-          you can.\n\
+          - teagent tracks where every value came from. A Fetch call or a shell command under \
+          --net whose arguments, or whose choice, depend on what the program read from the \
+          project runs only if the person says yes; otherwise it fails with Declined (a shell \
+          command gets exit code 126). Build URLs and commands from your own text when you can. \
+          A program that reads the project and also has a hole and a driver call, or runs shell \
+          under --net, asks the person before it starts.\n\
           - When the task is done, reply in plain text without a code block, and state the \
           facts you found: names, paths, numbers.";
          "The modules this run offers: Agent, and drivers such as Fetch, which a program \
@@ -135,11 +136,11 @@ let solve world ~on task =
       @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
   in
   let watched =
-    Handler.booted (Os.view world.os).boot ~person:world.person
+    Handler.booted (Os.view world.os).boot ~class_of:(Os.class_of world.os) ~person:world.person
       ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
         {
           perform =
-            (fun tool overlay ->
+            (fun tool sources overlay ->
               let* step =
                 match next steps with
                 | Some (recorded, `Performed (result, staged)) when recorded = tool ->
@@ -153,8 +154,8 @@ let solve world ~on task =
                     holds := [];
                     exposures := [];
                     commits := [];
-                    inner.perform tool overlay
-                | None -> inner.perform tool overlay
+                    inner.perform tool sources overlay
+                | None -> inner.perform tool sources overlay
               in
               let* () =
                 on
@@ -479,7 +480,7 @@ let replayed os recorded =
     handler =
       {
         perform =
-          (fun _ overlay ->
+          (fun _ _ overlay ->
             Lwt.return (Handler.Performed (Error (Value.V_string "the log has no such tool here"), overlay)));
       };
     commit = (fun _ -> Lwt.return (Error (`Tools (Tools.Conflict "the log has no commit here"))));

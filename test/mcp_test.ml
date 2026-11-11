@@ -129,8 +129,8 @@ let () =
         | _ -> Some "bash: did not see the edit or failed");
         (match escaped with Some (_, true) -> None | _ -> Some "write: a path outside was accepted");
         (match leaking with
-        | Some (text, true) when String.starts_with ~prefix:"Refused: this program would read" text -> None
-        | _ -> Some "run: a program that reads the project and fetches was not refused");
+        | Some (text, true) when String.starts_with ~prefix:"main failed with:\nDeclined" text -> None
+        | _ -> Some "run: a request carrying the project's content went out over MCP");
         (match (instructed, Sys.file_exists (Filename.concat workspace "AGENTS.md")) with
         | Some (text, false), false when String.length text > 0 -> None
         | _ -> Some "write: AGENTS.md was written over MCP");

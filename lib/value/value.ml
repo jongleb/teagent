@@ -4,6 +4,14 @@ module Scope = Map.Make (String)
 (** A top-level name: a declaration or a constructor of [module_name]. *)
 type global = { module_name : string; name : string }
 
+(** Where some of a value's content came from, other than the program's own text. *)
+type source =
+  | File of string  (** A file of the project, read with [read]. *)
+  | Search  (** Lines of the project that [grep] found. *)
+  | Command  (** What a shell command printed. *)
+  | Child  (** The changes a spawned process made. *)
+  | Driver of string  (** What a driver call answered, such as [fetch.get]. *)
+
 (** A runtime value of a Dartea program. *)
 type t =
   | V_number of float  (** Int and Float alike, as in Dartea's JavaScript runtime. *)
@@ -17,6 +25,8 @@ type t =
   | V_constr of { constructor : global; arguments : t list }
   | V_closure of closure
   | V_task of task
+  | V_labelled of { sources : source list; value : t }
+      (** [value] holds content from [sources]; never a task and never labelled itself. *)
 
 (** A function: [body] runs in [scope]; top-level names resolve against [home]. *)
 and closure = {
@@ -37,6 +47,8 @@ and task =
   | On_error of { callback : closure; task : task }
   | Batch of task list
   | Hole of hole
+  | Labelled of { sources : source list; task : task }
+      (** A task whose choice or arguments depend on content from [sources]. *)
 
 (** A place the program left for the agent to fill once it is reached. *)
 and hole = { description : string; locals : t Scope.t  (** Values in scope where it was reached. *) }
@@ -61,10 +73,52 @@ type class_ =
   | Pure  (** It only reads; there is nothing to undo. *)
   | Staged  (** It changes the overlay, which is settled or dropped later. *)
   | Contained  (** It runs a command in a sandboxed copy; what it writes is staged. *)
-  | Egress  (** It sends data to a granted host; nothing to undo here, but what left is gone. *)
+  | Egress of { declined : (t, t) result }
+      (** It sends data to a granted host; what left is gone. When it would carry content of the
+          project and the person says no, the program gets [declined]. *)
   | Irreversible of { question : string; declined : t }
       (** It reaches the world outside: the person is asked [question] first, and a program
           they say no to gets [declined] as its error. *)
+
+let labelled sources (value : t) =
+  let merged more = List.sort_uniq compare (sources @ more) in
+  match (sources, value) with
+  | [], _ -> value
+  | _, V_task (Labelled { sources = more; task }) -> V_task (Labelled { sources = merged more; task })
+  | _, V_task task -> V_task (Labelled { sources = List.sort_uniq compare sources; task })
+  | _, V_labelled { sources = more; value } -> V_labelled { sources = merged more; value }
+  | _, (V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _ | V_record _
+       | V_constr _ | V_closure _) ->
+      V_labelled { sources = List.sort_uniq compare sources; value }
+
+let rec plain (value : t) =
+  let all values =
+    List.fold_right
+      (fun value (sources, values) ->
+        let found, value = plain value in
+        (found @ sources, value :: values))
+      values ([], [])
+  in
+  let sources, value =
+    match value with
+    | V_labelled { sources; value } ->
+        let more, value = plain value in
+        (sources @ more, value)
+    | V_list items ->
+        let sources, items = all items in
+        (sources, V_list items)
+    | V_tuple items ->
+        let sources, items = all items in
+        (sources, V_tuple items)
+    | V_record fields ->
+        let sources, values = all (List.map snd fields) in
+        (sources, V_record (List.combine (List.map fst fields) values))
+    | V_constr { constructor; arguments } ->
+        let sources, arguments = all arguments in
+        (sources, V_constr { constructor; arguments })
+    | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_closure _ | V_task _ -> ([], value)
+  in
+  (List.sort_uniq compare sources, value)
 
 let rec to_elm (value : t) =
   let nested (value : t) =
@@ -73,8 +127,10 @@ let rec to_elm (value : t) =
     | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _
     | V_record _ | V_constr { arguments = []; _ } | V_closure _ | V_task _ ->
         to_elm value
+    | V_labelled { value; _ } -> to_elm value
   in
   match value with
+  | V_labelled { value; _ } -> to_elm value
   | V_number number when Float.is_integer number && Float.abs number < 1e15 ->
       Printf.sprintf "%.0f" number
   | V_number number -> Printf.sprintf "%.17g" number
@@ -112,6 +168,7 @@ let rec to_elm (value : t) =
 
 let rec to_json (value : t) : Yojson.Safe.t =
   match value with
+  | V_labelled { value; _ } -> to_json value
   | V_number number -> `Assoc [ ("number", `Float number) ]
   | V_string text -> `Assoc [ ("string", `String text) ]
   | V_char char -> `Assoc [ ("char", `String char) ]

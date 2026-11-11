@@ -18,7 +18,14 @@ let class_of ~name argument =
               url body;
           declined = failed "Declined" "the person did not let this request go out; ask them first";
         }
-  | "fetch.get", _ -> Value.Egress
+  | "fetch.get", _ ->
+      Value.Egress
+        {
+          declined =
+            Error
+              (failed "Declined"
+                 "the person did not let this request carry content of the project; ask them first");
+        }
   | _ -> Value.Pure
 
 let perform workspace ~name argument =

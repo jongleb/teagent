@@ -447,6 +447,73 @@ let () =
                when not (Sys.file_exists (Filename.concat workspace "marker")) ->
                  None
              | _ -> Some "no shell: the command ran or the program saw another code"));
+        (let flows body =
+           let seen = ref [] in
+           let watching =
+             {
+               Handler.perform =
+                 (fun (tool : Value.tool) sources () ->
+                   seen := (tool, sources) :: !seen;
+                   Lwt.return
+                     (Handler.Performed
+                        ( (match tool with
+                          | Shell _ -> Ok (Value.V_record [ ("code", V_number 0.); ("out", V_string "out") ])
+                          | Call _ -> Ok (Value.V_record [ ("body", V_string ""); ("status", V_number 200.) ])
+                          | _ -> Ok (Value.V_string "secret")),
+                          () )));
+             }
+           in
+           match
+             started
+               ("module Main exposing (main)\n\n\
+                 import Agent exposing (..)\n\
+                 import Fetch\n\n\n\
+                 main : Task Fetch.FetchErr Int\n\
+                 main =\n\
+                \    read \"a.txt\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
+                \        |> andThen (\\t -> " ^ body ^ ")\n\
+                \        |> map .status\n")
+           with
+           | Error _ -> None
+           | Ok (program, task) ->
+               let _ = Lwt_main.run (Handler.interpret watching program () task) in
+               List.find_map
+                 (fun ((tool : Value.tool), sources) ->
+                   match tool with Call _ -> Some sources | _ -> None)
+                 !seen
+         in
+         match
+           ( flows "Fetch.get (\"x\" ++ String.toUpper t)",
+             flows "let r = { x = t, y = \"c\" } in Fetch.get r.y",
+             flows "Fetch.get (String.join \",\" (List.map String.reverse [ t, \"k\" ]))",
+             flows "if String.length t > 3 then Fetch.get \"x\" else Fetch.get \"y\"",
+             flows "shell \"ls\" |> andThen (\\r -> Fetch.get r.out)",
+             flows "Fetch.get (String.toInt t |> Maybe.map (\\_ -> \"x\") |> Maybe.withDefault \"y\")" )
+         with
+        | ( Some [ File "a.txt" ],
+            Some [],
+            Some [ File "a.txt" ],
+            Some [ File "a.txt" ],
+            Some [ Command ],
+            Some [ File "a.txt" ] ) ->
+            None
+        | one, two, three, four, five, six ->
+            let shown =
+              Option.fold ~none:"none" ~some:(fun sources ->
+                  "["
+                  ^ String.concat ","
+                      (List.map
+                         (function
+                           | Value.File path -> path
+                           | Search -> "search"
+                           | Command -> "command"
+                           | Child -> "child"
+                           | Driver name -> name)
+                         sources)
+                  ^ "]")
+            in
+            Some
+              ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six ])));
         (match
            Tools.redacted
              "id AKIAIOSFODNN7EXAMPLE and ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789ab, \

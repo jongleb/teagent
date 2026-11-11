@@ -149,7 +149,7 @@ module Overlay = struct
 end
 
 type 'state step = Performed of (Value.t, Value.t) result * 'state | Blocked | Exhausted
-type 'state t = { perform : Value.tool -> 'state -> 'state step Lwt.t }
+type 'state t = { perform : Value.tool -> Value.source list -> 'state -> 'state step Lwt.t }
 
 type outcome =
   | Finished of (Value.t, [ `Failed of Value.t | `Interp of Interp.error | `Exhausted ]) result
@@ -203,7 +203,7 @@ let run workspace =
     | Error _ as denied -> Lwt.return (seen denied)
     | Ok path -> within path
   in
-  let perform (tool : Value.tool) () =
+  let perform (tool : Value.tool) _ () =
     let performed result = Lwt.map (fun result -> Performed (result, ())) result in
     match tool with
     | Enter _ | Leave | Merge _ -> Lwt.return Blocked
@@ -275,7 +275,7 @@ let staged workspace shell =
         | Some (Hidden | Readonly) -> Error (`Tools (Tools.Denied (path :> string)))
         | None | Some Scratch -> Ok path)
   in
-  let perform (tool : Value.tool) (overlay : Overlay.t) =
+  let perform (tool : Value.tool) _ (overlay : Overlay.t) =
     let kept result = Performed (seen result, overlay) in
     match tool with
     | Enter _ -> Lwt.return (Performed (Ok Value.V_unit, Overlay.after overlay tool []))
@@ -457,7 +457,7 @@ module Boot = struct
         List.map (function Budget _ -> Budget (min calls fewer) | (Policy | Journal) as layer -> layer) later
 end
 
-let booted boot ~person ~journal base =
+let booted boot ~class_of ~person ~journal base =
   List.fold_right
     (fun (layer : Boot.layer) inner ->
       match layer with
@@ -465,100 +465,150 @@ let booted boot ~person ~journal base =
       | Policy ->
           {
             perform =
-              (fun tool state ->
-                match class_of tool with
-                | Irreversible { question; declined } -> (
-                    let* consent = person question in
-                    match consent with
-                    | Device.Agrees -> inner.perform tool state
-                    | Declines -> Lwt.return (Performed (Error declined, state)))
-                | Pure | Staged | Contained | Egress -> inner.perform tool state);
+              (fun tool sources state ->
+                let carried =
+                  List.filter_map
+                    (fun (source : Value.source) ->
+                      match source with
+                      | File path -> Some path
+                      | Search -> Some "lines grep found"
+                      | Command -> Some "a shell command's output"
+                      | Child -> Some "a child process's changes"
+                      | Driver _ -> None)
+                    sources
+                in
+                let asked question declined =
+                  let* consent = person question in
+                  match consent with
+                  | Device.Agrees -> inner.perform tool sources state
+                  | Declines -> Lwt.return (Performed (declined, state))
+                in
+                match ((class_of tool : Value.class_), carried) with
+                | Irreversible { question; declined }, [] -> asked question (Error declined)
+                | Irreversible { question; declined }, _ :: _ ->
+                    asked
+                      (question ^ "\n\nIt carries content of the project: " ^ String.concat ", " carried)
+                      (Error declined)
+                | Egress { declined }, _ :: _ ->
+                    asked
+                      ("send content of the project (" ^ String.concat ", " carried ^ ") out with "
+                      ^ Yojson.Safe.to_string (Value.tool_to_json tool))
+                      declined
+                | (Pure | Staged | Contained | Egress _), _ -> inner.perform tool sources state);
           }
       | Budget calls ->
           let spent = ref 0 in
           {
             perform =
-              (fun tool state ->
+              (fun tool sources state ->
                 match !spent < calls with
                 | false -> Lwt.return Exhausted
                 | true ->
-                    let+ step = inner.perform tool state in
+                    let+ step = inner.perform tool sources state in
                     (match step with Performed _ -> incr spent | Blocked | Exhausted -> ());
                     step);
           })
     boot base
 
-let rec interpret handler program state (task : Value.task) =
-  let continued callback value state =
-    match Interp.apply program callback value with
-    | Ok (V_task next) -> interpret handler program state next
-    | Ok _ ->
-        Lwt.return
-          ( Finished (Error (`Interp (Interp.Stuck "a continuation that is not a task"))),
+let interpret handler program state (task : Value.task) =
+  let rec interpret ~pc state (task : Value.task) =
+    let continued callback value state =
+      match Interp.apply program callback value with
+      | Ok (V_task next) -> interpret ~pc state next
+      | Ok _ ->
+          Lwt.return
+            (Finished (Error (`Interp (Interp.Stuck "a continuation that is not a task"))), state)
+      | Error failure -> Lwt.return (Finished (Error failure), state)
+    in
+    let resumed rebuild (outcome, state) =
+      match outcome with
+      | Stopped rest -> (Stopped (rebuild rest), state)
+      | Finished _ | Reached _ -> (outcome, state)
+    in
+    match task with
+    | Succeed value -> Lwt.return (Finished (Ok value), state)
+    | Fail value -> Lwt.return (Finished (Error (`Failed value)), state)
+    | Labelled { sources; task } ->
+        let+ outcome, state = interpret ~pc:(List.sort_uniq compare (sources @ pc)) state task in
+        ( (match outcome with
+          | Finished (Ok value) -> Finished (Ok (Value.labelled sources value))
+          | Finished (Error (`Failed value)) -> Finished (Error (`Failed (Value.labelled sources value)))
+          | Finished (Error (`Interp _ | `Exhausted)) | Reached _ -> outcome
+          | Stopped rest -> Stopped (Labelled { sources; task = rest })),
+          state )
+    | Tool tool -> (
+        let+ step = handler.perform tool pc state in
+        let stamped =
+          Value.labelled
+            (match tool with
+            | Read path -> [ File path ]
+            | Grep _ -> [ Search ]
+            | Shell _ -> [ Command ]
+            | Leave | Merge _ -> [ Child ]
+            | Call { name; _ } -> [ Driver name ]
+            | Write _ | Edit _ | Enter _ -> [])
+        in
+        match step with
+        | Performed (result, state) ->
+            ( Finished
+                (Result.fold
+                   ~ok:(fun value -> Ok (stamped value))
+                   ~error:(fun value -> Error (`Failed (stamped value)))
+                   result),
+              state )
+        | Blocked -> (Stopped task, state)
+        | Exhausted -> (Finished (Error `Exhausted), state))
+    | Hole hole -> Lwt.return (Reached hole, state)
+    | And_then { callback; task } -> (
+        let* outcome, state = interpret ~pc state task in
+        match outcome with
+        | Finished (Ok value) -> continued callback value state
+        | Finished (Error _) | Reached _ -> Lwt.return (outcome, state)
+        | Stopped rest -> Lwt.return (Stopped (And_then { callback; task = rest }), state))
+    | Map { callback; task } ->
+        let+ outcome, state = interpret ~pc state task in
+        resumed
+          (fun rest -> Map { callback; task = rest })
+          ( (match outcome with
+            | Finished (Ok value) -> Finished (Interp.apply program callback value)
+            | Finished (Error _) | Stopped _ | Reached _ -> outcome),
             state )
-    | Error failure -> Lwt.return (Finished (Error failure), state)
+    | Map_err { callback; task } ->
+        let+ outcome, state = interpret ~pc state task in
+        resumed
+          (fun rest -> Map_err { callback; task = rest })
+          ( (match outcome with
+            | Finished (Error (`Failed value)) ->
+                Finished
+                  (Result.bind (Interp.apply program callback value) (fun value ->
+                       Error (`Failed value)))
+            | Finished (Ok _ | Error (`Interp _ | `Exhausted)) | Stopped _ | Reached _ -> outcome),
+            state )
+    | On_error { callback; task } -> (
+        let* outcome, state = interpret ~pc state task in
+        match outcome with
+        | Finished (Error (`Failed value)) -> continued callback value state
+        | Finished (Ok _ | Error (`Interp _ | `Exhausted)) | Reached _ -> Lwt.return (outcome, state)
+        | Stopped rest -> Lwt.return (Stopped (On_error { callback; task = rest }), state))
+    | Batch tasks ->
+        let rec each done_ state = function
+          | [] -> Lwt.return (Finished (Ok (Value.V_list (List.rev done_))), state)
+          | task :: rest -> (
+              let* outcome, state = interpret ~pc state task in
+              match outcome with
+              | Finished (Ok value) -> each (value :: done_) state rest
+              | Finished (Error _) | Reached _ -> Lwt.return (outcome, state)
+              | Stopped remaining ->
+                  Lwt.return
+                    ( Stopped
+                        (Batch (List.rev_map (fun value -> Value.Succeed value) done_ @ (remaining :: rest))),
+                      state ))
+        in
+        each [] state tasks
   in
-  let resumed rebuild (outcome, state) =
-    match outcome with
-    | Stopped rest -> (Stopped (rebuild rest), state)
-    | Finished _ | Reached _ -> (outcome, state)
-  in
-  match task with
-  | Succeed value -> Lwt.return (Finished (Ok value), state)
-  | Fail value -> Lwt.return (Finished (Error (`Failed value)), state)
-  | Tool tool -> (
-      let+ step = handler.perform tool state in
-      match step with
-      | Performed (result, state) ->
-          (Finished (Result.map_error (fun value -> `Failed value) result), state)
-      | Blocked -> (Stopped task, state)
-      | Exhausted -> (Finished (Error `Exhausted), state))
-  | Hole hole -> Lwt.return (Reached hole, state)
-  | And_then { callback; task } -> (
-      let* outcome, state = interpret handler program state task in
-      match outcome with
-      | Finished (Ok value) -> continued callback value state
-      | Finished (Error _) | Reached _ -> Lwt.return (outcome, state)
-      | Stopped rest -> Lwt.return (Stopped (And_then { callback; task = rest }), state))
-  | Map { callback; task } ->
-      let+ outcome, state = interpret handler program state task in
-      resumed
-        (fun rest -> Map { callback; task = rest })
-        ( (match outcome with
-          | Finished (Ok value) -> Finished (Interp.apply program callback value)
-          | Finished (Error _) | Stopped _ | Reached _ -> outcome),
-          state )
-  | Map_err { callback; task } ->
-      let+ outcome, state = interpret handler program state task in
-      resumed
-        (fun rest -> Map_err { callback; task = rest })
-        ( (match outcome with
-          | Finished (Error (`Failed value)) ->
-              Finished
-                (Result.bind (Interp.apply program callback value) (fun value ->
-                     Error (`Failed value)))
-          | Finished (Ok _ | Error (`Interp _ | `Exhausted)) | Stopped _ | Reached _ -> outcome),
-          state )
-  | On_error { callback; task } -> (
-      let* outcome, state = interpret handler program state task in
-      match outcome with
-      | Finished (Error (`Failed value)) -> continued callback value state
-      | Finished (Ok _ | Error (`Interp _ | `Exhausted)) | Reached _ -> Lwt.return (outcome, state)
-      | Stopped rest -> Lwt.return (Stopped (On_error { callback; task = rest }), state))
-  | Batch tasks ->
-      let rec each done_ state = function
-        | [] -> Lwt.return (Finished (Ok (Value.V_list (List.rev done_))), state)
-        | task :: rest -> (
-            let* outcome, state = interpret handler program state task in
-            match outcome with
-            | Finished (Ok value) -> each (value :: done_) state rest
-            | Finished (Error _) | Reached _ -> Lwt.return (outcome, state)
-            | Stopped remaining ->
-                Lwt.return
-                  ( Stopped
-                      (Batch
-                         (List.rev_map (fun value -> Value.Succeed value) done_
-                         @ (remaining :: rest))),
-                    state ))
-      in
-      each [] state tasks
+  let+ outcome, state = interpret ~pc:[] state task in
+  ( (match outcome with
+    | Finished (Ok value) -> Finished (Ok (snd (Value.plain value)))
+    | Finished (Error (`Failed value)) -> Finished (Error (`Failed (snd (Value.plain value))))
+    | Finished (Error (`Interp _ | `Exhausted)) | Stopped _ | Reached _ -> outcome),
+    state )

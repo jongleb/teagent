@@ -17,7 +17,9 @@ type 'state step =
   | Exhausted  (** The OS's budget of tool calls is spent; the program ends at this tool. *)
 
 (** What performs the tools of a task, threading its own state. *)
-type 'state t = { perform : Value.tool -> 'state -> 'state step Lwt.t }
+type 'state t = { perform : Value.tool -> Value.source list -> 'state -> 'state step Lwt.t }
+(** [perform tool sources]: [sources] are where the content of the call's arguments, or the
+    choice to make it, came from. *)
 
 (** How far a task got. *)
 type outcome =
@@ -57,6 +59,7 @@ end
 
 val booted :
   Boot.t ->
+  class_of:(Value.tool -> Value.class_) ->
   person:(string -> Device.consent Lwt.t) ->
   journal:('state t -> 'state t) ->
   'state t ->

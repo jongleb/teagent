@@ -63,8 +63,16 @@ let constant ~home name : Value.t =
   | None, true -> V_unit
   | None, false -> V_constr { constructor = global ~home name; arguments = [] }
 
+let peeled (value : Value.t) =
+  match value with
+  | V_labelled { sources; value } -> (sources, value)
+  | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _ | V_record _
+  | V_constr _ | V_closure _ | V_task _ ->
+      ([], value)
+
 let rec equal (left : Value.t) (right : Value.t) =
   match (left, right) with
+  | V_labelled { value; _ }, other | other, V_labelled { value; _ } -> equal value other
   | (V_closure _ | V_task _), _ | _, (V_closure _ | V_task _) ->
       crashed "functions cannot be compared"
   | V_number left, V_number right -> Float.equal left right && not (Float.is_nan left)
@@ -96,6 +104,8 @@ let rec compared (left : Value.t) (right : Value.t) =
         match compared one other with 0 -> lexicographic left right | order -> order)
   in
   match (left, right) with
+  | V_labelled { value; _ }, other -> compared value other
+  | other, V_labelled { value; _ } -> compared other value
   | V_number left, V_number right -> Float.compare left right
   | V_string left, V_string right | V_char left, V_char right ->
       Int.compare (String.compare left right) 0
@@ -155,9 +165,10 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
         (Value.Scope.add name (bind program ~home scope bound) scope)
         joins body
   | T_if { condition; consequent; alternative } -> (
-      match atom program ~home scope condition with
-      | V_bool true -> term program ~home scope joins consequent
-      | V_bool false -> term program ~home scope joins alternative
+      let sources, condition = peeled (atom program ~home scope condition) in
+      match condition with
+      | V_bool true -> Value.labelled sources (term program ~home scope joins consequent)
+      | V_bool false -> Value.labelled sources (term program ~home scope joins alternative)
       | _ -> stuck "an if on a value that is not a Bool")
   | T_switch { subject; branches; default } -> (
       let canonical (test : Ir.Ast.Decision_tree.test) :
@@ -174,8 +185,9 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
         | Test_tag name -> Test_tag (named name)
         | Test_int _ | Test_str _ | Test_chr _ | Test_nil | Test_cons -> test
       in
+      let sources, subject = peeled (atom program ~home scope subject) in
       let head : Ir.Ast.Decision_tree.test =
-        match atom program ~home scope subject with
+        match subject with
         | V_number value -> Test_int (Float.to_int value)
         | V_string value -> Test_str value
         | V_char value -> Test_chr value
@@ -186,7 +198,7 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
             Test_ctor (Data.Name.global ~module_name ~exported_name:name)
         | V_constr { constructor = { module_name; name }; arguments = _ :: _ } ->
             Test_tag (Data.Name.global ~module_name ~exported_name:name)
-        | V_unit | V_tuple _ | V_record _ | V_closure _ | V_task _ ->
+        | V_unit | V_tuple _ | V_record _ | V_closure _ | V_task _ | V_labelled _ ->
             stuck "a case on a value without a shape"
       in
       match
@@ -194,7 +206,8 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
             (List.map (fun (test, branch) -> (canonical test, branch)) branches),
           default )
       with
-      | Some branch, _ | None, Some branch -> term program ~home scope joins branch
+      | Some branch, _ | None, Some branch ->
+          Value.labelled sources (term program ~home scope joins branch)
       | None, None -> stuck "a case without a matching branch")
   | T_join { label; parameters; definition; body } ->
       term program ~home scope
@@ -279,6 +292,9 @@ and top program ~home name =
         }
 
 and called program (callee : Value.t) arguments : Value.t =
+  let sources, callee = peeled callee in
+  Value.labelled sources
+  @@
   match (callee, arguments) with
   | _, [] -> callee
   | V_closure closure, _ :: _ ->
@@ -310,8 +326,9 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
           arguments = List.map (atom program ~home scope) arguments;
         }
   | B_cons { head; tail } -> (
-      match atom program ~home scope tail with
-      | V_list rest -> V_list (atom program ~home scope head :: rest)
+      let sources, tail = peeled (atom program ~home scope tail) in
+      match tail with
+      | V_list rest -> Value.labelled sources (V_list (atom program ~home scope head :: rest))
       | _ -> stuck "a cons onto a value that is not a List")
   | B_tuple { items } -> V_tuple (List.map (atom program ~home scope) items)
   | B_record { fields } ->
@@ -322,9 +339,11 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
               (fun (label, value) -> (label, atom program ~home scope value))
               fields))
   | B_record_update { base; fields } -> (
-      match atom program ~home scope base with
+      let sources, base = peeled (atom program ~home scope base) in
+      match base with
       | V_record old ->
-          V_record
+          Value.labelled sources
+          @@ V_record
             (List.map
                (fun (label, value) ->
                  ( label,
@@ -333,7 +352,10 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
                old)
       | _ -> stuck "an update of a value that is not a record")
   | B_access { subject; step } -> (
-      match (step, atom program ~home scope subject) with
+      let sources, subject = peeled (atom program ~home scope subject) in
+      Value.labelled sources
+      @@
+      match (step, subject) with
       | Payload index, V_constr { arguments; _ }
       | Index index, V_tuple arguments -> (
           match List.nth_opt arguments index with
@@ -348,7 +370,10 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
       | (Payload _ | Index _ | Field _ | Hd | Tl), _ ->
           stuck "an access that does not fit its value")
   | B_call { callee; arguments } | B_partial { callee; arguments; _ } -> (
-      match (global ~home callee, List.map (atom program ~home scope) arguments) with
+      match
+        ( global ~home callee,
+          List.map (fun argument -> snd (Value.plain (atom program ~home scope argument))) arguments )
+      with
       | { module_name = "Agent"; name = "hole" }, [ V_string description ] ->
           V_task
             (Hole
@@ -364,13 +389,16 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
                             name)
                      scope;
                })
-      | _, values -> called program (top program ~home callee) values)
+      | _, _ -> called program (top program ~home callee) (List.map (atom program ~home scope) arguments))
   | B_call_closure { callee; arguments } ->
       called program
         (atom program ~home scope callee)
         (List.map (atom program ~home scope) arguments)
   | B_primitive { operator; arguments } -> (
-      match (operator, List.map (atom program ~home scope) arguments) with
+      let found = List.map (fun argument -> Value.plain (atom program ~home scope argument)) arguments in
+      Value.labelled (List.concat_map fst found)
+      @@
+      match (operator, List.map snd found) with
       | Add, [ V_number left; V_number right ] -> V_number (left +. right)
       | Subtract, [ V_number left; V_number right ] -> V_number (left -. right)
       | Multiply, [ V_number left; V_number right ] -> V_number (left *. right)
@@ -416,7 +444,10 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
              (0, "") (uchars text))
       in
       let math operation number : Value.t = V_number (operation number) in
-      match (language, List.map (atom program ~home scope) arguments) with
+      let found = List.map (fun argument -> Value.plain (atom program ~home scope argument)) arguments in
+      Value.labelled (List.concat_map fst found)
+      @@
+      match (language, List.map snd found) with
       | Nullary Basics_pi, [] -> V_number Float.pi
       | Nullary Basics_e, [] -> V_number (Float.exp 1.)
       | Unary String_length, [ V_string text ] ->
@@ -585,17 +616,53 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
           stuck
             ("a kernel with the wrong arguments: "
             ^ Data.Name.to_string (Data.Kernel.origin language)))
-  | B_kernel { kernel = Platform { name; _ }; arguments } ->
+  | B_kernel { kernel = Platform { name; _ }; arguments } -> (
       let field label fields =
         match List.assoc_opt label fields with
         | Some (Value.V_string text) -> text
         | Some _ | None ->
             stuck ("a tool record without the text field " ^ label)
       in
-      V_task
+      let raw = List.map (atom program ~home scope) arguments in
+      let found = List.map Value.plain raw in
+      let task (built : Value.task) = Value.labelled (List.concat_map fst found) (V_task built) in
+      match (Data.Kernel.agent_of_name name, raw) with
+      | Some Task_succeed, [ value ] -> V_task (Succeed value)
+      | Some Task_fail, [ value ] -> V_task (Fail value)
+      | Some ((Task_and_then | Task_map | Task_map_err | Task_on_error) as kernel), [ callback; built ]
+        -> (
+          let callers, callback = peeled callback in
+          match (callback, built) with
+          | V_closure callback, V_task task ->
+              Value.labelled callers
+                (V_task
+                   (match kernel with
+                   | Task_and_then -> And_then { callback; task }
+                   | Task_map -> Map { callback; task }
+                   | Task_map_err -> Map_err { callback; task }
+                   | Task_on_error | Agent_read | Agent_write | Agent_edit | Agent_grep | Agent_shell
+                   | Agent_hole | Agent_call | Agent_enter | Agent_leave | Agent_merge | Task_succeed
+                   | Task_fail | Task_batch ->
+                       On_error { callback; task }))
+          | _ -> stuck ("a task kernel with the wrong arguments: " ^ Data.Name.to_string name))
+      | Some Task_batch, [ tasks ] -> (
+          let listed, tasks = peeled tasks in
+          match tasks with
+          | V_list tasks ->
+              Value.labelled listed
+                (V_task
+                   (Batch
+                      (List.map
+                         (function
+                           | Value.V_task task -> task
+                           | _ -> stuck "a batch of values that are not tasks")
+                         tasks)))
+          | _ -> stuck "a batch of values that are not tasks")
+      | _ ->
+      task
         (match
            ( Data.Kernel.agent_of_name name,
-             List.map (atom program ~home scope) arguments )
+             List.map snd found )
          with
         | Some Agent_read, [ V_string path ] -> Tool (Read path)
         | Some Agent_write, [ V_string path; V_string content ] ->
@@ -647,28 +714,12 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
                           { Value.file; base = text base; content = text content }
                       | _ -> stuck "merge: a change that is not a Change")
                     changes))
-        | Some Task_succeed, [ value ] -> Succeed value
-        | Some Task_fail, [ value ] -> Fail value
-        | Some Task_and_then, [ V_closure callback; V_task task ] ->
-            And_then { callback; task }
-        | Some Task_map, [ V_closure callback; V_task task ] -> Map { callback; task }
-        | Some Task_map_err, [ V_closure callback; V_task task ] ->
-            Map_err { callback; task }
-        | Some Task_on_error, [ V_closure callback; V_task task ] ->
-            On_error { callback; task }
-        | Some Task_batch, [ V_list tasks ] ->
-            Batch
-              (List.map
-                 (function
-                   | Value.V_task task -> task
-                   | _ -> stuck "a batch of values that are not tasks")
-                 tasks)
         | Some _, _ ->
             stuck
               ("an agent kernel with the wrong arguments: "
               ^ Data.Name.to_string name)
         | None, _ ->
-            stuck ("an unknown platform kernel " ^ Data.Name.to_string name))
+            stuck ("an unknown platform kernel " ^ Data.Name.to_string name)))
   | B_closure { parameters; captures = _; body } ->
       V_closure { home; parameters; scope; body }
 

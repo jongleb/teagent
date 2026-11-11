@@ -32,7 +32,7 @@ let run t (handler : Handler.Overlay.t Handler.t) ~settle =
   let replaying =
     {
       Handler.perform =
-        (fun tool overlay ->
+        (fun tool sources overlay ->
           match !pending with
           | step :: rest when step.tool = tool ->
               pending := rest;
@@ -40,7 +40,7 @@ let run t (handler : Handler.Overlay.t Handler.t) ~settle =
               Lwt.return (Handler.Performed (step.result, step.after))
           | _ ->
               pending := [];
-              let* outcome = handler.perform tool overlay in
+              let* outcome = handler.perform tool sources overlay in
               (match outcome with
               | Handler.Performed (result, after) ->
                   performed :=

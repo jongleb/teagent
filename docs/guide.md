@@ -12,6 +12,9 @@ code actually does today.
 - [What happens when the program runs a command](#what-happens-when-the-program-runs-a-command)
 - [What happens when you approve or refuse](#what-happens-when-you-approve-or-refuse)
 - [What each tool does](#what-each-tool-does)
+- [The profile](#the-profile)
+- [Skills](#skills)
+- [Rules](#rules)
 - [Logs, replay and resume](#logs-replay-and-resume)
 - [Using teagent from another agent](#using-teagent-from-another-agent)
 - [Where you are safe, and where you are not](#where-you-are-safe-and-where-you-are-not)
@@ -51,7 +54,10 @@ teagent only accepts forms.
 | **staged changes** | File changes held in memory, not on your disk yet. Also called the draft. |
 | **diff** | The picture of the staged changes: removed lines start with `-`, added lines with `+`. |
 | **commit** | Writing the staged changes to your disk, all of them or none. |
-| **contained shell** | A command run in a sandboxed copy of your folder, with no network. |
+| **contained shell** | A command run in a sealed copy of your folder: no network but the hosts you grant, no keys, hard limits. |
+| **label** | Where a value's content came from: a file, a search, a command's output, a driver. |
+| **OS** | What one session may do: its calls, paths, hosts, limits and rules, as one value that only narrows. |
+| **rules** | Your own checks, a Dartea module in `.teagent/rules.elm` that can deny or question any call. |
 | **session** | One run of teagent on one task, from your words to the final answer. |
 | **log** | The file where a session records everything the world answered. |
 | **replay** | Playing a log again with no model and no disk, to check it gives the same events. |
@@ -83,11 +89,12 @@ Here is every step, and what is on your disk at each one.
 | 2 | It sends the model the task, the rules, the `Agent` module and three example programs. | unchanged |
 | 3 | The model answers with a program in an `elm` code block. | unchanged |
 | 4 | teagent typechecks the program. If it is wrong, see [the next section](#what-happens-when-the-program-is-wrong). | unchanged |
+| 4½ | It looks at the calls the program can reach. One that could read the project and reach the network through a shell command asks you first. | unchanged |
 | 5 | teagent evaluates `main`. The result is a tree of effects: "grep, then for each match edit, then run `dune test`". Nothing has run yet. | unchanged |
 | 6 | The handler walks the tree. `grep` searches your files. Each `edit` changes the file **in memory only**. | unchanged |
 | 7 | `shell "dune test"` runs in a sandboxed copy that already holds the edits. See [commands](#what-happens-when-the-program-runs-a-command). | unchanged |
-| 8 | teagent shows the diff and asks `Apply these changes? [y/N]`. | unchanged |
-| 9 | You answer `y`: every staged file is written. You answer anything else: the session stops. | written, or unchanged |
+| 8 | teagent shows the diff. With `--ask` it asks `Apply these changes? [y/N]`; files other programs run come apart, with their own question. | unchanged |
+| 9 | Applied: every staged file is written. Refused: the session stops. | written, or unchanged |
 | 10 | The value of `main` (here, the test output) goes back to the model. | — |
 | 11 | The model either writes the next program (back to step 3) or answers in plain text. | — |
 | 12 | teagent prints the answer and how many compile rounds each program took. | — |
@@ -139,10 +146,7 @@ compile after 4 rounds."
 
 `shell "dune test"` can run in three ways. You choose with `--shell`.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../assets/shell-dark.svg">
-  <img src="../assets/shell.svg" alt="The workspace is cloned with the staged edits into a sandbox with no network; files the command writes or deletes come back as staged changes" width="100%">
-</picture>
+<img src="../assets/shell.svg" alt="Containment: the project with its staged edits is cloned into a contained shell, deny by default, writing only inside the clone, reaching only --net hosts through a proxy, with no keys in its environment and hard limits; what it writes or deletes comes back as staged changes" width="100%">
 
 **`--shell contained` (the default, macOS and Linux).**
 
@@ -196,8 +200,9 @@ The diff lists every staged file. A deleted file shows `+++ /dev/null`.
   each file is written through a temporary file and a rename, so a file is never half written.
 - **You answer anything else, or just Enter.** Nothing is written and the session stops with
   "Stopped: the changes were not applied."
-- **You ran with `--yes`.** teagent applies without asking. Use it only when you trust the
-  task.
+- **You ran without `--ask`.** teagent applies the diff without asking, and answers every other
+  question no: nothing irreversible goes out, project content does not leave, and files other
+  programs run are not written. With `--dry-run` it writes nothing at all.
 
 teagent tracks where every value of a program came from: a file it read, lines grep found, a
 command's output. When a `Fetch` call or a shell command under `--net` would carry such
@@ -400,10 +405,7 @@ event per line. The events are: what the model wrote, what the compiler said, ev
 its result and what it staged, every tool held back, the diff, your decision, the commit, the
 value of `main`, and the final answer.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../assets/replay-dark.svg">
-  <img src="../assets/replay.svg" alt="A session log of events; replay answers from the log and checks the events match, resume plays the log and then goes on live" width="100%">
-</picture>
+<img src="../assets/replay.svg" alt="Journal: a log names its ABI and OS image, then its events; --replay answers from it with no model and no disk, --resume plays it and goes on live" width="100%">
 
 - **`teagent --replay FILE`** plays the session again. The model's answers, the tool results,
   your decisions and the commits all come from the log. Nothing is sent to a model and nothing
@@ -422,8 +424,8 @@ lead to the same requests.
 Any agent that can write a file and run a command can use teagent instead of acting directly:
 
 ```console
-$ teagent -C ~/code/app --exec plan.elm         # check, run in the draft, show results and diff; writes nothing
-$ teagent -C ~/code/app --exec plan.elm --yes   # the same, then commit
+$ teagent -C ~/code/app --exec plan.elm --dry-run   # check, run in the draft, show results and diff; writes nothing
+$ teagent -C ~/code/app --exec plan.elm             # the same, then commit
 ```
 
 What `--exec` does:
@@ -432,9 +434,9 @@ What `--exec` does:
    exits with code **1**, so the agent can fix it and try again.
 2. It runs the program like a session with one program and no model: staged changes, the
    contained shell, the result of every tool printed as it happens.
-3. Without `--yes`, it shows the diff, writes nothing, and ends with "Nothing was written. Run
-   again with --yes to apply."
-4. With `--yes`, it commits.
+3. With `--dry-run`, it shows the diff, writes nothing, and ends with "Nothing was written: this
+   was a dry run."
+4. Without it, it commits; with `--ask`, it asks first.
 5. It writes a session log, so `--replay` works on it too.
 
 This only protects you if the other agent **has no other way** to act. If it also has its own
@@ -448,26 +450,46 @@ close those doors in Claude Code.
 **You are protected from:**
 
 - a program that does not make sense: it is refused before anything runs;
-- edits you do not want: nothing reaches the disk before you answer `y`;
+- injected text that adds a call: the program is fixed and typechecked before it reads anything;
+- edits you do not want: nothing reaches the disk before you answer `y`, unless you chose not
+  to be asked;
 - half-done changes: a commit writes all files or none, and refuses if a file changed meanwhile;
 - a command that deletes or rewrites files (contained shell): it works on a copy, and you see
   every change in the diff;
-- a command that downloads and runs something, or sends data out (contained shell): there is
-  no network;
-- a path outside the folder: `/etc/passwd`, `../other-project`, `~/.zshrc` and a symlink
-  that points out of the folder are refused;
-- an agent that unlocks itself: writes to `.claude/settings.json`, `.mcp.json` or
-  `.git/hooks` are refused, so it cannot switch its own shell back on or plant a hook;
+- a command that downloads and runs something, or sends data out (contained shell): there is no
+  network but the proxy to hosts you grant;
+- a command that reads your API keys: its environment holds only what toolchains need;
+- a command that reaches the clipboard, the keychain, other apps, ssh-agent or Docker: the
+  Seatbelt profile denies everything it does not list;
+- a fork bomb or a command that never ends: limits on processes, files and time, and the whole
+  process group is killed;
+- your project going out through `Fetch` or a networked command: values carry their sources, and
+  such a call asks you, naming the files;
+- the model pasting what it saw into a request: a program counts as carrying everything the
+  session read before it;
+- planted hooks, CI workflows or instructions for other agents: those files are shown apart and
+  written only if you allow them;
+- `.env` files and secrets in your home: hidden, and secret-shaped text is replaced before the
+  model sees it;
+- a path outside the folder: `/etc/passwd`, `../other-project`, `~/.zshrc` and a symlink that
+  points out of the folder are refused;
+- an agent that unlocks itself: `.claude`, `.mcp.json`, `.git`, `.vscode` and the like are off
+  limits at any depth, so it cannot switch its own shell back on or plant a hook;
+- being worn down by questions: after three refusals in a row, teagent stops asking;
 - an endless loop in the program: it stops after 10,000,000 steps;
 - not knowing what happened: every session is logged and can be replayed exactly.
 
 **You are not protected from:**
 
-- **`--yes`.** It removes your review. The sandbox and the typecheck still apply.
-- **`--shell open`.** The command runs in your real folder, as you.
+- **`--shell open`.** The command runs in your real folder, as you, with only the limits.
 - **Reading, without `reads` in the profile.** A contained command may read any file you can,
   except the project and the secrets listed under [the profile](#the-profile). It cannot send it
   anywhere, but it could copy it into your folder; you would see that in the diff.
+- **What a granted host does with what it gets.** With `--net` and `--ask`, a yes sends the data.
+- **Skills from a cloned repository.** They are installed without a review; trusting them by
+  hash is the next step of the plan.
+- **launchd's list of services.** A contained command can read it, though it cannot start or
+  change a service.
 - **Other systems.** The contained shell needs macOS or Linux with bubblewrap. Elsewhere, use
   `--shell off` or accept `--shell open`.
 - **Another agent that has its own terminal.** teagent only guards what goes through it.
@@ -486,12 +508,13 @@ $ teagent -C ~/code/app "what to do"
 $ teagent --openai http://localhost:11434/v1 --model qwen2.5-coder:7b "what to do"
 
 # a program written by someone else
-$ teagent -C ~/code/app --exec plan.elm          # look
-$ teagent -C ~/code/app --exec plan.elm --yes    # apply
+$ teagent -C ~/code/app --exec plan.elm --dry-run   # look
+$ teagent -C ~/code/app --exec plan.elm             # apply
 
 # after the fact
 $ teagent --replay ~/.teagent/sessions/0001.jsonl
 $ teagent --resume ~/.teagent/sessions/0001.jsonl
+$ teagent --undo ~/.teagent/sessions/0001.jsonl
 ```
 
 | Flag | Meaning | Default |
@@ -501,8 +524,11 @@ $ teagent --resume ~/.teagent/sessions/0001.jsonl
 | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh`, `max` | `high` |
 | `--openai URL` | an OpenAI-compatible server instead of Anthropic | off |
 | `--shell MODE` | `contained`, `open`, `off` | `contained` |
-| `--net HOST` | let contained commands reach `HOST`, or every name under it as `*.HOST`; repeat it | no network |
-| `--yes` | apply without asking | off |
+| `--net HOST` | let commands and `Fetch` reach `HOST`, or every name under it as `*.HOST`; repeat it | no network |
+| `--ask` | ask before applying, before anything irreversible, before project content goes out, and before files other programs run | off: apply, and answer every other question no |
+| `--dry-run` | show the changes, write nothing | off |
+| `--undo FILE` | put back every file a session changed | off |
+| `--mcp` | serve tools and `run` to another agent | off |
 | `--exec FILE` | run a program you wrote, no model | off |
 | `--replay FILE` | replay a log, no model, no disk | off |
 | `--resume FILE` | finish a session from its log | off |

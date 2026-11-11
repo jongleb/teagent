@@ -1,40 +1,36 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img src="assets/logo.svg" alt="teagent: a cup of tea with steam shaped like code brackets" width="140">
-</picture>
+<img src="assets/logo.svg" alt="teagent: a cup of tea under a red redaction bar, steam shaped like code braces" width="120">
 
 # teagent
 
-**A coding agent that writes one typed program, which is checked before anything runs.**
+**A coding agent that writes one typed program, checked before anything runs.**
 
-The model writes Dartea, a pure dialect of Elm. teagent typechecks it, turns it into a tree of
-effects, runs every command in a sandboxed copy, and applies the result by itself. Nothing it does
-leaves the project folder, and any session can be undone with one command.
+The model writes Dartea, a pure dialect of Elm. teagent typechecks it, checks what it could
+leak, turns it into a tree of effects, runs every command in a sealed copy of your project, and
+tracks where every value came from. Nothing leaves the folder without a reason you can read, and
+any session can be undone with one command.
 
-![OCaml 5.4](https://img.shields.io/badge/OCaml-5.4-ec6813?logo=ocaml&logoColor=white)
-![Dartea](https://img.shields.io/badge/programs-Dartea%20%C2%B7%20Elm-5b4fd6)
-![Shell](https://img.shields.io/badge/shell-Seatbelt%20sandbox-cf222e)
-![Bench](https://img.shields.io/badge/bench-20%2F20%20reference-1a7f37)
-![Stage](https://img.shields.io/badge/stage-0%20spike-9a6700)
+![OCaml 5.4](https://img.shields.io/badge/OCaml-5.4-111111?style=for-the-badge&labelColor=000000&logo=ocaml&logoColor=white)
+![Dartea](https://img.shields.io/badge/programs-Dartea%20%C2%B7%20Elm-111111?style=for-the-badge&labelColor=000000)
+![Sandbox](https://img.shields.io/badge/shell-deny%20by%20default-ff3d3d?style=for-the-badge&labelColor=000000)
+![Bench](https://img.shields.io/badge/bench-20%2F20-34e089?style=for-the-badge&labelColor=000000)
+![ABI](https://img.shields.io/badge/ABI-2-5cc8ff?style=for-the-badge&labelColor=000000)
 
-[Why](#why-teagent) · [How it works](#how-it-works) · [The language](#the-language) ·
-[Status](#status) · [Install](#install) · [Quick start](#quick-start) · [Layout](#layout)
+[Why](#why-teagent) · [Security](#security-model) · [How it works](#how-it-works) ·
+[Language](#the-language) · [Rules](#rules) · [Status](#status) · [Install](#install) ·
+[Quick start](#quick-start) · [Layout](#layout)
 
 </div>
 
 <br>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/stats-dark.svg">
-  <img src="assets/stats.svg" alt="20 of 20 bench tasks pass with reference programs; one way to touch the world; 0.32 s to clone 2,093 files for a contained shell; exact replay of any session" width="100%">
-</picture>
+<img src="assets/stats.svg" alt="Vitals: 20 of 20 reference tasks pass; one way to act, a Task value; five call classes from pure to irreversible; 0.32 s to clone 2,093 files for a sandboxed shell; ABI 2 with exact replay of any session log" width="100%">
 
 <br>
 
 ```console
-$ teagent -C ~/code/app "Rename Foo.bar to Foo.baz in all .ml files, then run the tests"
+$ teagent -C ~/code/app --ask "Rename Foo.bar to Foo.baz in all .ml files, then run the tests"
 ```
 
 ```diff
@@ -59,12 +55,13 @@ Put back 2 file(s) in /Users/me/code/app:
 <td width="50%" valign="top">
 
 **A program, not tool calls.** The model answers with one Dartea program for the whole step.
-A wrong argument is a type error before anything runs, not a JSON blob to repair afterwards.
+A wrong argument is a type error before anything runs, and text read during a run cannot add a
+call the program did not already have.
 
 </td>
 <td width="50%" valign="top">
 
-**One way out.** Dartea has no side effects, no FFI and no `eval`. The only way to touch the
+**One way to act.** Dartea has no side effects, no FFI and no `eval`. The only way to touch the
 world is a `Task` value, and only the harness decides what a task does.
 
 </td>
@@ -72,40 +69,66 @@ world is a `Task` value, and only the harness decides what a task does.
 <tr>
 <td valign="top">
 
-**Effects are data.** `main` evaluates to a tree of effects whose callbacks are closures of
-the program. A handler walks it: run, stage, replay. A plan is the same tree, cut where it stops.
+**Data that knows its source.** Every value carries where its content came from: a file, a
+search, a command's output. A request that would carry your project out stops and names the
+files, before a byte leaves.
 
 </td>
 <td valign="top">
 
-**Nothing to approve, nothing irreversible.** Edits are staged in memory, checked against the
-disk and written as one commit. Any session can be undone, and a file you changed since is
-never overwritten, by the agent or by the undo.
+**Nothing irreversible by surprise.** Edits are staged in memory and written as one commit.
+Files that other programs run, such as git hooks, CI and `AGENTS.md`, are held apart for a
+person. Any session can be undone.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**A contained shell.** Commands run in an APFS clone that holds your staged edits, under
-Seatbelt, with no network and no writes outside the clone. What they write or delete is staged.
+**A sealed shell.** Commands run in an APFS clone under a deny-by-default Seatbelt profile: no
+network but a proxy to hosts you grant, no API keys in the environment, no clipboard, keychain
+or sockets, and hard limits on time, files and processes.
 
 </td>
 <td valign="top">
 
-**Exact replay and resume.** Every session is a log of what the world answered. Replay it with
-no model and no disk; resume a crashed one from where it stopped, without paying again.
+**Exact replay, your own rules.** Every session is a log of what the world answered, replayed
+with no model and no disk. Rules you write in Dartea can deny or question any call, with the
+whole history of the session in view.
 
 </td>
 </tr>
 </table>
 
+## Security model
+
+<img src="assets/threats.svg" alt="Threat ledger. Injected text adds a call: closed, the program is fixed and typechecked before data. Project data leaves via Fetch: asks, labels on values and Egress asks the person. Model pastes what it saw: asks, code labelled by the session's reads. Shell reads API keys: closed, environment allowlist. Escape via clipboard, keychain, sockets: closed, Seatbelt deny by default. Hooks, CI, AGENTS.md planted: asks, held apart for a person. .env and home secrets: closed, hidden and redacted before the model. Fork bomb, runaway command: closed, limits and process group killed. Questions until you say yes: closed, silent no after three refusals. Repo skills trusted on sight: open, trust by hash is next. Launchd service list readable: open, read only" width="100%">
+
+teagent assumes the model can be talked into anything by what it reads. So the model never holds
+a right of its own: it writes a description, and every check runs outside it, in code that
+does not read prose.
+
+- **Before a run.** The program is typechecked against an `Agent` module cut to what the OS
+  grants; a call the OS lacks does not compile. A program that could read the project and reach
+  the network through a shell command asks the person once, up front.
+- **During a run.** Each call passes boot layers taken from the OS, outermost first: a budget,
+  the journal, and the policy, which asks your rules, then checks labels and consent.
+- **At the end.** The diff is checked against the disk and written as one commit. Files other
+  programs run are shown apart, and only a person can allow them.
+
+<img src="assets/flow.svg" alt="Provenance. read lib/a.ml gives a value labelled File lib/a.ml; a URL built from it keeps the label; Fetch.get is Egress, so the person is asked. An if on the file's content labels the call it chose, so the person is asked. A constant URL has no labels and is allowed. rules.elm sees the same labels and history and may deny first" width="100%">
+
+The model writes each program after seeing what earlier ones returned, and could copy that into
+a string. So a program counts as carrying everything the session read before it: once the model
+has seen a file, a request out asks. Without a person (by default, with `--dry-run`, over MCP)
+every such question is answered no, and the model is told why.
+
+Research behind these choices, with sources: [docs/research/llm-security.md](docs/research/llm-security.md)
+and [docs/research/sandboxing.md](docs/research/sandboxing.md).
+
 ## How it works
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-dark.svg">
-  <img src="assets/pipeline.svg" alt="Model writes a program, typecheck sends errors back for up to 4 rounds, the interpreter builds a tree of effects, the handler stages edits and contains the shell, the diff is shown, then commit or discard" width="100%">
-</picture>
+<img src="assets/pipeline.svg" alt="Pipeline: the model writes one program; typecheck sends reports back for up to 4 rounds; a plan check looks at the reachable calls; the interpreter builds a tree of effects with labelled values; the handler runs budget, journal, policy and tools; the review shows the diff with hooks and CI apart; the commit writes once and can be undone" width="100%">
 
 The compiler is [Dartea](https://github.com/jongleb/dartea), used as a library. A report
 goes back to the model as Elm prints it, with a `Hint:` line for the mistakes models make most:
@@ -113,28 +136,24 @@ goes back to the model as Elm prints it, with a `Hint:` line for the mistakes mo
 there. The driver also notices when the model resends the same program or answers before it
 has looked at anything.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/tree-dark.svg">
-  <img src="assets/tree.svg" alt="main of the rename task evaluates to And_then of And_then of Tool Grep; nothing has run yet" width="100%">
-</picture>
+<img src="assets/tree.svg" alt="Task tree: main of the rename task evaluates to And_then of And_then of Tool Grep; zero effects performed" width="100%">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/shell-dark.svg">
-  <img src="assets/shell.svg" alt="The workspace is cloned with the staged edits into a Seatbelt sandbox with no network; files the command writes or deletes come back as staged changes" width="100%">
-</picture>
+<img src="assets/shell.svg" alt="Containment: the project with its staged edits is cloned into a contained shell, deny by default, writing only inside the clone, reaching only --net hosts through a proxy, with no keys in its environment, no clipboard, keychain or sockets, and limits of 30 minutes, 4 GiB files and the user's processes plus 1024; what it writes or deletes comes back as staged changes in the diff" width="100%">
 
-`--shell contained` is the default, on macOS and on Linux with bubblewrap. `--shell open` runs in the workspace itself, and
-only when nothing is staged, so a command never sees a different tree than the program.
-`--shell off` answers every command with exit code 126.
+`--shell contained` is the default, on macOS and on Linux with bubblewrap. `--shell open` runs
+in the workspace itself, and only when nothing is staged, so a command never sees a different
+tree than the program. `--shell off` answers every command with exit code 126. Every command,
+contained or not, runs in its own process group under the same limits, and one that runs out of
+time is killed with all its children.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/replay-dark.svg">
-  <img src="assets/replay.svg" alt="A session log of events; --replay answers from the log and checks the events match, --resume plays the log and then goes on live" width="100%">
-</picture>
+<img src="assets/replay.svg" alt="Journal: a session log starts with its ABI and the hash of its OS image, then the events: wrote, performed, held, committed. --replay answers from it with no model and no disk and checks every event; --resume plays it and goes on live" width="100%">
 
-A session is a pure function of its world: the model, the approval (automatic unless you pass
-`--ask`), the tools and the disk. A live run gets the real world; `--replay` gets one built from the log and checks
-that the new events equal the logged ones.
+A session is a pure function of its world: the model, the person, the tools and the disk. A
+live run gets the real world; `--replay` gets one built from the log and checks that the new
+events equal the logged ones. Every log names its [ABI](docs/abi.md) version and the hash of
+its OS image (calls, mounts, network, boot layers, limits, drivers, skills, rules), and replay
+refuses a log made on another. `test/sessions/abi2.jsonl` must replay exactly under every build
+of ABI 2.
 
 ## The language
 
@@ -157,10 +176,7 @@ merge : Child a -> Task (List Change) a
 succeed, fail, andThen, map, mapErr, onError, batch, fromResult
 ```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/os-dark.svg">
-  <img src="assets/os.svg" alt="teagent as a small OS in five layers: the program; system calls cut by the profile, with shell struck out when bash is not allowed; processes, where main spawns a child that cannot see secrets and merges it back; the file system with hidden, readonly, scratch and staged paths; and the outside, where only approved changes reach the disk and only --net hosts the network. Each layer is matched to its OS term: syscall table, fork and join, mount table, devices and firewall" width="100%">
-</picture>
+<img src="assets/os.svg" alt="Micro-OS in six layers, each matched to its OS term: the program, your code; calls cut to the OS before compiling, the syscall table; processes, spawn and merge, fork and join; files hidden, readonly, scratch or staged, with .env hidden and tooling denied, the mount table; boot layers budget, journal and policy, kernel modules; and the outside, held files, Egress questions, the --net proxy and the commit, the firewall" width="100%">
 
 `spawn` runs a task as a child process. The child starts from the parent's changes, with the
 mounts it is given added to the parent's, so it can only see less: a path the parent hides, it
@@ -171,33 +187,37 @@ since the child began. A child that is never merged leaves no trace in the proje
 Drivers add modules next to `Agent`. The first is `Fetch`:
 
 ```elm
-Fetch.get : String -> Task FetchErr { status : Int, body : String }
-type FetchErr = NotGranted String | Unreachable String
+Fetch.get  : String -> Task FetchErr { status : Int, body : String }
+Fetch.post : String -> String -> Task FetchErr { status : Int, body : String }
+type FetchErr = NotGranted String | Unreachable String | Declined String
 ```
 
-`Fetch.post : String -> String -> Task FetchErr { status : Int, body : String }` sends a body.
 Both reach only the hosts granted with `--net`; any other host fails with `NotGranted`.
 
-Every call has a class, a constructor rather than a flag: `Pure` (it reads), `Staged` (it
-changes the overlay), `Contained` (a command in the sandboxed copy) or `Irreversible` (it
-reaches the world and cannot be taken back). `Fetch.post` is irreversible, so it goes out only
-when a person says yes: with `--ask` teagent shows what would be sent and asks; without a
-person, by default and over MCP, it fails with `Declined`. The answer is in the log, so a replay
-never sends it again. A
-driver is an Elm module over one generic call and the OCaml code that answers it, so its calls
-show in the log and replay like every other tool. A program cannot name `Elm.Kernel` itself:
-everything it does goes through these modules.
+Every call has a class, a constructor rather than a flag:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/holes-dark.svg">
-  <img src="assets/holes.svg" alt="Left: a program whose hole fix the call was filled with an edit, inside which a second hole run the tests was filled with shell dune test, drawn as nested boxes. Right: a grid of tools by run: read runs in run 1 and is reused after; the first hole asks in run 1; edit runs in run 2; the second hole asks in run 2; shell runs in run 3. Each tool runs once and the agent is asked once per hole" width="100%">
-</picture>
+| Class | What it does | Examples |
+| --- | --- | --- |
+| `Pure` | reads | `read`, `grep` |
+| `Staged` | changes the overlay, settled or dropped later | `write`, `edit`, `spawn`, `merge` |
+| `Contained` | runs a command in the sealed copy | `shell` |
+| `Egress` | sends data to a granted host; asks when it carries the project | `Fetch.get`, `shell` under `--net` |
+| `Irreversible` | cannot be taken back; always asks | `Fetch.post` |
+
+A person's answer is in the log, so a replay never asks or sends again. A driver is an Elm
+module over one generic call and the OCaml code that answers it, so its calls show in the log
+and replay like every other tool. A program cannot name `Elm.Kernel` itself: everything it does
+goes through these modules.
+
+<img src="assets/holes.svg" alt="Holes: a program reads lib/x.ml and reaches hole fix the call, which the model fills with an edit that is typechecked in place. A grid of tools by run: read runs in run 1 and is answered from the log after; the hole asks in run 1; edit runs in run 2; shell in run 3. Each tool runs once, and the code written at the hole carries what the session read" width="100%">
 
 `hole "what goes here"` stands for code the model cannot write before it sees data. When `main`
 reaches it, the same model, in the same conversation, sees the values in scope there and writes
 the expression for that place. teagent puts it into the source and typechecks it there, so it has
 the type the hole has, then runs the program again. The tools that already ran answer from what
-they returned the first time, so nothing runs twice. The new code may hold holes of its own.
+they returned the first time, so nothing runs twice. The new code may hold holes of its own,
+and carries the labels of everything the session read, since the model wrote it after seeing
+them.
 
 The rename task, as the bench's reference program writes it:
 
@@ -229,6 +249,38 @@ main =
 The type says the program can only fail with a failed edit, and the compiler makes it handle
 every case.
 
+## Rules
+
+`.teagent/rules.elm` is a Dartea module you write. teagent asks it before every `read`, `write`,
+`edit`, `grep`, `shell` and driver call, with where the call's content came from and every call
+of the session before it:
+
+```elm
+decide : Call -> List Source -> List Call -> Decision
+decide call sources history =
+    case call of
+        Call "fetch.post" _ ->
+            if List.any readsSecrets history then
+                Deny "nothing goes out after reading secrets"
+
+            else
+                Allow
+
+        Write path ->
+            if String.startsWith "vendor/" path then
+                Ask ("write " ++ path)
+
+            else
+                Allow
+
+        _ ->
+            Allow
+```
+
+`Allow` leaves the call to teagent's own checks, so rules can only take rights away, and a rules
+file that comes with a cloned repository is safe. Rules are pure, compiled at start, and part of
+the OS image; rules that crash or loop deny. The [guide](docs/guide.md#rules) has the types.
+
 ## Status
 
 Stage 0 of the [plan](docs/Rune%20%E2%80%94%20%D0%BF%D0%BB%D0%B0%D0%BD.md): the whole loop works,
@@ -239,10 +291,10 @@ the question it exists to answer is still open.
 | Bench, reference programs | 20 of 20 tasks: reading, single-file edits, multi-file refactors, shell |
 | Gate of stage 0 | median compile rounds per task ≤ 2 on a frontier model: **not measured yet** |
 | Local `qwen2.5-coder:7b` | 2 to 3 of 6–11 tasks; it copies examples and reaches for missing APIs |
-| Contained shell | macOS (Seatbelt + APFS clone); Linux (bubblewrap + reflink copy) |
-| Network for commands | off by default; hosts listed in the profile go through teagent's proxy |
-
-The sandbox design and the roadmap behind it: [docs/research/sandboxing.md](docs/research/sandboxing.md).
+| Contained shell | macOS (Seatbelt, deny by default, APFS clone); Linux (bubblewrap, reflink copy) |
+| Network | off by default; hosts granted with `--net` go through teagent's proxy |
+| Micro-OS | all eight steps of [docs/micro-os.md](docs/micro-os.md); ABI 2 in [docs/abi.md](docs/abi.md) |
+| Security plan | P0 and P1 of [docs/research/llm-security.md](docs/research/llm-security.md) done; P2 next, skills trusted by hash first |
 
 ## Install
 
@@ -278,12 +330,12 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl                                 
 | `--effort LEVEL` | `low`, `medium`, `high` (default), `xhigh`, `max` |
 | `--openai URL` | an OpenAI-compatible `/chat/completions` server |
 | `--shell MODE` | `contained` (default), `open`, `off` |
-| `--ask` | ask before writing changes, and before any call that cannot be taken back |
+| `--ask` | ask before writing changes, before any call that cannot be taken back, before files other programs run, and before project content goes out; without it every such question is answered no |
 | `--dry-run` | show the changes, write nothing |
 | `--undo FILE` | put back every file a session changed, unless you changed it since |
 | `--exec FILE` | run a program you wrote, with no model inside |
 | `--mcp` | serve bash, read, write, edit, grep, run and fill to another agent over MCP |
-| `--net HOST` | let contained commands reach `HOST` (or `*.HOST`) through teagent's proxy; repeat it |
+| `--net HOST` | let commands and `Fetch` reach `HOST` (or `*.HOST`) through teagent's proxy; repeat it, and pair it with `--ask` |
 
 ### With Claude Code, over MCP
 
@@ -298,7 +350,9 @@ When it reaches a `hole`, the run stops and returns the values in scope; the age
 code for that place with `fill`, and the run goes on without repeating the tools that already
 ran. A program sees only the calls the profile offers: without `bash`, `Agent` has no `shell`,
 and a program that calls it does not compile. The same holds for skills, Elm modules in `.teagent/skills`
-that programs import: one that imports `shell` is not installed without `bash`.
+that programs import: one that imports `shell` is not installed without `bash`. Over MCP there
+is no person to ask, so every question is answered no: nothing irreversible goes out, project
+content never leaves, and files other programs run are not written.
 
 Add it to a project and switch off Claude Code's own shell and editing, so every change goes
 through teagent:
@@ -348,16 +402,21 @@ $ dune exec bench/bench.exe -- --root bench --model … 04_count_lines    # some
 
 | Path | What it holds |
 | --- | --- |
-| `lib/lang` | source to Dartea IR, reachable from `Main.main`, with hints on reports |
-| `lib/agent` | the `Agent` prelude |
-| `lib/interp` | IR to a tree of effects; every Dartea kernel; a step budget |
-| `lib/effect` | handlers: run, staged overlay with diff, contained shell |
-| `lib/tools` | the only IO: files, search, processes, the sandbox, commit |
+| `lib/lang` | source to Dartea IR, reachable from `Main.main`; skills; the calls a program can reach |
+| `lib/agent`, `lib/policy` | the `Agent` prelude and the types of the person's rules |
+| `lib/value` | runtime values, their sources, call classes, the JSON of the log |
+| `lib/interp` | IR to a tree of effects; every Dartea kernel; labels through every operation; a step budget |
+| `lib/effect` | handlers: the staged overlay with its diff, boot layers, the interpreter of tasks |
+| `lib/os` | the OS value: calls, mounts, network, limits, boot order, rules, exposure, image |
+| `lib/device` | drivers: `Fetch` over the egress proxy |
+| `lib/tools` | the only IO: files, search, processes, the sandbox, limits, redaction, commit |
+| `lib/run` | one program on its way to a value: holes and their fills |
 | `lib/llm` | its own client for Anthropic Messages and OpenAI-compatible servers |
-| `lib/driver` | the session loop, the world it runs against, logs, replay, resume |
+| `lib/driver` | the session loop, the world it runs against, the log, replay, resume |
 | `lib/mcp` | the MCP server: tools for another agent, applied and logged |
 | `bin/teagent.ml` | the CLI |
 | `bench/` | 20 tasks with fixtures, expected files and reference programs |
+| `assets/draw.py` | draws every figure in this README: `python3 assets/draw.py` |
 | `vendor/dartea` | the compiler, on its `rune-agent` branch |
 
 ## License

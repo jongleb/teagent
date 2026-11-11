@@ -1,0 +1,1 @@
+Release version 0.5.0 (the current one is 0.4.1): update the project's own version in package.json and src/version.ts, and add a section `## 0.5.0 - 2026-11-11` with the line `- Release.` at the top of the changelog entries in CHANGELOG.md. Leave dependency versions alone.

@@ -1,0 +1,7 @@
+{
+  "name": "widget",
+  "version": "0.5.0",
+  "dependencies": {
+    "tiny-lib": "0.4.1"
+  }
+}

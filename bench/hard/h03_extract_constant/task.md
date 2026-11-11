@@ -1,0 +1,1 @@
+The number 3600 (seconds in an hour) is written out in several source files under src/. Add src/constants.js exporting `SECONDS_PER_HOUR = 3600`, and make every file under src/ that uses 3600 import and use that constant instead. Leave test/fixtures/ as it is.

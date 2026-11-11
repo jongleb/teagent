@@ -1,4 +1,4 @@
-(data_only_dirs tasks)
+(data_only_dirs tasks hard)
 
 (executable
  (name bench)

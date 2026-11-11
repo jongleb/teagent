@@ -1,0 +1,1 @@
+Collect every TODO comment in the source files into a new file TODO.md: a Markdown table with the columns File, Line and Text, one row per TODO, sorted by file and then line. Text is what follows `TODO:` with surrounding spaces removed.

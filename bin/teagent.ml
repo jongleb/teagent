@@ -190,7 +190,7 @@ let () =
     match !approval with
     | `Auto | `Dry -> Lwt.return Device.Declines
     | `Ask -> (
-        Printf.printf "\nThe program wants to %s\nThis cannot be taken back. Allow it? [y/N] " what;
+        Printf.printf "\nThe program wants to %s\nAllow it? [y/N] " what;
         flush stdout;
         match
           String.lowercase_ascii

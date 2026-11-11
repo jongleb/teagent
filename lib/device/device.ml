@@ -14,7 +14,8 @@ let class_of ~name argument =
       Value.Irreversible
         {
           question =
-            Printf.sprintf "send %d bytes to %s:\n%s" (String.length body) url body;
+            Printf.sprintf "send %d bytes to %s, which cannot be taken back:\n%s" (String.length body)
+              url body;
           declined = failed "Declined" "the person did not let this request go out; ask them first";
         }
   | "fetch.get", _ -> Value.Egress

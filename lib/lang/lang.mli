@@ -11,6 +11,7 @@ module Skill : sig
   type t
 
   val of_source : name:string -> string -> (t, string) result
+  val source : t -> string
 end
 
 (** The Agent module programs compile against: the calls one OS offers, and the skills whose needs

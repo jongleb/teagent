@@ -171,7 +171,7 @@ direction, not a plan.
 | 7 | Call classes as constructors; plan and replay keyed on them | an `Irreversible` driver call is held for approval in every mode |
 | 8 | ABI document with a version; image hash over OS, drivers and skills | a log made by one build replays under another build of the same ABI version |
 
-Steps 1 to 7 are done; step 8 is not. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
+All eight steps are done. The OS is `Os.t`, built only by `granted` and narrowed by the profile;
 `Os.table` turns it into `Lang.Calls.t`, which can only lose calls, and every program, the
 model's prompt and the MCP `run` tool see the `Agent` module cut to that table. Drivers go
 through one kernel, `Agent.call`; the first is `Fetch`, whose handler checks the host against
@@ -197,6 +197,11 @@ journal's place, and only the layers outside it run again. Moving the journal in
 logs the call the budget stopped; moving the budget inside the policy stops counting the calls
 the person declined. Mounts and the net stay in the tools: they shape what a command's copy
 holds and which hosts its proxy reaches, which a wrapper around a call cannot do.
+[`abi.md`](abi.md) writes down version 1 of the ABI: the call table, the JSON of values, the
+session log and the image. The image is a BLAKE2 hash over the OS without its path: calls,
+mounts, reads, net, boot order, drivers and skills. Every log names its ABI version and image,
+`--replay` and `--resume` refuse a log made on another, and `test/sessions/abi1.jsonl`, a session
+logged under version 1, must replay exactly under every build of it.
 
 ## Open questions
 

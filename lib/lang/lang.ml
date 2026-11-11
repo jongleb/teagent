@@ -99,6 +99,8 @@ module Skill = struct
                          (fun (import : Frontend.Import_thing.t) -> Data.Located.unwrap import.name)
                          imports;
                    }))
+
+  let source skill = skill.source
 end
 
 module Calls = struct

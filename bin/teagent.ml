@@ -126,12 +126,18 @@ let () =
         match
           match Yojson.Safe.from_string header with
           | `Assoc fields -> (
-              match (List.assoc_opt "task" fields, List.assoc_opt "directory" fields) with
-              | Some (`String task), place ->
+              match
+                ( List.assoc_opt "task" fields,
+                  List.assoc_opt "directory" fields,
+                  List.assoc_opt "abi" fields,
+                  List.assoc_opt "image" fields )
+              with
+              | Some (`String task), place, Some (`Int abi), Some (`String image) when abi = Os.abi ->
                   Result.map
                     (fun events ->
                       ( task,
                         (match place with Some (`String place) -> Some place | _ -> None),
+                        image,
                         events ))
                     (List.fold_right
                        (fun line collected ->
@@ -142,6 +148,11 @@ let () =
                                    (Driver.event_of_json json)
                              | exception Yojson.Json_error reason -> Error reason))
                        lines (Ok []))
+              | Some (`String _), _, Some (`Int abi), Some (`String _) ->
+                  Error
+                    (Printf.sprintf "the log speaks ABI %d, and this teagent speaks ABI %d" abi Os.abi)
+              | Some (`String _), _, _, _ ->
+                  Error "the log was written before logs named their ABI and image"
               | _ -> Error "the first line does not name the task")
           | _ -> Error "the first line does not name the task"
           | exception Yojson.Json_error reason -> Error reason
@@ -176,11 +187,19 @@ let () =
         | "y" | "yes" -> Lwt.return Device.Agrees
         | _ -> Lwt.return Device.Declines)
   in
-  let live () =
+  let profiled_as image =
+    let os = profiled () in
+    match String.equal (Os.image os) image with
+    | true -> os
+    | false ->
+        failed
+          ("The log was made on image " ^ image ^ ", and this OS is image " ^ Os.image os
+         ^ ".\nUse the same profile, skills and --net hosts as the session did.")
+  in
+  let live os =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
     | Error reason -> failed reason
     | Ok provider ->
-        let os = profiled () in
         {
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
@@ -213,7 +232,7 @@ let () =
           log;
         report)
   in
-  let started task =
+  let started task os =
     let sessions = List.fold_left Filename.concat (Sys.getenv "HOME") [ ".teagent"; "sessions" ] in
     List.iter
       (fun directory -> if not (Sys.file_exists directory) then Sys.mkdir directory 0o700)
@@ -225,7 +244,13 @@ let () =
       (fun channel ->
         Out_channel.output_string channel
           (Yojson.Safe.to_string
-             (`Assoc [ ("task", `String task); ("directory", `String !directory) ])
+             (`Assoc
+                [
+                  ("task", `String task);
+                  ("directory", `String !directory);
+                  ("abi", `Int Os.abi);
+                  ("image", `String (Os.image os));
+                ])
           ^ "\n"));
     log
   in
@@ -240,11 +265,12 @@ let () =
   in
   match !mode with
   | `Mcp ->
-      let log = started "MCP session" in
+      let os = profiled () in
+      let log = started "MCP session" os in
       prerr_endline ("teagent MCP server in " ^ !directory ^ ", logging to " ^ log);
       Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
           let program =
-            Mcp.start (profiled ()) !shell ~on:(fun event ->
+            Mcp.start os !shell ~on:(fun event ->
                 Out_channel.output_string channel
                   (Yojson.Safe.to_string (Driver.event_to_json event) ^ "\n");
                 Out_channel.flush channel;
@@ -276,7 +302,7 @@ let () =
           in
           served ())
   | `Undo file -> (
-      let _, place, recorded = loaded file in
+      let _, place, _, recorded = loaded file in
       let workspace = Option.value ~default:!directory place in
       match Driver.undone recorded with
       | [] -> print_endline "The session changed nothing, so there is nothing to undo."
@@ -296,8 +322,8 @@ let () =
                ^ "\nThese files changed after the session; undo them by hand, or keep them.");
               exit 1))
   | `Replay file -> (
-      let task, _, recorded = loaded file in
-      let replayed = ref [] and os = profiled () in
+      let task, _, image, recorded = loaded file in
+      let replayed = ref [] and os = profiled_as image in
       let _report =
         Lwt_main.run
           (Driver.solve (Driver.replayed (Os.table os) (Os.view os).boot recorded)
@@ -327,10 +353,10 @@ let () =
             (shown logged) (shown again);
           exit 1)
   | `Resume file ->
-      let task, place, recorded = loaded file in
+      let task, place, image, recorded = loaded file in
       Option.iter (fun place -> directory := place) place;
       finished
-        (logged file ~skipped:(List.length recorded) { (live ()) with recorded } task)
+        (logged file ~skipped:(List.length recorded) { (live (profiled_as image)) with recorded } task)
   | `Exec file -> (
       let source =
         match In_channel.with_open_text file In_channel.input_all with
@@ -347,7 +373,7 @@ let () =
           let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
           finished
-            (logged (started task) ~skipped:0
+            (logged (started task os) ~skipped:0
                {
                  ask =
                    (fun ~system:_ _ ->
@@ -369,5 +395,5 @@ let () =
       match String.concat " " (List.rev !words) with
       | "" -> failed "Say what to do: teagent [options] TASK..."
       | task ->
-          let world = live () in
-          finished (logged (started task) ~skipped:0 world task))
+          let os = profiled () in
+          finished (logged (started task os) ~skipped:0 (live os) task))

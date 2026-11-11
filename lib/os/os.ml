@@ -206,6 +206,7 @@ let narrowed json os =
   | _ -> Error "it is not a JSON object"
 
 let view os = os.allows
+let device = function Fetch -> Some Device.Fetch | Bash | Read | Write | Edit | Grep | Run -> None
 
 let workspace os =
   Tools.limited
@@ -231,8 +232,51 @@ let table os =
             | Grep -> Some Data.Kernel.Agent_grep
             | Run | Fetch -> None)
           missing)
-  |> Lang.Calls.unplugged
-       (List.filter_map
-          (function Fetch -> Some Device.Fetch | Bash | Read | Write | Edit | Grep | Run -> None)
-          missing)
+  |> Lang.Calls.unplugged (List.filter_map device missing)
   |> Lang.Calls.taught os.skills
+
+let abi = 1
+
+let image os =
+  let texts strings = `List (List.map (fun text -> `String text) strings) in
+  Digest.BLAKE256.to_hex
+    (Digest.BLAKE256.string
+       (Yojson.Safe.to_string
+          (`Assoc
+             [
+               ("abi", `Int abi);
+               ( "offers",
+                 texts
+                   (List.filter_map
+                      (fun (name, call) ->
+                        Option.map (fun _ -> name) (List.find_opt (( = ) call) os.allows.offers))
+                      calls) );
+               ( "mounts",
+                 `List
+                   (List.map
+                      (fun ((path : Tools.Path.t), (mount : Tools.mount)) ->
+                        texts
+                          [
+                            (path :> string);
+                            (match mount with
+                            | Hidden -> "hidden"
+                            | Readonly -> "readonly"
+                            | Scratch -> "scratch");
+                          ])
+                      (List.sort compare os.allows.mounts)) );
+               ( "reads",
+                 match os.allows.reads with
+                 | Anywhere -> `String "anywhere"
+                 | Within paths -> texts (List.sort String.compare paths) );
+               ("net", texts (List.sort String.compare os.allows.net));
+               ( "boot",
+                 `List
+                   (List.map
+                      (function
+                        | Handler.Boot.Budget calls -> `Assoc [ ("budget", `Int calls) ]
+                        | Policy -> `String "policy"
+                        | Journal -> `String "journal")
+                      (os.allows.boot :> Handler.Boot.layer list)) );
+               ("drivers", texts (List.map Device.source (List.filter_map device os.allows.offers)));
+               ("skills", texts (List.sort String.compare (List.map Lang.Skill.source os.skills)));
+             ])))

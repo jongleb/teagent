@@ -586,6 +586,34 @@ let () =
          with
          | decoded when decoded = List.map Result.ok recorded -> None
          | _ -> Some "json: an event does not survive the log");
+        (match In_channel.with_open_text "sessions/abi1.jsonl" In_channel.input_lines with
+        | header :: lines -> (
+            let os = Os.granted "/project" ~net:[] in
+            match
+              ( Yojson.Safe.from_string header,
+                List.map (fun line -> Driver.event_of_json (Yojson.Safe.from_string line)) lines )
+            with
+            | `Assoc [ ("task", `String task); ("directory", _); ("abi", `Int abi); ("image", `String image) ], decoded
+              when abi = Os.abi && String.equal image (Os.image os) -> (
+                let recorded = List.filter_map Result.to_option decoded in
+                let events = ref [] in
+                let _ =
+                  Lwt_main.run
+                    (Driver.solve
+                       (Driver.replayed (Os.table os) (Os.view os).boot recorded)
+                       ~on:(fun event ->
+                         events := event :: !events;
+                         Lwt.return_unit)
+                       task)
+                in
+                match (List.length recorded = List.length decoded, List.rev !events = recorded) with
+                | true, true -> None
+                | _ -> Some "abi: the session logged under ABI 1 no longer replays exactly")
+            | _ ->
+                Some
+                  ("abi: the logged session names another ABI or image; this OS is image "
+                 ^ Os.image os ^ ". Bump Os.abi if the ABI changed, or log the session again"))
+        | [] -> Some "abi: the logged session is empty");
         (let booted layers =
            let workspace = fresh () in
            let replies =

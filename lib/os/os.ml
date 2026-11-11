@@ -257,11 +257,6 @@ type exposure = { reads : string list; inward : string list; outward : string li
 
 let exposure os calls =
   let networked = match os.allows.net with [] -> `Offline | _ :: _ -> `Networked in
-  let filled =
-    match List.find_opt (( = ) (Lang.Kernel Agent_hole)) calls with
-    | Some _ -> `Filled
-    | None -> `Written
-  in
   let legs (call : Lang.call) =
     match (call, networked) with
     | Kernel Agent_read, _ -> Some ("read", [ `Reads ])
@@ -269,10 +264,7 @@ let exposure os calls =
     | Kernel Agent_shell, `Offline -> Some ("shell", [ `Reads ])
     | Kernel Agent_shell, `Networked -> Some ("shell with --net", [ `Reads; `Inward; `Outward ])
     | Kernel Agent_hole, _ -> Some ("hole", [ `Inward ])
-    | Driver name, _ -> (
-        match filled with
-        | `Filled -> Some (name, [ `Inward; `Outward ])
-        | `Written -> Some (name, [ `Inward ]))
+    | Driver name, _ -> Some (name, [ `Inward ])
     | Computed, _ -> Some ("a driver call", [ `Inward; `Outward ])
     | ( Kernel
           ( Agent_write | Agent_edit | Agent_enter | Agent_leave | Agent_merge | Agent_call

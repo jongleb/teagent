@@ -538,16 +538,7 @@ let interpret handler program state (task : Value.task) =
           state )
     | Tool tool -> (
         let+ step = handler.perform tool pc state in
-        let stamped =
-          Value.labelled
-            (match tool with
-            | Read path -> [ File path ]
-            | Grep _ -> [ Search ]
-            | Shell _ -> [ Command ]
-            | Leave | Merge _ -> [ Child ]
-            | Call { name; _ } -> [ Driver name ]
-            | Write _ | Edit _ | Enter _ -> [])
-        in
+        let stamped = Value.labelled (Value.sources tool) in
         match step with
         | Performed (result, state) ->
             ( Finished

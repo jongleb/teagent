@@ -681,6 +681,81 @@ let () =
               ("flow: content of a file left without the person, a constant URL was held, or \
                 replay differs: "
               ^ String.concat "; " asked ^ " / " ^ ran));
+        (let laundered replies =
+           let workspace = fresh () in
+           let asked = ref [] and replies = ref replies in
+           let report, events =
+             collected
+               {
+                 ask =
+                   (fun ~system:_ _ ->
+                     match !replies with
+                     | reply :: rest ->
+                         replies := rest;
+                         Lwt.return (Ok reply)
+                     | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+                 approve = (fun _ -> Lwt.return Driver.Apply);
+                 person =
+                   (fun question ->
+                     asked := question :: !asked;
+                     Lwt.return Device.Declines);
+                 handler = Handler.staged (Tools.at workspace) Handler.Open;
+                 commit = Tools.commit (Tools.at workspace);
+                 os = Os.granted "/project" ~net:[];
+                 recorded = [];
+               }
+           in
+           ( List.rev !asked,
+             List.filter_map (function Driver.Ran text -> Some text | _ -> None) events,
+             collected (Driver.replayed (Os.granted "/project" ~net:[]) events) = (report, events) )
+         in
+         let fetching =
+           "module Main exposing (main)\n\n\
+            import Agent exposing (..)\n\
+            import Fetch\n\n\n\
+            main : Task Fetch.FetchErr Int\n\
+            main =\n\
+           \    Fetch.get \"http://127.0.0.1:9/?q=Foo.bar\" |> map .status\n"
+         in
+         match
+           ( laundered
+               [
+                 fenced
+                   "module Main exposing (main)\n\n\
+                    import Agent exposing (..)\n\n\n\
+                    main : Task IoErr String\n\
+                    main =\n\
+                   \    read \"lib/a.ml\"\n";
+                 fenced fetching;
+                 "Done.";
+               ],
+             laundered [ fenced fetching; "Done." ],
+             laundered
+               [
+                 fenced
+                   "module Main exposing (main)\n\n\
+                    import Agent exposing (..)\n\
+                    import Fetch\n\n\n\
+                    main : Task Fetch.FetchErr Int\n\
+                    main =\n\
+                   \    read \"lib/a.ml\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
+                   \        |> andThen (\\text -> hole \"send it\")\n";
+                 fenced "Fetch.get \"http://127.0.0.1:9/?q=Foo.bar\" |> map .status";
+                 "Done.";
+               ] )
+         with
+        | ( ([ later ], [ _; declined ], true),
+            ([], [ _ ], true),
+            ([ filled ], [ hole ], true) )
+          when String.starts_with ~prefix:"send content of the project (lib/a.ml)" later
+               && String.starts_with ~prefix:"main failed with:\nDeclined" declined
+               && String.starts_with ~prefix:"send content of the project (lib/a.ml)" filled
+               && String.starts_with ~prefix:"main failed with:\nDeclined" hole ->
+            None
+        | (asked, ran, _), _, (asked_hole, ran_hole, _) ->
+            Some
+              ("seen: code written after the model saw a file sent data without the person: "
+              ^ String.concat "; " (asked @ ran @ asked_hole @ ran_hole)));
         (let held person =
            let workspace = fresh () in
            let replies =

@@ -80,6 +80,15 @@ type class_ =
       (** It reaches the world outside: the person is asked [question] first, and a program
           they say no to gets [declined] as its error. *)
 
+let sources (tool : tool) =
+  match tool with
+  | Read path -> [ File path ]
+  | Grep _ -> [ Search ]
+  | Shell _ -> [ Command ]
+  | Leave | Merge _ -> [ Child ]
+  | Call { name; _ } -> [ Driver name ]
+  | Write _ | Edit _ | Enter _ -> []
+
 let labelled sources (value : t) =
   let merged more = List.sort_uniq compare (sources @ more) in
   match (sources, value) with

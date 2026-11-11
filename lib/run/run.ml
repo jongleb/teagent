@@ -27,7 +27,7 @@ let compiled calls source =
 
 let calls t = Lang.calls t.modules
 
-let run t (handler : Handler.Overlay.t Handler.t) ~settle =
+let run t ~seen (handler : Handler.Overlay.t Handler.t) ~settle =
   let performed = ref [] and pending = ref t.recorded in
   let replaying =
     {
@@ -89,7 +89,10 @@ let run t (handler : Handler.Overlay.t Handler.t) ~settle =
                overlay ))
   in
   match Interp.main program with
-  | Ok task -> stepped task
+  | Ok task -> (
+      match seen with
+      | [] -> stepped task
+      | _ :: _ -> stepped (Labelled { sources = List.sort_uniq compare seen; task }))
   | Error failure -> Lwt.return (Ok (Finished (Error failure), Handler.Overlay.empty))
 
 let stopped = function

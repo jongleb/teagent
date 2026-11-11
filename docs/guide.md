@@ -198,13 +198,13 @@ The diff lists every staged file. A deleted file shows `+++ /dev/null`.
 teagent tracks where every value of a program came from: a file it read, lines grep found, a
 command's output. When a `Fetch` call or a shell command under `--net` would carry such
 content, or was chosen because of it (`if secret == "x" then Fetch.get a else Fetch.get b`),
-teagent asks you first and names the files the content came from. A `Fetch.get` built from the
-program's own text goes without a question.
+teagent asks you first and names the files the content came from. The model writes every
+program, and the code for every hole, after seeing what earlier calls returned, and could copy
+that into its code; so a program counts as carrying everything the session read before it. In
+practice the first program may fetch freely; once the model has seen a file, a fetch asks.
 
-Some programs cannot be followed that way, so teagent checks them before they run: a shell
-command under `--net` can read the project and reach the network by itself, and the code for a
-hole is written by the model after it has seen values. A program that can read the project,
-take in text from outside and send data out through one of these asks you once, up front.
+A shell command under `--net` cannot be followed that way: it can read the project and reach the
+network by itself. A program that runs one and also reads the project asks you once, up front.
 Without `--ask`, with `--dry-run` and over MCP every such question is answered no, and the model
 is told. With `--net`, run teagent with `--ask`.
 

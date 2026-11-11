@@ -8,9 +8,11 @@ type t = {
   on : Driver.event -> unit Lwt.t;
   waiting : (string, Run.hole) Hashtbl.t;  (** Runs stopped at a hole, by the name given out. *)
   mutable started : int;  (** How many runs this connection has begun. *)
+  seen : Value.source list ref;  (** Where what the calling agent was shown so far came from. *)
 }
 
 let start os shell ~on =
+  let seen = ref [] in
   {
     workspace = Os.workspace os;
     handler =
@@ -24,6 +26,7 @@ let start os shell ~on =
                 let* () =
                   match step with
                   | Handler.Performed (result, after) ->
+                      seen := Value.sources tool @ !seen;
                       on (Driver.Performed { tool; result; staged = Handler.Overlay.since overlay after })
                   | Handler.Blocked -> Lwt.return_unit
                   | Handler.Exhausted -> on (Driver.Exhausted tool)
@@ -36,6 +39,7 @@ let start os shell ~on =
     on;
     waiting = Hashtbl.create 4;
     started = 0;
+    seen;
   }
 
 let handled program json =
@@ -105,10 +109,9 @@ let handled program json =
             Result, String, Char, Tuple, Dict and Set are available. The modules this run \
             offers, Agent and drivers such as Fetch that a program imports by name. A call that \
             cannot be taken back, such as Fetch.post, needs a person's yes, so here it always \
-            fails with Declined. teagent tracks where every value came from, and a driver call \
-            that carries what the program read from the project fails with Declined too; a \
-            program that reads the project and has both a hole and a driver call is refused \
-            before it runs:\n\n"
+            fails with Declined. teagent tracks where every value came from and counts each \
+            program as carrying what this connection already read, so a driver call that \
+            carries content of the project fails with Declined too:\n\n"
           ^ Lang.Calls.source (Os.table program.os))
           (schema [ ("program", "The whole Main module.") ] [ "program" ]);
         tool Os.Run "fill"
@@ -230,7 +233,7 @@ let handled program json =
                true)
       | None ->
         let* outcome =
-          Run.run run program.handler ~settle:(fun overlay ->
+          Run.run run ~seen:!(program.seen) program.handler ~settle:(fun overlay ->
               Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
         in
         match outcome with

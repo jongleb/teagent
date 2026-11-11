@@ -222,7 +222,7 @@ let () =
             Ok None,
             Ok (Some { reads = [ "shell with --net" ]; _ }),
             Ok None,
-            Ok (Some { reads = [ "read" ]; inward = [ "hole"; "fetch.get" ]; outward = [ "fetch.get" ] }) )
+            Ok None )
           ->
             None
         | _ -> Some "exposure: a program with all three legs passed, or one without them was held");

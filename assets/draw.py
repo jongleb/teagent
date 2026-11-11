@@ -360,5 +360,43 @@ def threats():
     frame("threats", 880, 116 + len(rows) * 26 + 10, "FILE 08 · THREAT LEDGER", "What stops what, and what is still open", body, "EYES ONLY")
 
 
-for draw in (logo, stats, pipeline, tree, shell, replay, os_layers, holes, flow, threats):
+def parts():
+    def part(x, y, w, name, where, lines, color):
+        drawn = box(x, y, w, 22 + 16 * len(lines) + 12, stroke=color, fill=PANEL)
+        drawn += text(x + 12, y + 20, name, 11.5, weight=700).replace("<text ", f'<text style="fill:{color}" ')
+        drawn += text(x + w - 10, y + 20, where, 9.5, "dim", 600, "end")
+        for row, line in enumerate(lines):
+            drawn += text(x + 12, y + 40 + row * 16, line, 10, "muted")
+        return drawn
+
+    body = (
+        part(16, 76, 230, "PERSON", "you", ["the task; yes or no;", "rules.elm and the profile"], TEXT)
+        + part(325, 76, 230, "MODEL", "lib/llm", ["writes each program and", "the code for each hole"], TEXT)
+        + part(634, 76, 230, "OTHER AGENT", "Claude Code, Codex", ["sends whole programs,", "or single tools"], TEXT)
+        + part(16, 176, 560, "SESSION LOOP", "lib/driver", ["asks the model, compiles, runs, settles the diff, keeps the log;", "the same loop replays a log, or resumes from it"], CYAN)
+        + part(600, 176, 264, "MCP SERVER", "lib/mcp", ["run, fill and the tools,", "with no person to ask"], CYAN)
+        + part(16, 276, 200, "OS VALUE", "lib/os", ["calls, mounts, hosts, limits,", "boot order, rules; image"], AMBER)
+        + part(232, 276, 200, "COMPILER", "lib/lang", ["Dartea → IR, cut to the OS;", "the calls it can reach"], CYAN)
+        + part(448, 276, 200, "INTERPRETER", "lib/interp", ["IR → a tree of effects;", "every value labelled"], CYAN)
+        + part(664, 276, 200, "RUN", "lib/run", ["one program; holes and", "their fills, no repeats"], CYAN)
+        + part(16, 380, 416, "HANDLER", "lib/effect", ["boot layers: budget → journal → policy (rules, labels,", "consent); the staged overlay and its diff"], RED)
+        + part(448, 380, 416, "TOOLS", "lib/tools · lib/device", ["the only IO: files, search, the sandbox, the proxy,", "limits, redaction, the commit; drivers such as Fetch"], RED)
+        + arrow(131, 140, 131, 176)
+        + arrow(430, 140, 430, 176)
+        + arrow(450, 176, 450, 140, DIM)
+        + arrow(749, 140, 749, 176)
+        + arrow(332, 238, 332, 276)
+        + arrow(540, 238, 700, 276)
+        + arrow(764, 238, 764, 276)
+        + arrow(216, 308, 232, 308, AMBER, False)
+        + arrow(664, 308, 648, 308, DIM, False)
+        + arrow(116, 340, 116, 380, AMBER)
+        + arrow(548, 340, 330, 380)
+        + arrow(432, 412, 448, 412, RED)
+        + text(16, 482, "arrows show who hands what to whom. only TOOLS touches your disk or the network.", 10.5, "muted")
+    )
+    frame("map", 880, 500, "FILE 09 · MAP", "Who does what, and who hands what to whom", body)
+
+
+for draw in (logo, stats, pipeline, tree, shell, replay, os_layers, holes, flow, threats, parts):
     draw()

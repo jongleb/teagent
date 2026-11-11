@@ -17,9 +17,9 @@ any session can be undone with one command.
 ![Bench](https://img.shields.io/badge/bench-20%2F20-34e089?style=for-the-badge&labelColor=000000)
 ![ABI](https://img.shields.io/badge/ABI-2-5cc8ff?style=for-the-badge&labelColor=000000)
 
-[Why](#why-teagent) · [Security](#security-model) · [How it works](#how-it-works) ·
-[Language](#the-language) · [Rules](#rules) · [Status](#status) · [Install](#install) ·
-[Quick start](#quick-start) · [Layout](#layout)
+[Why](#why-teagent) · [Parts](#how-the-parts-fit) · [Security](#security-model) ·
+[How it works](#how-it-works) · [Language](#the-language) · [Rules](#rules) ·
+[Status](#status) · [Documents](#documents) · [Install](#install) · [Quick start](#quick-start)
 
 </div>
 
@@ -99,6 +99,26 @@ whole history of the session in view.
 </td>
 </tr>
 </table>
+
+## How the parts fit
+
+<img src="assets/map.svg" alt="Map. The person gives the task, answers yes or no, and writes rules.elm and the profile; the session loop in lib/driver asks the model in lib/llm, compiles, runs, settles the diff and keeps the log. Another agent such as Claude Code talks to the MCP server in lib/mcp instead. Both hand programs to the compiler in lib/lang, which cuts the language to the OS value in lib/os, and to run in lib/run, which drives the interpreter in lib/interp. The interpreter hands each call to the handler in lib/effect, whose boot layers come from the OS, and only the tools in lib/tools and lib/device touch the disk or the network" width="100%">
+
+| Part | Code | What it decides |
+| --- | --- | --- |
+| Person | you | the task; yes or no; `rules.elm`, the profile, `--net`, `--ask` |
+| Model | `lib/llm` | nothing on its own: it only writes programs |
+| Session loop | `lib/driver` | when to ask the model, compile, run and settle; writes the log |
+| MCP server | `lib/mcp` | the same for another agent, with no person to ask |
+| OS value | `lib/os` | what exists: calls, paths, hosts, limits, boot layers, rules; the image hash |
+| Compiler | `lib/lang` | whether a program is well formed, and which calls it can reach |
+| Interpreter | `lib/interp` | what `main` describes, and where each value came from |
+| Run | `lib/run` | one program on its way to a value, through its holes |
+| Handler | `lib/effect` | whether each call happens: budget, journal, policy; the staged overlay |
+| Tools | `lib/tools`, `lib/device` | how a call happens: the only code that reads, writes, runs or connects |
+
+The model never decides anything. Every decision belongs to code below it that does not read
+prose, and every decision about the world is made once, in the handler, for every caller.
 
 ## Security model
 
@@ -295,6 +315,17 @@ the question it exists to answer is still open.
 | Network | off by default; hosts granted with `--net` go through teagent's proxy |
 | Micro-OS | all eight steps of [docs/micro-os.md](docs/micro-os.md); ABI 2 in [docs/abi.md](docs/abi.md) |
 | Security plan | P0 and P1 of [docs/research/llm-security.md](docs/research/llm-security.md) done; P2 next, skills trusted by hash first |
+
+## Documents
+
+| Document | Read it to learn |
+| --- | --- |
+| [docs/guide.md](docs/guide.md) | what happens at every step, every flag and setting, and where you are safe |
+| [docs/micro-os.md](docs/micro-os.md) | why teagent is built as a small OS, and the order it was built in |
+| [docs/abi.md](docs/abi.md) | the contract: the call table, the JSON of values, the log, the image |
+| [docs/research/llm-security.md](docs/research/llm-security.md) | the field in 2024–2026, what teagent took from it, and the plan |
+| [docs/research/sandboxing.md](docs/research/sandboxing.md) | how far the handler goes, and where the OS sandbox takes over |
+| [docs/Rune — план.md](docs/Rune%20%E2%80%94%20%D0%BF%D0%BB%D0%B0%D0%BD.md) | the first plan, in Russian, from before the name teagent |
 
 ## Install
 

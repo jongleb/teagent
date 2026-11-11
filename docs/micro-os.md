@@ -1,9 +1,9 @@
 # teagent as a micro-OS
 
-Design note, 2026-11-07. It describes where teagent goes after the profile: from a harness with
-a JSON list of restrictions to a small operating system that is assembled per task, where the
-system itself is a typed value. Nothing here is built yet; the last section says in what order
-to build it and how to tell each step worked.
+Design note, 2026-11-07, updated 2026-11-11. It describes how teagent went from a harness with a
+JSON list of restrictions to a small operating system assembled per task, where the system
+itself is a typed value. All eight steps are built; the last sections say in what order, how
+each step was tested, and what is still open.
 
 ## The idea in one paragraph
 

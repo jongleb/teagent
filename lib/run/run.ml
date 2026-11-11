@@ -20,10 +20,52 @@ type outcome =
   | Reached of hole
   | Unfillable of string
 
+let distinct source =
+  let rec described at found =
+    match at + 6 <= String.length source with
+    | false -> List.rev found
+    | true -> (
+        match
+          ( String.equal (String.sub source at 6) "hole \"",
+            at = 0
+            ||
+            match source.[at - 1] with
+            | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' | '.' -> false
+            | _ -> true )
+        with
+        | true, true ->
+            let rec closing index =
+              match index < String.length source with
+              | false -> index
+              | true -> (
+                  match source.[index] with
+                  | '\\' -> closing (index + 2)
+                  | '"' -> index
+                  | _ -> closing (index + 1))
+            in
+            let stop = closing (at + 6) in
+            described (stop + 1) (String.sub source (at + 6) (stop - at - 6) :: found)
+        | _ -> described (at + 1) found)
+  in
+  let descriptions = described 0 [] in
+  match
+    List.find_opt
+      (fun description ->
+        List.length (List.filter (String.equal description) descriptions) > 1)
+      descriptions
+  with
+  | None -> Ok source
+  | Some description ->
+      Error
+        ("-- HOLES WITH ONE DESCRIPTION ----------------------------------------- Main.elm\n\n\
+          Two holes are written `hole \"" ^ description
+       ^ "\"`. The code for a hole goes in every place written that way, so give each hole a \
+          description of its own.")
+
 let compiled calls source =
   Result.map
     (fun modules -> { calls; source; modules; recorded = []; fills = 0 })
-    (Lang.compile calls source)
+    (Result.bind (distinct source) (Lang.compile calls))
 
 let calls t = Lang.calls t.modules
 
@@ -146,4 +188,4 @@ let filled hole code =
   let rewritten = Buffer.contents buffer in
   Result.map
     (fun modules -> { hole.run with source = rewritten; modules; fills = hole.run.fills + 1 })
-    (Lang.compile hole.run.calls rewritten)
+    (Result.bind (distinct rewritten) (Lang.compile hole.run.calls))

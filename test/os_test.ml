@@ -304,6 +304,16 @@ readsSecrets call =\n\
           when holds "<U+202E>" first && holds "<U+200B>" second && holds "+x<U+2066>y" diff ->
             None
         | _ -> Some "unicode: a hidden character passed into a skill, a diff, or teagent's own modules");
+        (let holed first second =
+           Run.compiled Lang.Calls.all
+             ("module Main exposing (main)\n\nimport Agent exposing (..)\n\n\n\
+               main : Task IoErr Int\nmain =\n\
+              \    batch [ hole \"" ^ first ^ "\", hole \"" ^ second ^ "\" ]\n\
+              \        |> map List.length\n")
+         in
+         match (holed "count" "count", holed "count" "sum", holed "say \\\"x\\\"" "say \\\"x\\\"") with
+        | Error report, Ok _, Error _ when holds "HOLES WITH ONE DESCRIPTION" report -> None
+        | _ -> Some "holes: two holes with one description were accepted, or two distinct ones refused");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

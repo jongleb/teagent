@@ -1,100 +1,75 @@
 ## The program
 
-- One module: `module Main exposing (main)`, `import Agent exposing (..)`, and `main : Task e a`.
-  The language is Elm 0.19.1 without ports. The core modules Basics, List, Maybe, Result,
-  String, Char, Tuple, Dict and Set are there, plus `List.unique`; there is no Html, Json,
-  Regex, Debug, Random, Time and no `List.Extra`. `List.unique` keeps the first of each value,
-  in order. `port`, `type`, `as` and `where` cannot name a value, an argument or a record field;
-  `type` and `type alias` declarations are fine.
-- Write the Agent functions without a prefix: `succeed`, `andThen`, not `Task.succeed`.
-  `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), not a
-  `Result`. `fromResult` turns a `Result` into a task.
-- The whole program is typechecked before anything runs. A program that does not compile
-  changes nothing; the compiler's report comes back, often with a `Hint:` line.
-- `main` may keep its error type open (`Task e a`) when nothing can fail, use `IoErr`, or use
-  a type of its own; convert each `IoErr` into it with `mapErr`.
+- One module: `module Main exposing (main)`, `import Agent exposing (..)`, `main : Task e a`.
+  Elm 0.19.1 without ports. Core: Basics, List, Maybe, Result, String, Char, Tuple, Dict, Set,
+  plus `List.unique` (keeps the first of each value, in order). No Html, Json, Regex, Debug,
+  Random, Time, `List.Extra`. `port`, `type`, `as`, `where` cannot be names or record fields
+  (`type` declarations are fine).
+- Agent functions take no prefix (`succeed`, not `Task.succeed`). `String.toInt`, `List.head`,
+  `Dict.get` return `Maybe`. `fromResult` turns a `Result` into a task.
+- Typechecked before anything runs; a program that does not compile changes nothing and the
+  report comes back, often with a `Hint:`.
+- `main`'s error type may stay open (`Task e a`), be `IoErr`, or be your own (convert with
+  `mapErr`).
 
 ## How a run goes
 
-- Tasks run one after another, in the order `andThen` and `batch` give. `batch` runs its tasks
-  in order and stops at the first one that fails. `map2 f first second` runs `first`, then
-  `second`, and combines their values.
-- `write` and `edit` are staged. Every later `read`, `grep` and `shell` of the same program
-  sees them.
-- Staged changes are written to the project together, and only if `main` succeeds. If `main`
-  fails, crashes or runs out of steps, nothing it changed is written; failing on purpose after
-  a check that did not pass is a fine way to throw changes away.
-- The value of `main` comes back in Elm syntax, with strings quoted and escaped. Text that looks
-  like a secret (an API key, a token, a private key) is shown as `[redacted secret]`.
-- Paths are relative to the project's root. An absolute path, a path with `..`, a path into
-  `.git`, `.claude`, `.codex`, `.cursor`, `.vscode`, `.teagent`, `.envrc` or `.mcp.json` at any
-  depth, and any `.env` or `.env.*` file (but `.env.example` and the like) fail with `Denied`.
+- Tasks run one after another in `andThen` / `batch` order; `batch` stops at the first failure.
+  `map2 f a b` runs `a`, then `b`, and combines them.
+- `write` and `edit` are staged; later `read`, `grep` and `shell` see them. They are written
+  together, and only if `main` succeeds: a failed, crashed or looping `main` writes nothing, so
+  failing on purpose after a bad check throws changes away.
+- The value of `main` comes back in Elm syntax. Secret-looking text shows as
+  `[redacted secret]`.
+- Paths are relative to the project root. Absolute paths, `..`, anything under `.git`,
+  `.claude`, `.codex`, `.cursor`, `.vscode`, `.teagent`, `.envrc`, `.mcp.json` at any depth,
+  and `.env` / `.env.*` files (not `.env.example` and the like) fail with `Denied`.
 
 ## The Agent calls
 
-- `read path`: the whole text of the file. `NotFound path` if there is none, `Denied path` if
-  the path is refused.
-- `write path text`: creates or replaces the whole file, with its folders.
-- `edit { path, old, new }`: replaces the one place where `old` occurs. It fails with
-  `Conflict` when `old` is not in the file or occurs more than once: include enough
-  surrounding text to make it unique, or `read`, change the text with `String.replace` and
-  `write` it back to change every occurrence.
-- `grep { pattern, glob }`: one `Match` per matching line, `line` counted from 1, `path`
-  relative to the root, files in path order. Several matches in one file give several
-  `Match`es with the same path; use `List.unique` on the paths. `pattern` is a regular
-  expression with `.`, `*`, `+`, `?`, `[...]`, `^`, `$`, `|`, `(...)`, `\d`, `\s`, `\w` (and
-  `\D`, `\S`, `\W`) and `\b`. A backslash makes any of these characters literal (`\.`,
-  `\(`, `\|`), and is written twice in an Elm string (`"\\s+"`, `"Foo\\.bar"`). There is no
-  `{n,m}` and no lookaround, and a pattern grep cannot read finds nothing. `glob`: `*` and `?`
-  within one folder, `**` across any number of folders, so `**/*.ml` and `lib/**` work and
-  `**` alone is every file. Folders and files whose names start with a dot, `_build` and
-  `node_modules` are not searched. To list files, `shell "find . -type f"` is the plain way.
-- `shell command`: runs `/bin/sh -c command` in the project's root, in a sealed copy that holds
-  the program's staged changes. `out` is stdout and stderr together; `code` is the exit code,
-  and a code other than 0 is a result, not a failure. Files the command writes or deletes
-  become staged changes like any edit, except caches: `__pycache__`, `*.pyc`, `_build`,
-  `node_modules` and names that start with a dot are never taken back, and Python keeps its
-  bytecode out of the project. Paths in `out` name the project, not the sealed copy. Rewriting
-  a file with the text it already had is no change. There is no network, unless the person granted hosts;
-  there are no API keys in its environment; it may run 30 minutes. A command teagent will not
-  run returns code 126 and the reason in `out`.
-- `hole "what goes here"`: a task of whatever type fits there, for code you can only write
-  after seeing data. When `main` reaches it, the run stops and shows the values in scope; the
-  code you send for it goes into that place, is typechecked there, and the program runs again
-  without repeating the calls that already ran. Give every hole its own description.
-- `spawn mounts task`: runs `task` as a child that sees the changes so far, cannot see what
-  `mounts` hide (`Hidden path`, `Readonly path`, `Scratch path`), and keeps its own changes
-  apart. `merge child` takes them into the parent, or fails with the changes that clash if a
-  file moved meanwhile. A child never merged leaves nothing.
-- `succeed`, `fail`, `andThen`, `map`, `map2`, `mapErr`, `onError`, `batch`, `fromResult` build
-  tasks; they do nothing by themselves.
-
-## Running a program from a shell
-
-`teagent -C project --exec program.elm` does what `run` does and says how it went in its exit
-code: 0 when main succeeded and everything was written, 1 when the program does not compile,
-3 when main succeeded but some files were held for a person, 4 when main failed, crashed or ran
-out of steps (nothing is written then). `--dry-run` runs it and writes nothing.
+- `read path`: the file's text; `NotFound` or `Denied` otherwise.
+- `write path text`: creates or replaces the file, with its folders.
+- `edit { path, old, new }`: replaces the single occurrence of `old`; `Conflict` if it occurs
+  zero or several times. To change every occurrence: `read`, `String.replace`, `write`.
+- `grep { pattern, glob }`: one `Match` per line (`line` from 1, `path` from the root, in path
+  order); `List.unique` the paths. `pattern`: `. * + ? [...] ^ $ | (...) \d \s \w \D \S \W \b`;
+  a backslash makes a character literal and is doubled in Elm strings (`"Foo\\.bar"`); no
+  `{n,m}`, no lookaround; an unreadable pattern finds nothing. `glob`: `*` `?` within a folder,
+  `**` across folders (`**` alone is every file). Dot names, `_build`, `node_modules` are
+  skipped. To list files: `shell "find . -type f"`.
+- `shell command`: `/bin/sh -c` in the project root, in a sealed copy holding the staged
+  changes. `out` is stdout and stderr; a non-zero `code` is a result, not a failure. Files it
+  writes or deletes become staged changes, except caches (`__pycache__`, `*.pyc`, `_build`,
+  `node_modules`, dot names). Paths in `out` name the project. No network unless hosts were
+  granted, no API keys, 30 minutes. A refused command returns code 126 and the reason.
+- `hole "what goes here"`: a task of any type, for code you can only write after seeing data.
+  The run stops there and shows the values in scope; the code you send is typechecked in that
+  place and the program runs again without repeating finished calls. One description per hole.
+- `spawn mounts task`: a child that sees the changes so far, not what `mounts` hide
+  (`Hidden`, `Readonly`, `Scratch` path), with changes of its own. `merge child` takes them,
+  or fails with the clashes if a file moved meanwhile; an unmerged child leaves nothing.
+- Rewriting a file with the same text is no change.
 
 ## Errors
 
-`IoErr` is `NotFound path`, `Denied path` (the path is refused, hidden or read-only, or the
-person's rules refused the call), or `Conflict reason` (`edit` did not find its text once, or
-a file changed on disk since it was staged).
+`IoErr`: `NotFound path`; `Denied path` (refused, hidden or read-only path, or refused by the
+person's rules); `Conflict reason` (`edit` did not match once, or the file changed on disk).
 
 ## What a person has to allow
 
-- Files that other programs run or obey are written only with a person's yes: git hooks and
-  attributes (`.husky/`, `.pre-commit-config.yaml`, `.gitattributes`, `.gitmodules`), CI
-  workflows (`.github/workflows/`, `.gitlab-ci.yml` and the like), the `scripts` of
-  `package.json` (a change that leaves `scripts` as they were, such as a new version, needs no
-  one) and npm or yarn settings, editor containers (`.devcontainer/`, `.idea/`), and
-  instructions for agents (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules` and the like).
-  The rest of the changes are still written, and the reply names the files that were not.
-- teagent labels every value with where its content came from. A `Fetch` request, or a shell
-  command when hosts are granted, that carries content of the project, or that was chosen
-  because of it, needs a person's yes; so does everything after this session has read the
-  project, since the code that follows was written after seeing it. Without a yes, `Fetch`
-  fails with `Declined` and a command gets code 126. Reach the network before reading the
-  project when the task allows it.
-- `Fetch.post` cannot be taken back, so it always needs a yes.
+- Files other programs run: git hooks and attributes (`.husky/`, `.pre-commit-config.yaml`,
+  `.gitattributes`, `.gitmodules`), CI (`.github/workflows/`, `.gitlab-ci.yml`, …), npm/yarn
+  settings and `package.json` `scripts` (a version change is fine), editor containers
+  (`.devcontainer/`, `.idea/`), agent instructions (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`,
+  …). Other changes are still written; the reply names the held files.
+- Every value carries where its content came from. A `Fetch` call, or a shell command with
+  granted hosts, that carries project content or was chosen by it needs a yes, as does
+  everything after the session has read the project. Otherwise `Fetch` fails with `Declined`
+  and a command gets 126. Reach the network before reading the project when you can.
+- `Fetch.post` always needs a yes.
+
+## From a shell
+
+`teagent -C project --exec program.elm` does what `run` does and prints only the result and
+the files written. Exit code: 0 done, 1 does not compile, 3 some files held, 4 `main` failed
+(nothing written). `--dry-run` writes nothing; `--trace` prints every call.

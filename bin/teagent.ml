@@ -8,6 +8,7 @@ let () =
   let mode = ref `Fresh in
   let words = ref [] in
   let net = ref [] in
+  let trace = ref `Brief in
   Arg.parse
     [
       ("-C", Arg.Set_string directory, "DIR  Work in DIR (default: the current directory)");
@@ -47,6 +48,9 @@ let () =
       ( "--net",
         Arg.String (fun host -> net := String.lowercase_ascii host :: !net),
         "HOST  Let contained commands reach HOST, or every name under it as *.HOST; repeat it" );
+      ( "--trace",
+        Arg.Unit (fun () -> trace := `Full),
+        "  With --exec, print the program, every call and its result, and the diff" );
       ( "--mcp",
         Arg.Unit (fun () -> mode := `Mcp),
         "  Serve bash, read, write, edit, grep, run and fill to another agent over MCP (stdio)" );
@@ -99,6 +103,13 @@ let () =
   in
   let section title body = Lwt.return (Printf.printf "\n── %s ──\n%s\n%!" title body) in
   let printed os (event : Driver.event) =
+    match (event, !mode, !trace) with
+    | ( ( Wrote _ | Performed _ | Deferred _ | Staged _ | Decided _ | Guessed _ | Answered _
+        | Filled _ ),
+        `Exec _,
+        `Brief ) ->
+        Lwt.return_unit
+    | _ -> (
     match event with
     | Wrote reply -> section "program" reply
     | Refused report -> section "compiler" report
@@ -138,7 +149,7 @@ let () =
     | Ran result -> section "result" result
     | Guessed reply -> section "guess, sent back" reply
     | Answered reply -> section "answer" reply
-    | Filled { hole; reply } -> section ("hole " ^ Value.to_elm (V_string hole)) reply
+    | Filled { hole; reply } -> section ("hole " ^ Value.to_elm (V_string hole)) reply)
   in
   let loaded file =
     match In_channel.with_open_text file In_channel.input_lines with
@@ -253,9 +264,12 @@ let () =
                  printed os event)
                task)
         in
-        Printf.printf "\ncompile rounds per program: %s\nsession log: %s\n"
-          (String.concat ", " (List.map string_of_int report.rounds))
-          log;
+        (match (!mode, !trace) with
+        | `Exec _, `Brief -> Printf.printf "\nsession log: %s\n" log
+        | _ ->
+            Printf.printf "\ncompile rounds per program: %s\nsession log: %s\n"
+              (String.concat ", " (List.map string_of_int report.rounds))
+              log);
         report)
   in
   let started task os =

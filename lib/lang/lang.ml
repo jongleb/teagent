@@ -209,7 +209,38 @@ module Calls = struct
     :: List.map (fun device -> (named device, Device.source device)) calls.plugged)
     @ List.map (fun (skill : Skill.t) -> (skill.name, skill.source)) skills
 
-  let source calls = String.concat "\n\n" (List.map snd (modules calls (fst (settled calls))))
+  let source calls =
+    let signed text =
+      String.concat "\n\n"
+        (List.filter_map
+           (fun block ->
+             match String.split_on_char '\n' (String.trim block) with
+             | first :: _
+               when List.exists
+                      (fun prefix -> String.starts_with ~prefix first)
+                      [ "module "; "import "; "type " ] ->
+                 Some (String.trim block)
+             | lines ->
+                 let rec signature kept = function
+                   | [] -> None
+                   | line :: rest -> (
+                       match
+                         ( String.length line > 0 && not (List.mem line.[0] [ ' '; '-'; '{' ]),
+                           Option.is_some (found " : " line) )
+                       with
+                       | true, true -> Some (String.concat "\n" (List.rev (line :: kept)))
+                       | _ -> signature (line :: kept) rest)
+                 in
+                 signature [] lines)
+           (let rec blocks text =
+              Option.fold ~none:[ text ]
+                ~some:(fun at ->
+                  String.sub text 0 at :: blocks (String.sub text (at + 3) (String.length text - at - 3)))
+                (found "\n\n\n" text)
+            in
+            blocks text))
+    in
+    String.concat "\n\n" (List.map (fun (_, text) -> signed text) (modules calls (fst (settled calls))))
 end
 
 let compile calls source =

@@ -110,7 +110,8 @@ keys in this order:
  "boot": [{"budget": 200}, "journal", "policy"],
  "drivers": ["<Elm source of each offered driver>"],
  "skills": ["<Elm source of each skill>"],
- "seconds": 1800}
+ "seconds": 1800,
+ "rules": ["<Elm source of each rules module>"]}
 ```
 
 `offers` follows the order above. `mounts`, `reads`, `net` and `skills` are sorted. The project's
@@ -143,5 +144,10 @@ seeing what earlier calls of the session returned, so `main` runs labelled with 
 every call performed before it in the session. Labels are never logged: the interpreter
 computes them again on replay.
 
+Before teagent's own checks, every `read`, `write`, `edit`, `grep`, `shell` and driver call is
+put to the person's rules (`Rules.decide` over the types of the `Policy` module), with its
+labels and the session's earlier calls. `Deny` refuses the call, `Ask` asks the person first,
+and `Allow` leaves it to teagent's checks.
+
 Version 2 added the `Egress` class, the `held` and `exposed` events, the paths in `committed`,
-hidden `.env` files, and `seconds` in the image.
+hidden `.env` files, and `seconds` and `rules` in the image.

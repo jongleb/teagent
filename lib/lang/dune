@@ -2,6 +2,7 @@
  (name lang)
  (libraries
   agent
+  policy
   device
   dartea
   dartea.data

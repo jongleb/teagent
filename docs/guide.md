@@ -333,6 +333,66 @@ it. Only the import list decides whether a skill is installed. A skill that writ
 without listing `write` is installed in an OS without `write` too, and the programs that import
 it then fail to compile, still before anything runs.
 
+## Rules
+
+`.teagent/rules.elm` holds your own rules, in Dartea. teagent asks them before every `read`,
+`write`, `edit`, `grep`, `shell` and driver call, with what the call carries and every call the
+session made before it:
+
+```elm
+module Rules exposing (decide)
+
+import Policy exposing (..)
+
+
+decide : Call -> List Source -> List Call -> Decision
+decide call sources history =
+    case call of
+        Call "fetch.post" _ ->
+            if List.any readsSecrets history then
+                Deny "nothing goes out after reading secrets"
+
+            else
+                Allow
+
+        Write path ->
+            if String.startsWith "vendor/" path then
+                Ask ("write " ++ path)
+
+            else
+                Allow
+
+        _ ->
+            Allow
+
+
+readsSecrets : Call -> Bool
+readsSecrets call =
+    case call of
+        Read path ->
+            String.startsWith "secrets/" path
+
+        _ ->
+            False
+```
+
+`Call` is `Read path`, `Write path`, `Edit path`, `Grep pattern`, `Shell command` or
+`Call name argument`, a driver call such as `Call "fetch.get" url`. `Source` says where the
+call's content came from: `File path`, `Search`, `Command`, `Child` or `Driver name`. `history`
+holds the calls before this one, newest first. `Decision` is one of:
+
+- `Allow`: teagent's own checks still apply, so rules can never give a program more than it
+  had.
+- `Ask question`: the person is asked first; a no refuses the call.
+- `Deny reason`: the call is refused without asking. A refused `read`, `write` or `edit` fails
+  with `Denied reason`, a driver call with its driver's `Declined`, a `grep` finds nothing and a
+  command gets exit code 126.
+
+Rules are pure: they cannot read files or reach anything. teagent compiles them at start and
+stops with the compiler's report if they do not compile. Rules that crash or loop deny the
+call. Because rules can only refuse, a rules file that comes with a cloned repository is safe to
+use. Rules are part of the OS image, so a session replays only with the same rules.
+
 ## Logs, replay and resume
 
 Every session writes `~/.teagent/sessions/NNNN.jsonl`: the task on the first line, then one

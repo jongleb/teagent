@@ -457,7 +457,9 @@ module Boot = struct
         List.map (function Budget _ -> Budget (min calls fewer) | (Policy | Journal) as layer -> layer) later
 end
 
-let booted boot ~class_of ~person ~journal base =
+type verdict = Allow | Ask of string | Deny of string
+
+let booted boot ~class_of ~rules ~person ~journal base =
   List.fold_right
     (fun (layer : Boot.layer) inner ->
       match layer with
@@ -478,7 +480,7 @@ let booted boot ~class_of ~person ~journal base =
                       | Driver _ -> None)
                     sources
                 in
-                let asked question declined =
+                let asked question declined agreed =
                   match
                     ( !answers,
                       List.length (List.filter (function `Declined -> true | `Agreed -> false) !answers) )
@@ -490,23 +492,52 @@ let booted boot ~class_of ~person ~journal base =
                       match consent with
                       | Device.Agrees ->
                           answers := `Agreed :: !answers;
-                          inner.perform tool sources state
+                          agreed ()
                       | Declines ->
                           answers := `Declined :: !answers;
                           Lwt.return (Performed (declined, state)))
                 in
-                match ((class_of tool : Value.class_), carried) with
-                | Irreversible { question; declined }, [] -> asked question (Error declined)
-                | Irreversible { question; declined }, _ :: _ ->
-                    asked
-                      (question ^ "\n\nIt carries content of the project: " ^ String.concat ", " carried)
-                      (Error declined)
-                | Egress { declined }, _ :: _ ->
-                    asked
-                      ("send content of the project (" ^ String.concat ", " carried ^ ") out with "
-                      ^ Yojson.Safe.to_string (Value.tool_to_json tool))
-                      declined
-                | (Pure | Staged | Contained | Egress _), _ -> inner.perform tool sources state);
+                let performed () = inner.perform tool sources state in
+                let checked () =
+                  match ((class_of tool : Value.class_), carried) with
+                  | Irreversible { question; declined }, [] -> asked question (Error declined) performed
+                  | Irreversible { question; declined }, _ :: _ ->
+                      asked
+                        (question ^ "\n\nIt carries content of the project: " ^ String.concat ", " carried)
+                        (Error declined) performed
+                  | Egress { declined }, _ :: _ ->
+                      asked
+                        ("send content of the project (" ^ String.concat ", " carried ^ ") out with "
+                        ^ Yojson.Safe.to_string (Value.tool_to_json tool))
+                        declined performed
+                  | (Pure | Staged | Contained | Egress _), _ -> performed ()
+                in
+                let refusal reason : (Value.t, Value.t) result option =
+                  match tool with
+                  | Read _ | Write _ | Edit _ ->
+                      Some
+                        (Error
+                           (V_constr
+                              {
+                                constructor = { module_name = "Agent"; name = "Denied" };
+                                arguments = [ V_string reason ];
+                              }))
+                  | Grep _ -> Some (Ok (V_list []))
+                  | Shell _ -> Some (Ok (V_record [ ("code", V_number 126.); ("out", V_string reason) ]))
+                  | Call { name; _ } -> Some (Error (Device.refused ~name reason))
+                  | Enter _ | Leave | Merge _ -> None
+                in
+                match Option.map (fun _ -> rules tool sources) (refusal "") with
+                | None | Some Allow -> checked ()
+                | Some (Deny reason) ->
+                    Lwt.return
+                      (Performed
+                         (Option.value ~default:(Error (Value.V_string reason)) (refusal reason), state))
+                | Some (Ask question) ->
+                    asked question
+                      (Option.value ~default:(Error (Value.V_string question))
+                         (refusal ("the person said no: " ^ question)))
+                      checked);
           }
       | Budget calls ->
           let spent = ref 0 in

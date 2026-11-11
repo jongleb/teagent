@@ -69,7 +69,7 @@ module Skill = struct
               (fun name ->
                 match
                   ( String.equal name expected,
-                    List.mem name ("Main" :: "Agent" :: List.map named Device.all) )
+                    List.mem name ("Main" :: "Agent" :: "Policy" :: List.map named Device.all) )
                 with
                 | true, false -> Ok name
                 | false, _ -> Error ("the module is called " ^ name ^ ", not " ^ expected)
@@ -240,7 +240,10 @@ let compile calls source =
                                Data.Located.unwrap import.name)
                              (imported impls))
                          (parsed source))))
-             @ [ Project.Elm_file.of_path ~path:"Main.elm" source ]))
+             @ [
+                 Project.Elm_file.of_path ~path:"Policy.elm" Policy.source;
+                 Project.Elm_file.of_path ~path:"Main.elm" source;
+               ]))
       in
       let sources = Reporting.Sources.of_list outcome.sources in
       let refused reports =

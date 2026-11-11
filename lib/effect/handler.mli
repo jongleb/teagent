@@ -57,9 +57,16 @@ module Boot : sig
   val narrowed : t -> t -> t
 end
 
+(** What the person's rules say about one call, before teagent's own checks. *)
+type verdict =
+  | Allow  (** No more than teagent's own checks. *)
+  | Ask of string  (** Ask the person this first. *)
+  | Deny of string  (** Refuse, with this reason, without asking. *)
+
 val booted :
   Boot.t ->
   class_of:(Value.tool -> Value.class_) ->
+  rules:(Value.tool -> Value.source list -> verdict) ->
   person:(string -> Device.consent Lwt.t) ->
   journal:('state t -> 'state t) ->
   'state t ->

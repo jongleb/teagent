@@ -78,6 +78,16 @@ let () =
               (List.sort String.compare (Array.to_list names)))
         (Os.granted !directory ~net:(List.rev !net))
     in
+    let granted =
+      let file = List.fold_left Filename.concat !directory [ ".teagent"; "rules.elm" ] in
+      match In_channel.with_open_text file In_channel.input_all with
+      | exception Sys_error _ -> granted
+      | source ->
+          Result.fold ~ok:Fun.id
+            ~error:(fun reason -> failed (file ^ ": " ^ reason))
+            (Result.bind (Lang.Skill.of_source ~name:"Rules" source) (fun rules ->
+                 Os.ruled rules granted))
+    in
     match Sys.file_exists file with
     | false -> granted
     | true ->

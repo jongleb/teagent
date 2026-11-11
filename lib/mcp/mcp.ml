@@ -8,15 +8,16 @@ type t = {
   on : Driver.event -> unit Lwt.t;
   waiting : (string, Run.hole) Hashtbl.t;  (** Runs stopped at a hole, by the name given out. *)
   mutable started : int;  (** How many runs this connection has begun. *)
-  seen : Value.source list ref;  (** Where what the calling agent was shown so far came from. *)
+  performed : Value.tool list ref;  (** The calls of this connection so far, newest first. *)
 }
 
 let start os shell ~on =
-  let seen = ref [] in
+  let performed = ref [] in
   {
     workspace = Os.workspace os;
     handler =
       Handler.booted (Os.view os).boot ~class_of:(Os.class_of os)
+        ~rules:(fun tool sources -> Os.decided os !performed tool sources)
         ~person:(fun _ -> Lwt.return Device.Declines)
         ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
           {
@@ -26,7 +27,7 @@ let start os shell ~on =
                 let* () =
                   match step with
                   | Handler.Performed (result, after) ->
-                      seen := Value.sources tool @ !seen;
+                      performed := tool :: !performed;
                       on (Driver.Performed { tool; result; staged = Handler.Overlay.since overlay after })
                   | Handler.Blocked -> Lwt.return_unit
                   | Handler.Exhausted -> on (Driver.Exhausted tool)
@@ -39,7 +40,7 @@ let start os shell ~on =
     on;
     waiting = Hashtbl.create 4;
     started = 0;
-    seen;
+    performed;
   }
 
 let handled program json =
@@ -233,7 +234,7 @@ let handled program json =
                true)
       | None ->
         let* outcome =
-          Run.run run ~seen:!(program.seen) program.handler ~settle:(fun overlay ->
+          Run.run run ~seen:(List.concat_map Value.sources !(program.performed)) program.handler ~settle:(fun overlay ->
               Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
         in
         match outcome with

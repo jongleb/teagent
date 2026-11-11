@@ -20,7 +20,12 @@ type view = {
   seconds : int;
 }
 
-type t = { root : string; allows : view; skills : Lang.Skill.t list }
+type t = {
+  root : string;
+  allows : view;
+  skills : Lang.Skill.t list;
+  rules : (Lang.Skill.t * Lang.t list) list;
+}
 
 let granted root ~net =
   {
@@ -35,9 +40,94 @@ let granted root ~net =
         seconds = 1800;
       };
     skills = [];
+    rules = [];
   }
 
 let taught skills os = { os with skills = os.skills @ skills }
+
+let ruled rules os =
+  Result.map
+    (fun modules -> { os with rules = os.rules @ [ (rules, modules) ] })
+    (Lang.compile
+       (Lang.Calls.taught [ rules ] Lang.Calls.all)
+       "module Main exposing (main)\n\n\
+        import Agent exposing (..)\n\
+        import Policy exposing (..)\n\
+        import Rules\n\n\n\
+        main : Task e (Call -> List Source -> List Call -> Decision)\n\
+        main =\n\
+       \    succeed Rules.decide\n")
+
+let decided os history (tool : Value.tool) sources =
+  let made name arguments =
+    Value.V_constr { constructor = { module_name = "Policy"; name }; arguments }
+  in
+  let described (tool : Value.tool) =
+    let texts name arguments = Some (made name (List.map (fun text -> Value.V_string text) arguments)) in
+    match tool with
+    | Read path -> texts "Read" [ path ]
+    | Write { path; _ } -> texts "Write" [ path ]
+    | Edit { path; _ } -> texts "Edit" [ path ]
+    | Grep { pattern; _ } -> texts "Grep" [ pattern ]
+    | Shell command -> texts "Shell" [ command ]
+    | Call { name; argument } ->
+        texts "Call" [ name; (match argument with V_string text -> text | other -> Value.to_elm other) ]
+    | Enter _ | Leave | Merge _ -> None
+  in
+  let source (source : Value.source) =
+    match source with
+    | File path -> made "File" [ V_string path ]
+    | Search -> made "Search" []
+    | Command -> made "Command" []
+    | Child -> made "Child" []
+    | Driver name -> made "Driver" [ V_string name ]
+  in
+  let verdicts =
+    List.map
+      (fun (_, modules) ->
+        let failed reason : Handler.verdict =
+          Deny ("the rules failed: " ^ reason)
+        in
+        let program = Interp.load ~budget:1_000_000 modules in
+        let rec applied (decide : Value.t) arguments =
+          match (decide, arguments) with
+          | _, [] -> Ok decide
+          | V_closure closure, argument :: rest ->
+              Result.bind (Interp.apply program closure argument) (fun next -> applied next rest)
+          | _, _ :: _ -> Error (`Interp (Interp.Stuck "decide is not a function"))
+        in
+        match
+          ( Interp.main program,
+            described tool )
+        with
+        | _, None -> Handler.Allow
+        | Ok (Succeed decide), Some call -> (
+            match
+              applied decide
+                [ call; V_list (List.map source sources); V_list (List.filter_map described history) ]
+            with
+            | Ok (V_constr { constructor = { name = "Allow"; _ }; arguments = [] }) -> Allow
+            | Ok (V_constr { constructor = { name = "Ask"; _ }; arguments = [ V_string question ] }) ->
+                Ask question
+            | Ok (V_constr { constructor = { name = "Deny"; _ }; arguments = [ V_string reason ] }) ->
+                Deny reason
+            | Ok other -> failed ("decide returned " ^ Value.to_elm other)
+            | Error (`Interp error) ->
+                failed
+                  (match error with
+                  | Crashed reason | Stuck reason -> reason
+                  | Budget_exhausted -> "decide ran out of steps"))
+        | Ok _, Some _ -> failed "main is not a decision function"
+        | Error (`Interp _), Some _ -> failed "it does not start")
+      os.rules
+  in
+  match
+    ( List.find_map (function Handler.Deny reason -> Some reason | Allow | Ask _ -> None) verdicts,
+      List.filter_map (function Handler.Ask question -> Some question | Allow | Deny _ -> None) verdicts )
+  with
+  | Some reason, _ -> Handler.Deny reason
+  | None, (_ :: _ as questions) -> Ask (String.concat "\n" questions)
+  | None, [] -> Allow
 
 let narrowing change os = { os with allows = change os.allows }
 
@@ -350,4 +440,5 @@ let image os =
                ("drivers", texts (List.map Device.source (List.filter_map device os.allows.offers)));
                ("skills", texts (List.sort String.compare (List.map Lang.Skill.source os.skills)));
                ("seconds", `Int os.allows.seconds);
+               ("rules", texts (List.map (fun (rules, _) -> Lang.Skill.source rules) os.rules));
              ])))

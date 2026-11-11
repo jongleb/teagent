@@ -235,6 +235,54 @@ let () =
          with
         | Ok os, Error _, 1800 when (Os.view os).seconds = 60 -> None
         | _ -> Some "seconds: a profile raised the time limit, or took zero");
+        (let ruled source =
+           Result.bind (Lang.Skill.of_source ~name:"Rules" source) (fun rules ->
+               Os.ruled rules (Os.granted "/w" ~net:[]))
+         in
+         let fetched = Value.Call { name = "fetch.get"; argument = V_string "https://x" } in
+         match
+           ( ruled "module Rules exposing (decide)\n\n\
+import Policy exposing (..)\n\n\n\
+decide : Call -> List Source -> List Call -> Decision\n\
+decide call sources history =\n\
+\    case call of\n\
+\        Call \"fetch.get\" _ ->\n\
+\            if List.any readsSecrets history then\n\
+\                Deny \"no fetching after reading secrets\"\n\n\
+\            else\n\
+\                Allow\n\n\
+\        Write path ->\n\
+\            if String.startsWith \"vendor/\" path then\n\
+\                Ask (\"write \" ++ path)\n\n\
+\            else\n\
+\                Allow\n\n\
+\        _ ->\n\
+\            Allow\n\n\n\
+readsSecrets : Call -> Bool\n\
+readsSecrets call =\n\
+\    case call of\n\
+\        Read path ->\n\
+\            String.startsWith \"secrets/\" path\n\n\
+\        _ ->\n\
+\            False\n",
+             ruled "module Rules exposing (decide)\n\nimport Policy exposing (..)\n\n\ndecide : Call -> List Source -> List Call -> Decision\ndecide call sources history =\n    decide call sources history\n",
+             ruled "module Rules exposing (decide)\n\nimport Policy exposing (..)\n\n\ndecide : Call -> Decision\ndecide call =\n    Allow\n" )
+         with
+        | Ok _, Ok _, Ok _ -> Some "rules: a decide of the wrong type was accepted"
+        | Ok os, Ok looping, Error _ -> (
+            match
+              ( Os.decided os [ Value.Read "secrets/key" ] fetched [],
+                Os.decided os [ Value.Read "lib/a.ml" ] fetched [],
+                Os.decided os [] (Value.Write { path = "vendor/x.ml"; content = "" }) [],
+                Os.decided os [] (Value.Read "lib/a.ml") [],
+                Os.decided looping [] (Value.Read "lib/a.ml") [],
+                String.equal (Os.image os) (Os.image (Os.granted "/w" ~net:[])) )
+            with
+            | Deny _, Allow, Ask "write vendor/x.ml", Allow, Deny reason, false
+              when String.starts_with ~prefix:"the rules failed" reason ->
+                None
+            | _ -> Some "rules: a decision came out wrong, a failing rule did not deny, or the image ignored them")
+        | _ -> Some "rules: good rules were refused");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

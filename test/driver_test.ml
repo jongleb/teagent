@@ -798,6 +798,88 @@ let () =
          match !asked with
          | 3 -> None
          | times -> Some (Printf.sprintf "breaker: the person was asked %d times, not 3" times));
+        (let workspace = fresh () in
+         Sys.mkdir (Filename.concat workspace "secrets") 0o755;
+         Out_channel.with_open_text (Filename.concat workspace "secrets/key") (fun channel ->
+             Out_channel.output_string channel "k\n");
+         let asked = ref [] in
+         let os =
+           Result.get_ok
+             (Result.bind (Lang.Skill.of_source ~name:"Rules" "module Rules exposing (decide)\n\n\
+import Policy exposing (..)\n\n\n\
+decide : Call -> List Source -> List Call -> Decision\n\
+decide call sources history =\n\
+\    case call of\n\
+\        Call \"fetch.get\" _ ->\n\
+\            if List.any readsSecrets history then\n\
+\                Deny \"no fetching after reading secrets\"\n\n\
+\            else\n\
+\                Allow\n\n\
+\        Write path ->\n\
+\            if String.startsWith \"vendor/\" path then\n\
+\                Ask (\"write \" ++ path)\n\n\
+\            else\n\
+\                Allow\n\n\
+\        _ ->\n\
+\            Allow\n\n\n\
+readsSecrets : Call -> Bool\n\
+readsSecrets call =\n\
+\    case call of\n\
+\        Read path ->\n\
+\            String.startsWith \"secrets/\" path\n\n\
+\        _ ->\n\
+\            False\n") (fun rules ->
+                  Os.ruled rules (Os.granted "/project" ~net:[])))
+         in
+         let replies =
+           ref
+             [
+               fenced
+                 "module Main exposing (main)\n\n\
+                  import Agent exposing (..)\n\
+                  import Fetch\n\n\n\
+                  main : Task Fetch.FetchErr Int\n\
+                  main =\n\
+                 \    read \"secrets/key\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
+                 \        |> andThen (\\_ -> write \"vendor/x.ml\" \"x\" |> onError (\\_ -> succeed ()) |> mapErr (\\_ -> Fetch.Unreachable \"\"))\n\
+                 \        |> andThen (\\_ -> Fetch.get \"http://127.0.0.1:9/\")\n\
+                 \        |> map .status\n";
+               "Done.";
+             ]
+         in
+         let report, events =
+           collected
+             {
+               ask =
+                 (fun ~system:_ _ ->
+                   match !replies with
+                   | reply :: rest ->
+                       replies := rest;
+                       Lwt.return (Ok reply)
+                   | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+               approve = (fun _ -> Lwt.return Driver.Apply);
+               person =
+                 (fun question ->
+                   asked := question :: !asked;
+                   Lwt.return Device.Declines);
+               handler = Handler.staged (Tools.at workspace) Handler.Open;
+               commit = Tools.commit (Tools.at workspace);
+               os;
+               recorded = [];
+             }
+         in
+         match
+           ( List.rev !asked,
+             List.find_map (function Driver.Ran text -> Some text | _ -> None) events,
+             collected (Driver.replayed os events) = (report, events) )
+         with
+        | [ "write vendor/x.ml" ], Some ran, true
+          when String.starts_with ~prefix:"main failed with:\nDeclined \"no fetching after reading secrets\"" ran ->
+            None
+        | asked, ran, _ ->
+            Some
+              ("rules: the session did not follow the rules: " ^ String.concat "; " asked ^ " / "
+              ^ Option.value ~default:"" ran));
         (let held person =
            let workspace = fresh () in
            let replies =

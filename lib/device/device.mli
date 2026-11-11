@@ -8,4 +8,5 @@ type consent = Agrees | Declines
 val all : t list
 val source : t -> string
 val class_of : name:string -> Value.t -> Value.class_
+val refused : name:string -> string -> Value.t
 val perform : Tools.t -> name:string -> Value.t -> (Value.t, Value.t) result Lwt.t

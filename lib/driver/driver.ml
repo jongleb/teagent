@@ -136,9 +136,11 @@ let solve world ~on task =
        ]
       @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
   in
-  let seen = ref [] in
+  let performed = ref [] in
   let watched =
-    Handler.booted (Os.view world.os).boot ~class_of:(Os.class_of world.os) ~person:world.person
+    Handler.booted (Os.view world.os).boot ~class_of:(Os.class_of world.os)
+      ~rules:(fun tool sources -> Os.decided world.os !performed tool sources)
+      ~person:world.person
       ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
         {
           perform =
@@ -163,7 +165,7 @@ let solve world ~on task =
                 on
                   (match step with
                   | Handler.Performed (result, after) ->
-                      seen := Value.sources tool @ !seen;
+                      performed := tool :: !performed;
                       Performed { tool; result; staged = Handler.Overlay.since overlay after }
                   | Handler.Blocked -> Deferred tool
                   | Handler.Exhausted -> Exhausted tool)
@@ -298,7 +300,7 @@ let solve world ~on task =
     in
     let rec ran history run =
       let* went =
-        Run.run run ~seen:!seen watched ~settle:(fun overlay -> Lwt.map (Result.map ignore) (settled overlay))
+        Run.run run ~seen:(List.concat_map Value.sources !performed) watched ~settle:(fun overlay -> Lwt.map (Result.map ignore) (settled overlay))
       in
       match went with
       | Error problem -> Lwt.return (refused history problem)

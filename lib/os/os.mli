@@ -16,6 +16,7 @@ type t
 
 val granted : string -> net:string list -> t
 val taught : Lang.Skill.t list -> t -> t
+val ruled : Lang.Skill.t -> t -> (t, string) result
 val only : call list -> t -> t
 val mounting : (Tools.Path.t * Tools.mount) list -> t -> t
 val reading : string list -> t -> t
@@ -45,5 +46,6 @@ type exposure = {
 
 val class_of : t -> Value.tool -> Value.class_
 val exposure : t -> Lang.call list -> exposure option
+val decided : t -> Value.tool list -> Value.tool -> Value.source list -> Handler.verdict
 val abi : int
 val image : t -> string

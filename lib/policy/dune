@@ -1,0 +1,13 @@
+(rule
+ (target policy.ml)
+ (deps Policy.elm)
+ (action
+  (with-stdout-to
+   policy.ml
+   (progn
+    (echo "let source = {elm|")
+    (cat Policy.elm)
+    (echo "|elm}\n")))))
+
+(library
+ (name policy))

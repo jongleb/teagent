@@ -28,6 +28,11 @@ let class_of ~name argument =
         }
   | _ -> Value.Pure
 
+let refused ~name reason =
+  match String.starts_with ~prefix:"fetch." name with
+  | true -> failed "Declined" reason
+  | false -> Value.V_string reason
+
 let perform workspace ~name argument =
   let fetched request url =
     Lwt.map

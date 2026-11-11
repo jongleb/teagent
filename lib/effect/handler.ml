@@ -239,15 +239,25 @@ let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]
 let staged workspace shell =
   let within (overlay : Overlay.t) = Tools.mounting overlay.frame.mounts workspace in
   let current overlay (path : Tools.Path.t) =
-    match Overlay.found overlay (path :> string) with
-    | Some (change : Tools.change) -> Lwt.return (Ok (change.before, change.after))
-    | None ->
+    match (Tools.mounted (within overlay) path, Overlay.found overlay (path :> string)) with
+    | Some Hidden, _ -> Lwt.return (Error (`Tools (Tools.Denied (path :> string))))
+    | (None | Some (Readonly | Scratch)), Some (change : Tools.change) ->
+        Lwt.return (Ok (change.before, change.after))
+    | (None | Some (Readonly | Scratch)), None ->
         Lwt.map
           (function
             | Ok text -> Ok (Some text, Some text)
             | Error (`Tools (Tools.Not_found _)) -> Ok (None, None)
             | Error _ as failure -> failure)
           (Tools.read (within overlay) path)
+  in
+  let unhidden overlay =
+    List.filter
+      (fun (change : Tools.change) ->
+        match Tools.mounted (within overlay) change.path with
+        | Some Hidden -> false
+        | None | Some (Readonly | Scratch) -> true)
+      (Overlay.visible overlay)
   in
   let stored (overlay : Overlay.t) (path : Tools.Path.t) before after =
     match Tools.mounted (within overlay) path with
@@ -379,7 +389,7 @@ let staged workspace shell =
                           Option.fold ~none:[]
                             ~some:(Tools.search ~pattern ~glob ~path:(change.path :> string))
                             change.after)
-                        (Overlay.visible overlay)))),
+                        (unhidden overlay)))),
             overlay )
     | Call { name; argument } ->
         Lwt.map
@@ -414,7 +424,7 @@ let staged workspace shell =
                              (Overlay.found overlay (change.path :> string)))
                           change.after)
                       overlay written ))
-              (Tools.contained (within overlay) (Overlay.visible overlay) command))
+              (Tools.contained (within overlay) (unhidden overlay) command))
   in
   { perform }
 

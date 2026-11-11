@@ -448,6 +448,35 @@ let () =
                  None
              | _ -> Some "no shell: the command ran or the program saw another code"));
         (let workspace = fresh () in
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\n\n\
+              main : Task IoErr String\n\
+              main =\n\
+             \    write \"notes.txt\" \"secret\"\n\
+             \        |> andThen (\\_ ->\n\
+             \            spawn [ Hidden \"notes.txt\" ]\n\
+             \                (read \"notes.txt\"\n\
+             \                    |> onError (\\_ -> succeed \"denied\")\n\
+             \                    |> andThen (\\text -> grep { pattern = \"secret\", glob = \"*.txt\" }\n\
+             \                    |> andThen (\\found -> shell \"cat notes.txt 2>/dev/null; true\"\n\
+             \                    |> map (\\ran -> text ++ \"|\" ++ String.fromInt (List.length found) ++ \"|\" ++ ran.out)))))\n\
+             \        |> map .value\n"
+         with
+         | Error error -> explained "hidden staged" error
+         | Ok (program, task) -> (
+             match
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.staged (Tools.at workspace) Handler.Contained)
+                    program Handler.Overlay.empty task)
+             with
+             | Finished (Ok (V_string "denied|0|")), _ -> None
+             | Finished (Ok value), _ ->
+                 Some ("hidden staged: a child saw a staged file its mounts hide: " ^ Value.to_elm value)
+             | _ -> Some "hidden staged: the program did not finish"));
+        (let workspace = fresh () in
          let contains text piece =
            let rec at index =
              index + String.length piece <= String.length text

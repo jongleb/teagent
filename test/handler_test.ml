@@ -537,6 +537,30 @@ let () =
             in
             Some
               ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six ])));
+        (let workspace = fresh () in
+         Out_channel.with_open_text (Filename.concat workspace "mod.py") (fun channel ->
+             Out_channel.output_string channel "x = 1\n");
+         Sys.mkdir (Filename.concat workspace "gone") 0o755;
+         Out_channel.with_open_text (Filename.concat workspace "gone/only.txt") (fun channel ->
+             Out_channel.output_string channel "bye\n");
+         let ran, written =
+           Lwt_main.run
+             (Tools.contained (Tools.at workspace) []
+                "python3 -c 'import mod' && pwd && printf 'x = 1\\n' > mod.py && rm gone/only.txt")
+         in
+         let committed = Lwt_main.run (Tools.commit (Tools.at workspace) written) in
+         match
+           ( List.map (fun (change : Tools.change) -> (change.path :> string)) written,
+             String.trim ran.out,
+             committed,
+             Sys.file_exists (Filename.concat workspace "gone") )
+         with
+        | [ "gone/only.txt" ], out, Ok (), false when String.equal out (Unix.realpath workspace) || String.equal out workspace ->
+            None
+        | paths, out, _, left ->
+            Some
+              (Printf.sprintf "harvest: caches, a no-op rewrite or the sandbox path leaked: [%s] %S%s"
+                 (String.concat ", " paths) out (if left then " (empty folder left)" else "")));
         (let lines pattern text =
            List.map (fun (found : Tools.found) -> found.line) (Tools.search ~pattern ~glob:"**" ~path:"a.py" text)
          in

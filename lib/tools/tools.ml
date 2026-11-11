@@ -197,7 +197,18 @@ let placed workspace change =
           Lwt.catch
             (fun () ->
               let* () = Lwt_unix.unlink file in
-              Lwt.return (Ok ()))
+              let root = Unix.realpath workspace.root in
+              let rec emptied directory =
+                match String.starts_with ~prefix:(root ^ "/") directory with
+                | false -> Lwt.return (Ok ())
+                | true ->
+                    Lwt.catch
+                      (fun () ->
+                        let* () = Lwt_unix.rmdir directory in
+                        emptied (Filename.dirname directory))
+                      (fun _ -> Lwt.return (Ok ()))
+              in
+              emptied (Filename.dirname file))
             (function
               | Unix.Unix_error (ENOENT, _, _) -> Lwt.return (Ok ())
               | problem -> Lwt.return (Error (failed change.path problem))))
@@ -348,7 +359,9 @@ let rec walked root relative =
       (fun name ->
         let path = if String.equal relative "" then name else relative ^ "/" ^ name in
         match
-          String.starts_with ~prefix:"." name || List.mem name [ "_build"; "node_modules" ]
+          String.starts_with ~prefix:"." name
+          || List.mem name [ "_build"; "node_modules"; "__pycache__" ]
+          || List.exists (fun suffix -> String.ends_with ~suffix name) [ ".pyc"; ".pyo" ]
         with
         | true -> Lwt.return []
         | false -> (
@@ -847,7 +860,7 @@ let contained workspace staged command =
                            (Array.of_list
                               (List.map
                                  (fun (name, folder) -> name ^ "=" ^ Filename.concat scratch folder)
-                                 [ ("TMPDIR", ""); ("XDG_CACHE_HOME", "cache");
+                                 [ ("TMPDIR", ""); ("XDG_CACHE_HOME", "cache"); ("PYTHONPYCACHEPREFIX", "pycache");
                                    ("npm_config_cache", "npm"); ("PIP_CACHE_DIR", "pip") ]
                               @ [ "npm_config_ignore_scripts=true" ]
                               @ Option.fold ~none:[]
@@ -876,6 +889,18 @@ let contained workspace staged command =
                                           "VIRTUAL_ENV"; "DEVELOPER_DIR"; "SDKROOT" ])
                                  (Array.to_list (Unix.environment ())))))
                       program arguments
+                  in
+                  let done_ =
+                    let rec swapped text =
+                      match Str.search_forward (Str.regexp_string clone) text 0 with
+                      | exception Not_found -> text
+                      | at ->
+                          swapped
+                            (String.sub text 0 at ^ workspace.root
+                            ^ String.sub text (at + String.length clone)
+                                (String.length text - at - String.length clone))
+                    in
+                    { done_ with out = swapped done_.out }
                   in
                   let done_ =
                     match

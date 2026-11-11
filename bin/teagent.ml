@@ -232,7 +232,7 @@ let () =
           recorded = [];
         }
   in
-  let held = ref 0 in
+  let held = ref 0 and ran = ref "" in
   let logged log ~skipped os world task =
     Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
         let written json =
@@ -244,7 +244,10 @@ let () =
           Lwt_main.run
             (Driver.solve world
                ~on:(fun event ->
-                 (match event with Held { decision = Discard; _ } -> incr held | _ -> ());
+                 (match event with
+                 | Held { decision = Discard; _ } -> incr held
+                 | Ran text -> ran := text
+                 | _ -> ());
                  incr seen;
                  if !seen > skipped then written (Driver.event_to_json event);
                  printed os event)
@@ -412,11 +415,16 @@ let () =
                  approve = approved;
                  person;
                  handler = Handler.staged workspace !shell;
-                        commit = Tools.commit workspace;
+                 commit = Tools.commit workspace;
                  os;
                  recorded = [];
                }
-               task))
+               task);
+          match String.starts_with ~prefix:"main finished with:" !ran with
+          | true -> ()
+          | false ->
+              prerr_endline "\nmain did not succeed, so nothing was written.";
+              exit 4)
   | `Fresh -> (
       match String.concat " " (List.rev !words) with
       | "" -> failed "Say what to do: teagent [options] TASK..."

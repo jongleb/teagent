@@ -29,6 +29,8 @@ module Overlay = struct
   let put paths (change : Tools.change) =
     match change with
     | { before = None; after = None; _ } -> Paths.remove (change.path :> string) paths
+    | { before = Some before; after = Some after; _ } when String.equal before after ->
+        Paths.remove (change.path :> string) paths
     | { before = Some _; _ } | { after = Some _; _ } -> Paths.add (change.path :> string) change paths
 
   let added overlay changes =

@@ -52,7 +52,10 @@
 - `shell command`: runs `/bin/sh -c command` in the project's root, in a sealed copy that holds
   the program's staged changes. `out` is stdout and stderr together; `code` is the exit code,
   and a code other than 0 is a result, not a failure. Files the command writes or deletes
-  become staged changes like any edit. There is no network, unless the person granted hosts;
+  become staged changes like any edit, except caches: `__pycache__`, `*.pyc`, `_build`,
+  `node_modules` and names that start with a dot are never taken back, and Python keeps its
+  bytecode out of the project. Paths in `out` name the project, not the sealed copy. Rewriting
+  a file with the text it already had is no change. There is no network, unless the person granted hosts;
   there are no API keys in its environment; it may run 30 minutes. A command teagent will not
   run returns code 126 and the reason in `out`.
 - `hole "what goes here"`: a task of whatever type fits there, for code you can only write
@@ -65,6 +68,13 @@
   file moved meanwhile. A child never merged leaves nothing.
 - `succeed`, `fail`, `andThen`, `map`, `map2`, `mapErr`, `onError`, `batch`, `fromResult` build
   tasks; they do nothing by themselves.
+
+## Running a program from a shell
+
+`teagent -C project --exec program.elm` does what `run` does and says how it went in its exit
+code: 0 when main succeeded and everything was written, 1 when the program does not compile,
+3 when main succeeded but some files were held for a person, 4 when main failed, crashed or ran
+out of steps (nothing is written then). `--dry-run` runs it and writes nothing.
 
 ## Errors
 

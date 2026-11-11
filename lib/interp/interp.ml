@@ -217,19 +217,15 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
       match Value.Scope.find_opt label joins with
       | None -> stuck ("a jump to an unknown label " ^ label)
       | Some join ->
-          let rec bound scope parameters arguments =
-            match (parameters, arguments) with
-            | [], [] -> scope
-            | parameter :: parameters, argument :: arguments ->
-                bound
-                  (Value.Scope.add parameter
-                     (atom program ~home scope argument)
-                     scope)
-                  parameters arguments
+          let rec bound into parameters values =
+            match (parameters, values) with
+            | [], [] -> into
+            | parameter :: parameters, value :: values ->
+                bound (Value.Scope.add parameter value into) parameters values
             | [], _ :: _ | _ :: _, [] -> stuck "a jump with the wrong arity"
           in
           term program ~home
-            (bound join.scope join.parameters arguments)
+            (bound join.scope join.parameters (List.map (atom program ~home scope) arguments))
             join.joins join.definition)
   | T_fail { message } -> stuck message
 

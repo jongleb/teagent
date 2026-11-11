@@ -32,6 +32,30 @@ let () =
   let failures =
     List.filter_map Fun.id
       [
+        run "case in let" (fun () ->
+            Result.bind
+              (loaded
+                 "module Main exposing (main)\n\n\
+                  import Agent exposing (..)\n\n\n\
+                  row : String -> String\n\
+                  row s =\n\
+                 \    let\n\
+                 \        text =\n\
+                 \            case String.indexes \"TODO:\" s of\n\
+                 \                i :: _ ->\n\
+                 \                    String.dropLeft (i + 5) s\n\n\
+                 \                [] ->\n\
+                 \                    s\n\
+                 \    in\n\
+                 \    \"| \" ++ text\n\n\n\
+                  main : Task e String\n\
+                  main =\n\
+                 \    succeed (row \"a TODO: b\" ++ row \"plain\")\n")
+              (fun loaded ->
+                match Interp.main loaded with
+                | Ok (Succeed (V_string "|  b| plain")) -> Ok None
+                | Ok _ -> Ok (Some "a case inside a let gave the wrong value")
+                | Error error -> Error error));
         run "01_rename" (fun () ->
             Result.bind (program "01_rename.elm") (fun loaded ->
                 match Interp.main loaded with

@@ -195,6 +195,13 @@ The diff lists every staged file. A deleted file shows `+++ /dev/null`.
 - **You ran with `--yes`.** teagent applies without asking. Use it only when you trust the
   task.
 
+Files that other programs run or obey after the session are shown apart, under "files run
+outside the sandbox": git hooks and attributes, CI workflows, `package.json` and npm or yarn
+settings, editor containers, and instructions for other agents such as `AGENTS.md` or
+`CLAUDE.md` ([`abi.md`](abi.md) has the full list). Only you can allow them, at teagent's own
+prompt with `--ask`. Without `--ask`, with `--dry-run` and over MCP they are never written; the
+rest of the changes still are, and the model is told which files were left out.
+
 If teagent crashes in the middle of a commit, some files may be written and others not. Run
 `--resume` on the session log: files that already hold the new text count as done, and the
 rest are written.
@@ -211,7 +218,7 @@ rest are written.
 
 Rules for paths: they are relative to the folder you gave with `-C`, and may not start with
 `/` or contain `..`. A symlink is followed only while it stays inside the folder. Tooling
-folders are off limits, in any letter case: `.git`, `.claude`, `.codex`, `.cursor`,
+folders are off limits at any depth, in any letter case: `.git`, `.claude`, `.codex`, `.cursor`,
 `.mcp.json`, `.teagent`, `.envrc` and `.vscode`. They hold an agent's permissions, hooks that
 run outside the sandbox, and often secrets. Such a path gets `Denied` and nothing is touched.
 

@@ -14,7 +14,8 @@ type event =
   | Exhausted of Value.tool
   | Staged of string
   | Decided of decision
-  | Committed of (unit, string) result
+  | Held of { diff : string; decision : decision }
+  | Committed of (Tools.Path.t list, string) result
   | Ran of string
   | Guessed of string
   | Answered of string
@@ -56,6 +57,7 @@ let solve world ~on task =
       | _ -> None)
   in
   let decisions = queued (function Decided decision -> Some decision | _ -> None) in
+  let holds = queued (function Held { decision; _ } -> Some decision | _ -> None) in
   let commits = queued (function Committed outcome -> Some outcome | _ -> None) in
   let ask ~system history =
     match next replies with
@@ -69,7 +71,7 @@ let solve world ~on task =
   in
   let commit changes =
     match next commits with
-    | Some (Ok ()) -> Lwt.return (Ok ())
+    | Some (Ok _) -> Lwt.return (Ok ())
     | Some (Error reason) -> Lwt.return (Error (`Tools (Tools.Conflict reason)))
     | None -> world.commit changes
   in
@@ -142,6 +144,7 @@ let solve world ~on task =
                     replies := [];
                     steps := [];
                     decisions := [];
+                    holds := [];
                     commits := [];
                     inner.perform tool overlay
                 | None -> inner.perform tool overlay
@@ -183,17 +186,57 @@ let solve world ~on task =
         (String.length text - limit)
   in
   let settled overlay =
-    match Handler.Overlay.changes overlay with
-    | [] -> Lwt.return (Ok ())
-    | changes -> (
-        let diff = Handler.Overlay.diff overlay in
-        let* () = on (Staged diff) in
-        let* decision = approve diff in
-        let* () = on (Decided decision) in
-        match decision with
-        | Discard -> Lwt.return (Error `Discarded)
-        | Apply ->
-            let* committed = commit changes in
+    let outside, inside =
+      List.partition
+        (fun (change : Tools.change) -> Option.is_some (Tools.Path.runner change.path))
+        (Handler.Overlay.changes overlay)
+    in
+    let* decision =
+      match inside with
+      | [] -> Lwt.return Apply
+      | _ :: _ ->
+          let diff = Handler.Overlay.diff inside in
+          let* () = on (Staged diff) in
+          let* decision = approve diff in
+          let+ () = on (Decided decision) in
+          decision
+    in
+    match decision with
+    | Discard -> Lwt.return (Error `Discarded)
+    | Apply -> (
+        let* held =
+          match outside with
+          | [] -> Lwt.return Apply
+          | _ :: _ -> (
+              let diff = Handler.Overlay.diff outside in
+              let* decision =
+                match next holds with
+                | Some decision -> Lwt.return decision
+                | None ->
+                    Lwt.map
+                      (function Device.Agrees -> Apply | Declines -> Discard)
+                      (world.person
+                         ("write files that run outside the sandbox after this session:\n"
+                         ^ String.concat "\n"
+                             (List.filter_map
+                                (fun (change : Tools.change) ->
+                                  Option.map
+                                    (fun runner -> "  " ^ (change.path :> string) ^ ", run by " ^ runner)
+                                    (Tools.Path.runner change.path))
+                                outside)
+                         ^ "\n\n" ^ diff))
+              in
+              let+ () = on (Held { diff; decision }) in
+              decision)
+        in
+        let kept, withheld =
+          match held with Apply -> (inside @ outside, []) | Discard -> (inside, outside)
+        in
+        let paths = List.map (fun (change : Tools.change) -> change.path) in
+        match kept with
+        | [] -> Lwt.return (Ok (paths withheld))
+        | _ :: _ ->
+            let* committed = commit kept in
             let applied =
               Result.map_error
                 (fun (`Tools (Tools.Not_found reason | Denied reason | Conflict reason)) ->
@@ -201,9 +244,14 @@ let solve world ~on task =
                 committed
             in
             let* () =
-              on (Committed (Result.map_error (fun (`Conflicted reason) -> reason) applied))
+              on
+                (Committed
+                   (Result.fold
+                      ~ok:(fun () -> Ok (paths kept))
+                      ~error:(fun (`Conflicted reason) -> Error reason)
+                      applied))
             in
-            Lwt.return applied)
+            Lwt.return (Result.map (fun () -> paths withheld) applied))
   in
   let executed history run =
     let refused history = function
@@ -211,13 +259,27 @@ let solve world ~on task =
       | `Conflicted reason -> Ok (history, "The changes could not be applied: " ^ reason)
     in
     let rec ran history run =
-      let* went = Run.run run watched ~settle:settled in
+      let* went =
+        Run.run run watched ~settle:(fun overlay -> Lwt.map (Result.map ignore) (settled overlay))
+      in
       match went with
       | Error problem -> Lwt.return (refused history problem)
       | Ok (outcome, overlay) -> (
           let finished history text =
             Lwt.map
-              (Result.fold ~ok:(fun () -> Ok (history, text)) ~error:(refused history))
+              (Result.fold
+                 ~ok:(fun withheld ->
+                   Ok
+                     ( history,
+                       match withheld with
+                       | [] -> text
+                       | _ :: _ ->
+                           text
+                           ^ "\n\nNot written, because other programs run them outside the \
+                              sandbox and the person did not allow it: "
+                           ^ String.concat ", "
+                               (List.map (fun (path : Tools.Path.t) -> (path :> string)) withheld) ))
+                 ~error:(refused history))
               (settled overlay)
           in
           match outcome with
@@ -387,9 +449,15 @@ let undone events =
       (fun (committed, overlay) event ->
         match event with
         | Performed { tool; staged; _ } -> (committed, Handler.Overlay.after overlay tool staged)
-        | Committed (Ok ()) -> (committed @ Handler.Overlay.changes overlay, Handler.Overlay.empty)
+        | Committed (Ok paths) ->
+            ( committed
+              @ List.filter
+                  (fun (change : Tools.change) -> List.mem change.path paths)
+                  (Handler.Overlay.changes overlay),
+              Handler.Overlay.empty )
         | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
-        | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Ran _ | Guessed _
+        | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Held _ | Ran _
+        | Guessed _
         | Answered _ | Filled _ ->
             (committed, overlay))
       ([], Handler.Overlay.empty) events
@@ -423,7 +491,18 @@ let event_to_json event : Yojson.Safe.t =
       `Assoc [ ("filled", `Assoc [ ("hole", `String hole); ("reply", `String reply) ]) ]
   | Decided Apply -> text "decided" "apply"
   | Decided Discard -> text "decided" "discard"
-  | Committed (Ok ()) -> `Assoc [ ("committed", `Null) ]
+  | Held { diff; decision } ->
+      `Assoc
+        [
+          ( "held",
+            `Assoc
+              [
+                ("diff", `String diff);
+                ("decision", `String (match decision with Apply -> "apply" | Discard -> "discard"));
+              ] );
+        ]
+  | Committed (Ok paths) ->
+      `Assoc [ ("committed", `List (List.map (fun (path : Tools.Path.t) -> `String (path :> string)) paths)) ]
   | Committed (Error reason) -> text "committed" reason
   | Deferred tool -> `Assoc [ ("deferred", Value.tool_to_json tool) ]
   | Exhausted tool -> `Assoc [ ("exhausted", Value.tool_to_json tool) ]
@@ -466,7 +545,23 @@ let event_of_json (json : Yojson.Safe.t) =
       Ok (Filled { hole; reply })
   | `Assoc [ ("decided", `String "apply") ] -> Ok (Decided Apply)
   | `Assoc [ ("decided", `String "discard") ] -> Ok (Decided Discard)
-  | `Assoc [ ("committed", `Null) ] -> Ok (Committed (Ok ()))
+  | `Assoc [ ("held", `Assoc [ ("diff", `String diff); ("decision", `String "apply") ]) ] ->
+      Ok (Held { diff; decision = Apply })
+  | `Assoc [ ("held", `Assoc [ ("diff", `String diff); ("decision", `String "discard") ]) ] ->
+      Ok (Held { diff; decision = Discard })
+  | `Assoc [ ("committed", `List paths) ] ->
+      Result.map
+        (fun paths -> Committed (Ok paths))
+        (List.fold_right
+           (fun path collected ->
+             Result.bind collected (fun rest ->
+                 match path with
+                 | `String text ->
+                     Result.map_error
+                       (fun _ -> "not a recorded path: " ^ text)
+                       (Result.map (fun path -> path :: rest) (Tools.Path.of_string text))
+                 | other -> Error ("not a recorded path: " ^ Yojson.Safe.to_string other)))
+           paths (Ok []))
   | `Assoc [ ("committed", `String reason) ] -> Ok (Committed (Error reason))
   | `Assoc [ ("deferred", tool) ] -> Result.map (fun tool -> Deferred tool) (Value.tool_of_json tool)
   | `Assoc [ ("exhausted", tool) ] -> Result.map (fun tool -> Exhausted tool) (Value.tool_of_json tool)

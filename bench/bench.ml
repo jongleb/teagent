@@ -145,7 +145,7 @@ let () =
                                      | Filled { reply = text; _ })
                              ->
                                Lwt.return (Printf.printf "%s\n%s\n\n%!" name text)
-                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Committed _) ->
+                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Held _ | Committed _) ->
                                Lwt.return_unit)
                          (read (Filename.concat task "task.md")))
                   in

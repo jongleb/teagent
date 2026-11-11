@@ -6,7 +6,7 @@ module Overlay : sig
   val changes : t -> Tools.change list
   val since : t -> t -> Tools.change list
   val after : t -> Value.tool -> Tools.change list -> t
-  val diff : t -> string
+  val diff : Tools.change list -> string
 end
 
 (** What a handler did with one tool. *)

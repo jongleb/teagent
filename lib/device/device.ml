@@ -14,12 +14,10 @@ let class_of ~name argument =
       Value.Irreversible
         {
           question =
-            Printf.sprintf "send %d bytes to %s:\n%s" (String.length body) url
-              (match String.length body <= 2_000 with
-              | true -> body
-              | false -> String.sub body 0 2_000 ^ "… (cut)");
+            Printf.sprintf "send %d bytes to %s:\n%s" (String.length body) url body;
           declined = failed "Declined" "the person did not let this request go out; ask them first";
         }
+  | "fetch.get", _ -> Value.Egress
   | _ -> Value.Pure
 
 let perform workspace ~name argument =

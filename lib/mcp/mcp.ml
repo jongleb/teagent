@@ -160,10 +160,21 @@ let handled program json =
           | _ -> Error ("There is no tool called " ^ name ^ "."))
     in
     let applied staged =
-      match staged with
-      | [] -> Lwt.return (Ok [])
+      let outside, inside =
+        List.partition
+          (fun (change : Tools.change) -> Option.is_some (Tools.Path.runner change.path))
+          staged
+      in
+      let paths = List.map (fun (change : Tools.change) -> (change.path :> string)) in
+      let* () =
+        match outside with
+        | [] -> Lwt.return_unit
+        | _ :: _ -> program.on (Held { diff = Handler.Overlay.diff outside; decision = Discard })
+      in
+      match inside with
+      | [] -> Lwt.return (Ok ([], paths outside))
       | _ :: _ ->
-          let* committed = Tools.commit program.workspace staged in
+          let* committed = Tools.commit program.workspace inside in
           let applied =
             Result.map_error
               (function
@@ -171,15 +182,28 @@ let handled program json =
                 | `Tools (Tools.Not_found reason | Conflict reason) -> reason)
               committed
           in
-          let* () = program.on (Committed applied) in
-          Lwt.return
-            (Result.map
-               (fun () -> List.map (fun (change : Tools.change) -> (change.path :> string)) staged)
-               applied)
+          let* () =
+            program.on
+              (Committed
+                 (Result.map (fun () -> List.map (fun (change : Tools.change) -> change.path) inside) applied))
+          in
+          Lwt.return (Result.map (fun () -> (paths inside, paths outside)) applied)
     in
     let reported body = function
-      | Ok [] -> text body false
-      | Ok paths -> text (body ^ "\n\nApplied to the project: " ^ String.concat ", " paths) false
+      | Ok (written, withheld) ->
+          text
+            (body
+            ^ (match written with
+              | [] -> ""
+              | _ :: _ -> "\n\nApplied to the project: " ^ String.concat ", " written)
+            ^
+            match withheld with
+            | [] -> ""
+            | _ :: _ ->
+                "\n\nNot written, because other programs run them outside the sandbox and only \
+                 a person at teagent's own prompt can allow that: "
+                ^ String.concat ", " withheld)
+            false
       | Error reason -> text (body ^ "\n\nNot applied, nothing was written: " ^ reason) true
     in
     let rec went run =

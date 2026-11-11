@@ -88,17 +88,18 @@ let () =
           | exception Yojson.Json_error reason -> Error reason)
   in
   let section title body = Lwt.return (Printf.printf "\n── %s ──\n%s\n%!" title body) in
-  let printed (event : Driver.event) =
+  let printed os (event : Driver.event) =
     match event with
     | Wrote reply -> section "program" reply
     | Refused report -> section "compiler" report
     | Performed { tool; result; _ } ->
         let shown = Value.to_elm (Result.fold ~ok:Fun.id ~error:Fun.id result) in
         section
-          ((match Handler.class_of tool with
+          ((match Os.class_of os tool with
            | Pure -> "pure "
            | Staged -> "staged "
            | Contained -> "contained "
+           | Egress -> "egress "
            | Irreversible _ -> "irreversible ")
           ^ Yojson.Safe.to_string (Value.tool_to_json tool))
           (if String.length shown <= 2_000 then shown
@@ -111,7 +112,14 @@ let () =
     | Staged diff -> section "changes" diff
     | Decided Apply -> section "decision" "apply"
     | Decided Discard -> section "decision" "discard"
-    | Committed (Ok ()) -> section "commit" "written"
+    | Held { diff; decision } ->
+        section
+          ("files run outside the sandbox: "
+          ^ match decision with Apply -> "allowed" | Discard -> "not written")
+          diff
+    | Committed (Ok paths) ->
+        section "commit"
+          ("written: " ^ String.concat ", " (List.map (fun (path : Tools.Path.t) -> (path :> string)) paths))
     | Committed (Error reason) -> section "commit" ("refused: " ^ reason)
     | Ran result -> section "result" result
     | Guessed reply -> section "guess, sent back" reply
@@ -211,7 +219,7 @@ let () =
           recorded = [];
         }
   in
-  let logged log ~skipped world task =
+  let logged log ~skipped os world task =
     Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
         let written json =
           Out_channel.output_string channel (Yojson.Safe.to_string json ^ "\n");
@@ -224,7 +232,7 @@ let () =
                ~on:(fun event ->
                  incr seen;
                  if !seen > skipped then written (Driver.event_to_json event);
-                 printed event)
+                 printed os event)
                task)
         in
         Printf.printf "\ncompile rounds per program: %s\nsession log: %s\n"
@@ -329,7 +337,7 @@ let () =
           (Driver.solve (Driver.replayed (Os.table os) (Os.view os).boot recorded)
              ~on:(fun event ->
                replayed := event :: !replayed;
-               printed event)
+               printed os event)
              task)
       in
       let rec first index recorded replayed =
@@ -355,8 +363,8 @@ let () =
   | `Resume file ->
       let task, place, image, recorded = loaded file in
       Option.iter (fun place -> directory := place) place;
-      finished
-        (logged file ~skipped:(List.length recorded) { (live (profiled_as image)) with recorded } task)
+      let os = profiled_as image in
+      finished (logged file ~skipped:(List.length recorded) os { (live os) with recorded } task)
   | `Exec file -> (
       let source =
         match In_channel.with_open_text file In_channel.input_all with
@@ -373,7 +381,7 @@ let () =
           let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
           finished
-            (logged (started task os) ~skipped:0
+            (logged (started task os) ~skipped:0 os
                {
                  ask =
                    (fun ~system:_ _ ->
@@ -396,4 +404,4 @@ let () =
       | "" -> failed "Say what to do: teagent [options] TASK..."
       | task ->
           let os = profiled () in
-          finished (logged (started task os) ~skipped:0 (live os) task))
+          finished (logged (started task os) ~skipped:0 os (live os) task))

@@ -1,4 +1,4 @@
-# teagent ABI, version 1
+# teagent ABI, version 2
 
 This is the contract between a program, the runtime that performs its calls, and the log that
 records them. Another runtime that implements it can run the same programs, and a log written by
@@ -18,14 +18,16 @@ function below becomes one call; the column on the right is its JSON in the log.
 | `write : String -> String -> Task IoErr ()` | Staged | `{"write": {"path", "content"}}` |
 | `edit : { path, old, new } -> Task IoErr ()` | Staged | `{"edit": {"path", "old", "new"}}` |
 | `grep : { pattern, glob } -> Task e (List Match)` | Pure | `{"grep": {"pattern", "glob"}}` |
-| `shell : String -> Task e { out, code }` | Contained | `{"shell": command}` |
+| `shell : String -> Task e { out, code }` | Contained, or Egress when `--net` grants hosts | `{"shell": command}` |
 | `spawn mounts task`, on entry | Staged | `{"enter": [{"path", "mount"}]}` with `mount` one of `hidden`, `readonly`, `scratch` |
 | `spawn mounts task`, on exit | Staged | `{"leave": null}` |
 | `merge : Child a -> Task (List Change) a` | Staged | `{"merge": [{"file", "base", "content"}]}`, `null` for a missing file |
-| `Fetch.get : String -> Task FetchErr Response` | Pure | `{"call": {"name": "fetch.get", "argument": value}}` |
+| `Fetch.get : String -> Task FetchErr Response` | Egress | `{"call": {"name": "fetch.get", "argument": value}}` |
 | `Fetch.post : String -> String -> Task FetchErr Response` | Irreversible | `{"call": {"name": "fetch.post", "argument": value}}` |
 
-`IoErr` is `NotFound String | Denied String | Conflict String`. A driver adds calls only through
+`IoErr` is `NotFound String | Denied String | Conflict String`. The classes are `Pure` (reads
+only), `Staged` (changes the overlay), `Contained` (a sandboxed command whose writes are staged),
+`Egress` (sends data to a granted host) and `Irreversible` (asks the person first). A driver adds calls only through
 `call` with a dotted name. Its Elm module is part of the image (section 4), so a driver can
 change without a new ABI version, but sessions logged against the old driver no longer replay
 under the new image.
@@ -69,11 +71,24 @@ Each later line is one event, an object with a single key:
 | A call the budget stopped | `{"exhausted": call}` |
 | The diff shown for approval | `{"staged": diff}` |
 | The person's decision | `{"decided": "apply"}` or `{"decided": "discard"}` |
-| The commit | `{"committed": null}` or `{"committed": reason}` |
+| Changes to files other programs run, shown apart, and the person's answer | `{"held": {"diff": diff, "decision": "apply" or "discard"}}` |
+| The commit | `{"committed": ["path", ...]}`, the paths written, or `{"committed": reason}` |
 | What main returned | `{"ran": text}` |
 | A reply without a program before any program ran | `{"guessed": reply}` |
 | The final reply | `{"answered": reply}` |
 | The code for a hole | `{"filled": {"hole": description, "reply": reply}}` |
+
+When changes settle, those to files that other programs run or obey outside the sandbox are
+shown apart (`held`), and only the person can allow them; the rest are approved as before
+(`staged`, `decided`). In version 2 those files are, at any depth and in any case: `.husky/`,
+`.githooks/`, `.pre-commit-config.yaml`, `lefthook.yml`, `.lefthook.yml`, `.gitattributes`,
+`.gitmodules` (git); `.github/workflows/`, `.github/actions/`, `.circleci/`, `.buildkite/`,
+`.gitlab-ci.yml`, `.travis.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `Jenkinsfile`
+(CI); `package.json`, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs` (install);
+`.devcontainer/`, `.idea/` (editors); `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`,
+`.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, `.continue/` (other agents).
+No path may contain `.git`, `.claude`, `.codex`, `.cursor`, `.mcp.json`, `.teagent`, `.envrc` or
+`.vscode` at any depth.
 
 A replay answers each call from the log at the journal's place among the boot layers, in log
 order. The first call that differs from the log ends the replay; from there the session runs
@@ -85,7 +100,7 @@ The image is the BLAKE2b-256 hash, in hex, of this JSON, written without spaces 
 keys in this order:
 
 ```json
-{"abi": 1,
+{"abi": 2,
  "offers": ["bash", "read", "write", "edit", "grep", "run", "fetch"],
  "mounts": [["path", "hidden"], ...],
  "reads": "anywhere" or ["/abs/path", ...],
@@ -103,6 +118,9 @@ own path is not part of the image, so the same OS has the same image on any mach
 
 A new version is needed for any change to the call table (a call added, removed or retyped, or
 a class changed), to the JSON of values, calls or events, to the meaning of an event, or to how
-the image is computed. A change to a driver's or a skill's source changes only the image.
-`test/sessions/abi1.jsonl` is a session logged under version 1. Every build of version 1 must
+the image is computed. The list of files other programs run is part of the
+version too. A change to a driver's or a skill's source changes only the image.
+`test/sessions/abi2.jsonl` is a session logged under version 2. Every build of version 2 must
 replay it exactly.
+
+Version 2 added the `Egress` class, the `held` event, and the paths in `committed`.

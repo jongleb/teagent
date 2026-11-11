@@ -6,11 +6,14 @@ type error =
   | Denied of string  (** The path leaves the workspace, belongs to its tooling, or is not readable. *)
   | Conflict of string  (** The file is there, but the change does not fit it. *)
 
-(** A relative, normalized path inside the workspace and outside its tooling folders. *)
+(** A relative, normalized path inside the workspace and outside its tooling folders, at any
+    depth. [runner] names what runs or obeys the file outside the sandbox after the session,
+    such as git hooks, CI or other coding agents. *)
 module Path : sig
   type t = private string
 
   val of_string : string -> (t, [> `Tools of error ]) result
+  val runner : t -> string option
 end
 
 (** Where a contained shell may read files, besides the system and its own copy. *)

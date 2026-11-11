@@ -14,7 +14,9 @@ type event =
   | Exhausted of Value.tool  (** The budget of tool calls ran out at this tool. *)
   | Staged of string  (** The diff of the changes waiting for approval. *)
   | Decided of decision
-  | Committed of (unit, string) result
+  | Held of { diff : string; decision : decision }
+      (** Changes to files that run outside the sandbox, shown apart, and the person's answer. *)
+  | Committed of (Tools.Path.t list, string) result  (** The paths written, or why none were. *)
   | Ran of string  (** What the program returned, as the model sees it. *)
   | Guessed of string  (** A reply without a program before any program ran; sent back once. *)
   | Answered of string  (** The model's final reply, without a program. *)

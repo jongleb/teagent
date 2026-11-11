@@ -66,7 +66,7 @@ module Overlay = struct
   (** Whether a line stayed, went or came. *)
   and mark = Kept | Removed | Added
 
-  let diff overlay =
+  let diff changes =
     let lines text =
       match List.rev (String.split_on_char '\n' text) with
       | "" :: rest -> Array.of_list (List.rev rest)
@@ -145,7 +145,7 @@ module Overlay = struct
         (Option.fold ~none:"/dev/null" ~some:(fun _ -> "b/" ^ (path :> string)) after)
         (String.concat "" (List.map hunk groups))
     in
-    String.concat "" (List.map rendered (changes overlay))
+    String.concat "" (List.map rendered changes)
 end
 
 type 'state step = Performed of (Value.t, Value.t) result * 'state | Blocked | Exhausted
@@ -472,7 +472,7 @@ let booted boot ~person ~journal base =
                     match consent with
                     | Device.Agrees -> inner.perform tool state
                     | Declines -> Lwt.return (Performed (Error declined, state)))
-                | Pure | Staged | Contained -> inner.perform tool state);
+                | Pure | Staged | Contained | Egress -> inner.perform tool state);
           }
       | Budget calls ->
           let spent = ref 0 in

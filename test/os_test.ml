@@ -178,6 +178,27 @@ let () =
          with
         | [ Error _; Error _; Error _; Error _; Error _ ] -> None
         | _ -> Some "a boot without one policy inside one journal, or with a bad budget, was accepted");
+        (match
+           ( List.map
+               (fun name -> Result.is_ok (Tools.Path.of_string name))
+               [ "pkg/.git/hooks/pre-commit"; "a/.VSCode/tasks.json"; "x/.envrc"; "lib/git.ml" ],
+             List.map
+               (fun name -> Option.bind (Result.to_option (Tools.Path.of_string name)) Tools.Path.runner)
+               [ ".github/workflows/ci.yml"; "AGENTS.md"; "web/package.json"; "src/CLAUDE.md";
+                 ".husky/pre-commit"; "lib/a.ml"; "docs/agents.txt"; "github/workflows.md" ] )
+         with
+        | ( [ false; false; false; true ],
+            [ Some "CI"; Some _; Some _; Some _; Some "git hooks"; None; None; None ] ) ->
+            None
+        | _ -> Some "paths: a tooling folder below the top was accepted, or a host-run file was missed");
+        (match
+           ( Os.class_of (Os.granted "/w" ~net:[]) (Value.Shell "make"),
+             Os.class_of (Os.granted "/w" ~net:[ "registry.npmjs.org" ]) (Value.Shell "make"),
+             Os.class_of (Os.granted "/w" ~net:[])
+               (Value.Call { name = "fetch.get"; argument = V_string "https://example.com" }) )
+         with
+        | Contained, Egress, Egress -> None
+        | _ -> Some "classes: a shell with granted hosts or Fetch.get is not Egress");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

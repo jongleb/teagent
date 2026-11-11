@@ -34,5 +34,6 @@ type view = {
 val view : t -> view
 val workspace : t -> Tools.t
 val table : t -> Lang.Calls.t
+val class_of : t -> Value.tool -> Value.class_
 val abi : int
 val image : t -> string

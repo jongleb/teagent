@@ -338,7 +338,7 @@ let () =
              | Stopped (Tool (Shell "dune test") as rest), overlay -> (
                  match
                    ( contents workspace "lib/a.ml",
-                     Handler.Overlay.diff overlay,
+                     Handler.Overlay.diff (Handler.Overlay.changes overlay),
                      Lwt_main.run
                        (Tools.commit (Tools.at workspace) (Handler.Overlay.changes overlay)) )
                  with
@@ -589,7 +589,7 @@ let () =
                      Sys.file_exists (Filename.concat workspace "escape.txt"),
                      contents workspace "lib/a.ml",
                      Sys.file_exists (Filename.concat workspace "lib/c.ml"),
-                     contains (Handler.Overlay.diff overlay) "--- a/lib/c.ml\n+++ /dev/null\n" )
+                     contains (Handler.Overlay.diff (Handler.Overlay.changes overlay)) "--- a/lib/c.ml\n+++ /dev/null\n" )
                  with
                  | ( true,
                      false,

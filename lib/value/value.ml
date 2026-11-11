@@ -61,6 +61,7 @@ type class_ =
   | Pure  (** It only reads; there is nothing to undo. *)
   | Staged  (** It changes the overlay, which is settled or dropped later. *)
   | Contained  (** It runs a command in a sandboxed copy; what it writes is staged. *)
+  | Egress  (** It sends data to a granted host; nothing to undo here, but what left is gone. *)
   | Irreversible of { question : string; declined : t }
       (** It reaches the world outside: the person is asked [question] first, and a program
           they say no to gets [declined] as its error. *)

@@ -235,7 +235,12 @@ let table os =
   |> Lang.Calls.unplugged (List.filter_map device missing)
   |> Lang.Calls.taught os.skills
 
-let abi = 1
+let class_of os (tool : Value.tool) =
+  match (tool, os.allows.net) with
+  | Shell _, _ :: _ -> Value.Egress
+  | _, _ -> Handler.class_of tool
+
+let abi = 2
 
 let image os =
   let texts strings = `List (List.map (fun text -> `String text) strings) in

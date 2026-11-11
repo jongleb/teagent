@@ -197,11 +197,11 @@ journal's place, and only the layers outside it run again. Moving the journal in
 logs the call the budget stopped; moving the budget inside the policy stops counting the calls
 the person declined. Mounts and the net stay in the tools: they shape what a command's copy
 holds and which hosts its proxy reaches, which a wrapper around a call cannot do.
-[`abi.md`](abi.md) writes down version 1 of the ABI: the call table, the JSON of values, the
+[`abi.md`](abi.md) writes down the ABI, now version 2: the call table, the JSON of values, the
 session log and the image. The image is a BLAKE2 hash over the OS without its path: calls,
 mounts, reads, net, boot order, drivers and skills. Every log names its ABI version and image,
-`--replay` and `--resume` refuse a log made on another, and `test/sessions/abi1.jsonl`, a session
-logged under version 1, must replay exactly under every build of it.
+`--replay` and `--resume` refuse a log made on another, and `test/sessions/abi2.jsonl`, a session
+logged under version 2, must replay exactly under every build of it.
 
 ## Open questions
 

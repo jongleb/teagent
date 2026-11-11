@@ -14,16 +14,43 @@ module Path = struct
     match
       ( Filename.is_relative written,
         List.exists (String.equal "..") parts,
-        List.map String.lowercase_ascii parts )
+        List.exists
+          (fun part ->
+            List.mem (String.lowercase_ascii part)
+              [ ".git"; ".claude"; ".codex"; ".cursor"; ".mcp.json"; ".teagent"; ".envrc"; ".vscode" ])
+          parts,
+        parts )
     with
-    | ( true,
-        false,
-        (".git" | ".claude" | ".codex" | ".cursor" | ".mcp.json" | ".teagent" | ".envrc"
-        | ".vscode")
-        :: _ ) ->
-        Error (`Tools (Denied written))
-    | true, false, _ :: _ -> Ok (String.concat "/" parts)
-    | _, _, _ -> Error (`Tools (Denied written))
+    | true, false, false, _ :: _ -> Ok (String.concat "/" parts)
+    | _, _, _, _ -> Error (`Tools (Denied written))
+
+  let runner path =
+    let parts = String.split_on_char '/' (String.lowercase_ascii path) in
+    let rec under = function
+      | ".github" :: ("workflows" | "actions") :: _ -> Some "CI"
+      | (".husky" | ".githooks") :: _ -> Some "git hooks"
+      | (".circleci" | ".buildkite") :: _ -> Some "CI"
+      | (".devcontainer" | ".idea") :: _ -> Some "the editor that opens the project"
+      | ".continue" :: _ -> Some "other coding agents"
+      | _ :: rest -> under rest
+      | [] -> None
+    in
+    match List.rev parts with
+    | (".pre-commit-config.yaml" | "lefthook.yml" | ".lefthook.yml" | ".gitattributes"
+      | ".gitmodules")
+      :: _ ->
+        Some "git"
+    | (".gitlab-ci.yml" | ".travis.yml" | "azure-pipelines.yml" | "bitbucket-pipelines.yml"
+      | "jenkinsfile")
+      :: _ ->
+        Some "CI"
+    | ("package.json" | ".npmrc" | ".yarnrc" | ".yarnrc.yml" | ".pnpmfile.cjs") :: _ ->
+        Some "the package manager on install"
+    | ("agents.md" | "claude.md" | "gemini.md" | ".cursorrules" | ".windsurfrules" | ".clinerules")
+      :: _
+    | "copilot-instructions.md" :: ".github" :: _ ->
+        Some "other coding agents"
+    | _ -> under parts
 end
 
 type reads = Anywhere | Within of string list

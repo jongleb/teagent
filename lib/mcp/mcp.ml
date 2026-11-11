@@ -100,19 +100,15 @@ let handled program json =
              ]
              [ "pattern" ]);
         tool Os.Run "run"
-          ("Run a program instead of calling tools one by one. The program is one module in \
-            Dartea, a dialect of Elm: `module Main exposing (main)`, `import Agent exposing \
-            (..)`, and `main : Task e a`. It is typechecked before anything runs; compiler errors \
-            come back as they are. Its tools see the same project as the other tools, and its \
-            changes are applied together only if main succeeds. Where the program cannot be \
-            written before seeing data, put `hole \"what goes here\"`: the run stops there, shows \
-            the values in scope, and waits for `fill`. The core modules Basics, List, Maybe, \
-            Result, String, Char, Tuple, Dict and Set are available. The modules this run \
-            offers, Agent and drivers such as Fetch that a program imports by name. A call that \
-            cannot be taken back, such as Fetch.post, needs a person's yes, so here it always \
-            fails with Declined. teagent tracks where every value came from and counts each \
-            program as carrying what this connection already read, so a driver call that \
-            carries content of the project fails with Declined too:\n\n"
+          ("Run a program instead of calling tools one by one. Send the whole Main module as \
+            `program`. teagent typechecks it, runs it against the project, and writes its \
+            changes together if main succeeds; the reply holds every compiler report, or the \
+            value of main and the files written. A `hole` stops the run and returns the values \
+            in scope; send the code for it with `fill`. Over MCP there is no person to ask, so \
+            everything under \"What a person has to allow\" is refused.\n\n"
+          ^ Manual.text
+          ^ "\n## The modules\n\nAgent, and drivers such as Fetch, which a program imports by \
+             name (`import Fetch`):\n\n"
           ^ Lang.Calls.source (Os.table program.os))
           (schema [ ("program", "The whole Main module.") ] [ "program" ]);
         tool Os.Run "fill"

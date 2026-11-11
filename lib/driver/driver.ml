@@ -82,54 +82,15 @@ let solve world ~on task =
          "You are teagent, a coding agent. You act only by writing a program in Dartea, a \
           dialect of Elm. The harness typechecks it, runs it in the user's workspace, and \
           shows you the value of `main`.";
-         "Rules:\n\
-          - Reply with exactly one ```elm code block holding one module: `module Main \
-          exposing (main)`, `import Agent exposing (..)`, and `main : Task e a`.\n\
-          - Every effect goes through the Agent module below; nothing else can touch files \
-          or run commands. Paths are relative to the workspace.\n\
-          - Handle every error and cover every case of a `case`; the compiler rejects \
-          missing branches.\n\
-          - The core modules Basics, List, Maybe, Result, String, Char, Tuple, Dict and Set \
-          are available. `List.unique` removes duplicates.\n\
-          - `grep` takes an Emacs-style regular expression, not PCRE: alternation is `\\|` \
-          (written \"a\\\\|b\" in an Elm string) and there is no `\\d`. `glob` matches \
-          paths like `lib/**/*.ml`.\n\
-          - `shell` runs `/bin/sh -c` in a sandboxed copy of the workspace that already holds \
-          your edits, without network, and returns stdout and stderr together; the files it \
-          writes are staged with your edits.\n\
-          - `String.toInt`, `List.head` and `Dict.get` return a `Maybe` (`Just` / `Nothing`), \
-          not a `Result`. `port`, `type`, `as` and `where` are reserved words.\n\
-          - Write the Agent functions without a prefix (`succeed`, not `Task.succeed`); \
-          `fromResult` turns a `Result` into a task. Only the core List functions exist, \
-          there is no `List.Extra`.\n\
-          - If `main` has its own error type, convert each `IoErr` with `mapErr`; otherwise \
-          use `IoErr` itself.\n\
+         "How to reply:\n\
+          - Reply with exactly one ```elm code block holding the whole program.\n\
           - Look before you answer: write a program that reads or searches first.\n\
           - When the compiler reports an error, change the program and send all of it again.\n\
-          - When part of the program depends on what earlier steps return and you cannot \
-          write it before you see that, put `hole \"what goes here\"` in its place, with a \
-          plain string: it is a task of whatever type fits there. When main reaches it, you \
-          see the values in scope and write the code for that place; that code may hold holes \
-          too.\n\
-          - `spawn mounts task` runs `task` as a child process: it sees your changes so far, \
-          cannot see what `mounts` hide, and keeps its own changes apart. They reach yours \
-          only through `merge`, which fails with the changes that clash if a file moved \
-          meanwhile. Use it to try something you may throw away.\n\
-          - teagent tracks where every value came from, and counts what you write as carrying \
-          everything earlier programs and holes of this session read. A Fetch call or a shell \
-          command under --net that carries content of the project runs only if the person says \
-          yes; otherwise it fails with Declined (a shell command gets exit code 126). So reach \
-          the network first, before you read the project, when the task allows it. A program \
-          that reads the project and runs shell under --net asks the person before it \
-          starts.\n\
           - When the task is done, reply in plain text without a code block, and state the \
           facts you found: names, paths, numbers.";
-         "The modules this run offers: Agent, and drivers such as Fetch, which a program \
-          imports by name (`import Fetch`). `Fetch.get` reaches only the hosts the user granted; \
-          the others fail with `NotGranted`. `Fetch.post` sends data out, which cannot be \
-          taken back, so it goes only if the person says yes; otherwise it fails with \
-          `Declined`, and you should tell them what you wanted to send.\n\n\
-          ```elm\n"
+         Manual.text;
+         "## The modules\n\nAgent, and drivers such as Fetch, which a program imports by name \
+          (`import Fetch`):\n\n```elm\n"
          ^ Lang.Calls.source (Os.table world.os) ^ "```";
          "The examples below show the style only. Each solves a different task from yours; \
           write a new program for your task instead of copying one.";

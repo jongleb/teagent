@@ -1,0 +1,13 @@
+(rule
+ (target manual.ml)
+ (deps Manual.md)
+ (action
+  (with-stdout-to
+   manual.ml
+   (progn
+    (echo "let text = {md|")
+    (cat Manual.md)
+    (echo "|md}\n")))))
+
+(library
+ (name manual))

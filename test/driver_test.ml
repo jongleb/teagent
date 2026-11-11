@@ -58,9 +58,8 @@ let () =
           approve = (fun _ -> Lwt.return decision);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
-          calls = Lang.Calls.all;
+          os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
-          boot = Handler.Boot.standard;
           recorded = [];
         }
     in
@@ -102,9 +101,8 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
-          calls = Lang.Calls.all;
+          os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
-          boot = Handler.Boot.standard;
           recorded = [];
         }
     in
@@ -145,9 +143,8 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
-          calls = Lang.Calls.all;
+          os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
-          boot = Handler.Boot.standard;
           recorded = [];
         }
     in
@@ -209,9 +206,8 @@ let () =
         approve = (fun _ -> Lwt.return Driver.Apply);
         handler = Handler.staged (Os.workspace (Os.granted workspace ~net)) Handler.Open;
         commit = Tools.commit (Tools.at workspace);
-        calls = Lang.Calls.all;
+        os = Os.granted "/project" ~net:[];
         person = (fun _ -> Lwt.return Device.Declines);
-        boot = Handler.Boot.standard;
         recorded = [];
       }
   in
@@ -271,9 +267,8 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Contained;
           commit = Tools.commit (Tools.at workspace);
-          calls = Lang.Calls.all;
+          os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
-          boot = Handler.Boot.standard;
           recorded = [];
         }
     in
@@ -311,9 +306,8 @@ let () =
             (Os.workspace (Os.granted workspace ~net:[ "127.0.0.1" ]))
             Handler.Open;
         person;
-        boot = Handler.Boot.standard;
         commit = Tools.commit (Tools.at workspace);
-        calls = Lang.Calls.all;
+        os = Os.granted "/project" ~net:[];
         recorded = [];
       }
   in
@@ -335,7 +329,7 @@ let () =
              sent_after_decline,
              ran agreed,
              sent_after_agree,
-             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events),
+             collected (Driver.replayed (Os.granted "/project" ~net:[]) events),
              !requests )
          with
          | true, [], "main finished with:\n200", [ "POST /upload HTTP/1.1" ], (again, replayed), [ _ ]
@@ -354,7 +348,7 @@ let () =
             match
               ( fetched,
                 String.starts_with ~prefix:"main failed with:\nNotGranted" refused,
-                collected (Driver.replayed Lang.Calls.all Handler.Boot.standard recorded),
+                collected (Driver.replayed (Os.granted "/project" ~net:[]) recorded),
                 List.map
                   (fun event ->
                     Driver.event_of_json
@@ -474,7 +468,7 @@ let () =
                  contains (last inner) "The program now reads"
                  && not (contains (last inner) "#"),
                  contents workspace "lib/a.ml",
-                 collected (Driver.replayed Lang.Calls.all Handler.Boot.standard recorded) )
+                 collected (Driver.replayed (Os.granted "/project" ~net:[]) recorded) )
              with
              | true, true, "let x = Foo.baz 1\n", (_, replayed) when replayed = recorded -> None
              | _ -> Some ("holes: the hole messages, file or replay are wrong\n" ^ last outer))
@@ -498,7 +492,7 @@ let () =
                   ran,
              contents workspace "lib/a.ml",
              contents workspace "lib/b.ml",
-             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events),
+             collected (Driver.replayed (Os.granted "/project" ~net:[]) events),
              Driver.undone events )
          with
          | true, "let x = Foo.child 1\n", "parent", (again, replayed), [ _; _ ]
@@ -517,7 +511,7 @@ let () =
             | _ -> Some "discard: the file changed")
         | _ -> Some "discard: the session went another way");
         (let _, report, recorded, _ = applied in
-         match collected (Driver.replayed Lang.Calls.all Handler.Boot.standard recorded) with
+         match collected (Driver.replayed (Os.granted "/project" ~net:[]) recorded) with
          | again, replayed when replayed = recorded && again = report -> None
          | _ -> Some "replay: the replayed session differs from the log");
         (let _, report, recorded, _ = applied in
@@ -542,9 +536,8 @@ let () =
                     approve = (fun _ -> Lwt.return Driver.Apply);
                     handler = Handler.staged (Tools.at workspace) Handler.Open;
                     commit = Tools.commit (Tools.at workspace);
-                    calls = Lang.Calls.all;
+                    os = Os.granted "/project" ~net:[];
                     person = (fun _ -> Lwt.return Device.Declines);
-                    boot = Handler.Boot.standard;
                     recorded = cut recorded;
                   }
            in
@@ -614,9 +607,8 @@ let () =
                approve = (fun _ -> Lwt.return Driver.Apply);
                person = (fun _ -> Lwt.return Device.Declines);
                handler = Handler.staged (Tools.at workspace) Handler.Open;
-               boot = Handler.Boot.standard;
                commit = Tools.commit (Tools.at workspace);
-               calls = Lang.Calls.all;
+               os = Os.granted "/project" ~net:[];
                recorded = [];
              }
          in
@@ -625,11 +617,55 @@ let () =
              List.filter_map
                (function Driver.Performed { result = Ok (V_string text); _ } -> Some text | _ -> None)
                events,
-             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events) = (report, events) )
+             collected (Driver.replayed (Os.granted "/project" ~net:[]) events) = (report, events) )
          with
          | [ "main finished with:\n\"aws [redacted secret]\\n\"" ], [ "aws AKIAIOSFODNN7EXAMPLE\n" ], true ->
              None
          | ran, _, _ -> Some ("redaction: the model saw a key, or replay changed: " ^ String.concat "; " ran));
+        (let exposed person =
+           let workspace = fresh () in
+           let replies =
+             ref
+               [
+                 fenced
+                   "module Main exposing (main)\n\n\
+                    import Agent exposing (..)\n\
+                    import Fetch\n\n\n\
+                    main : Task Fetch.FetchErr Int\n\
+                    main =\n\
+                   \    read \"lib/a.ml\" |> mapErr (\\_ -> Fetch.Unreachable \"\")\n\
+                   \        |> andThen (\\text -> Fetch.get (\"http://127.0.0.1:9/?\" ++ text))\n\
+                   \        |> map .status\n";
+                 "Done.";
+               ]
+           in
+           let report, events =
+             collected
+               {
+                 ask =
+                   (fun ~system:_ _ ->
+                     match !replies with
+                     | reply :: rest ->
+                         replies := rest;
+                         Lwt.return (Ok reply)
+                     | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+                 approve = (fun _ -> Lwt.return Driver.Apply);
+                 person = (fun _ -> Lwt.return person);
+                 handler = Handler.staged (Tools.at workspace) Handler.Open;
+                 commit = Tools.commit (Tools.at workspace);
+                 os = Os.granted "/project" ~net:[];
+                 recorded = [];
+               }
+           in
+           ( List.length (List.filter (function Driver.Performed _ -> true | _ -> false) events),
+             List.find_map (function Driver.Ran text -> Some text | _ -> None) events,
+             collected (Driver.replayed (Os.granted "/project" ~net:[]) events) = (report, events) )
+         in
+         match (exposed Device.Declines, exposed Device.Agrees) with
+         | (0, Some refused, true), (2, Some _, true)
+           when String.starts_with ~prefix:"The person did not let this program read the project" refused ->
+             None
+         | _ -> Some "exposed: a program with all three legs ran without the person, or replay differs");
         (let held person =
            let workspace = fresh () in
            let replies =
@@ -658,9 +694,8 @@ let () =
                  approve = (fun _ -> Lwt.return Driver.Apply);
                  person = (fun _ -> Lwt.return person);
                  handler = Handler.staged (Tools.at workspace) Handler.Open;
-                 boot = Handler.Boot.standard;
                  commit = Tools.commit (Tools.at workspace);
-                 calls = Lang.Calls.all;
+                 os = Os.granted "/project" ~net:[];
                  recorded = [];
                }
            in
@@ -669,7 +704,7 @@ let () =
              Sys.file_exists (Filename.concat workspace "AGENTS.md"),
              contents workspace "lib/a.ml",
              List.map (fun (change : Tools.change) -> (change.path :> string)) (Driver.undone events),
-             collected (Driver.replayed Lang.Calls.all Handler.Boot.standard events) = (report, events) )
+             collected (Driver.replayed (Os.granted "/project" ~net:[]) events) = (report, events) )
          in
          match (held Device.Declines, held Device.Agrees) with
          | ( (_, declined, false, "let x = Foo.baz 1\n", [ "lib/a.ml" ], true),
@@ -704,7 +739,7 @@ let () =
                 let _ =
                   Lwt_main.run
                     (Driver.solve
-                       (Driver.replayed (Os.table os) (Os.view os).boot recorded)
+                       (Driver.replayed os recorded)
                        ~on:(fun event ->
                          events := event :: !events;
                          Lwt.return_unit)
@@ -738,7 +773,7 @@ let () =
                ]
            in
            Result.map
-             (fun boot ->
+             (fun os ->
                let report, events =
                  collected
                    {
@@ -750,19 +785,35 @@ let () =
                              Lwt.return (Ok reply)
                          | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                      approve = (fun _ -> Lwt.return Driver.Apply);
-                     person = (fun _ -> Lwt.return Device.Declines);
+                     person =
+                       (fun question ->
+                         Lwt.return
+                           (match String.starts_with ~prefix:"read the project" question with
+                           | true -> Device.Agrees
+                           | false -> Device.Declines));
                      handler = Handler.staged (Tools.at workspace) Handler.Open;
-                     boot;
                      commit = Tools.commit (Tools.at workspace);
-                     calls = Lang.Calls.all;
+                     os;
                      recorded = [];
                    }
                in
-               let again, replayed = collected (Driver.replayed Lang.Calls.all boot events) in
+               let again, replayed = collected (Driver.replayed os events) in
                ( List.find_map (function Driver.Ran text -> Some text | _ -> None) events,
                  events,
                  again = report && replayed = events ))
-             (Handler.Boot.of_layers layers)
+             (Os.narrowed
+                (`Assoc
+                   [
+                     ( "boot",
+                       `List
+                         (List.map
+                            (function
+                              | Handler.Boot.Budget calls -> `Assoc [ ("budget", `Int calls) ]
+                              | Policy -> `String "policy"
+                              | Journal -> `String "journal")
+                            layers) );
+                   ])
+                (Os.granted "/project" ~net:[]))
          in
          let tools =
            List.filter_map (function

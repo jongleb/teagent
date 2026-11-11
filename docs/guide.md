@@ -195,6 +195,13 @@ The diff lists every staged file. A deleted file shows `+++ /dev/null`.
 - **You ran with `--yes`.** teagent applies without asking. Use it only when you trust the
   task.
 
+Before a program runs, teagent checks which calls it can reach. A program that can read the
+project, take in text from outside (`Fetch`, a hole, a shell command under `--net`) and send
+data out (`Fetch`, a shell command under `--net`) could leak your code, so teagent shows you
+which calls give each of the three and asks once. Without `--ask`, with `--dry-run` and over MCP
+the answer is no, and the model is told to split the work. A shell command under `--net` gives
+all three by itself, so with `--net` run teagent with `--ask`.
+
 Files that other programs run or obey after the session are shown apart, under "files run
 outside the sandbox": git hooks and attributes, CI workflows, `package.json` and npm or yarn
 settings, editor containers, and instructions for other agents such as `AGENTS.md` or

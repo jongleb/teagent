@@ -25,6 +25,8 @@ let compiled calls source =
     (fun modules -> { calls; source; modules; recorded = []; fills = 0 })
     (Lang.compile calls source)
 
+let calls t = Lang.calls t.modules
+
 let run t (handler : Handler.Overlay.t Handler.t) ~settle =
   let performed = ref [] and pending = ref t.recorded in
   let replaying =

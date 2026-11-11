@@ -4,7 +4,7 @@ type t = {
   workspace : Tools.t;
   handler : Handler.Overlay.t Handler.t;
   serves : Os.call list;
-  calls : Lang.Calls.t;
+  os : Os.t;
   on : Driver.event -> unit Lwt.t;
   waiting : (string, Run.hole) Hashtbl.t;  (** Runs stopped at a hole, by the name given out. *)
   mutable started : int;  (** How many runs this connection has begun. *)
@@ -32,7 +32,7 @@ let start os shell ~on =
           })
         (Handler.staged (Os.workspace os) shell);
     serves = (Os.view os).offers;
-    calls = Os.table os;
+    os;
     on;
     waiting = Hashtbl.create 4;
     started = 0;
@@ -105,8 +105,10 @@ let handled program json =
             Result, String, Char, Tuple, Dict and Set are available. The modules this run \
             offers, Agent and drivers such as Fetch that a program imports by name. A call that \
             cannot be taken back, such as Fetch.post, needs a person's yes, so here it always \
-            fails with Declined:\n\n"
-          ^ Lang.Calls.source program.calls)
+            fails with Declined. A program that reads the project, takes in outside text (a \
+            driver, a hole) and sends data out (a driver) is refused before it runs, because it \
+            could leak the project; split such work over several programs:\n\n"
+          ^ Lang.Calls.source (Os.table program.os))
           (schema [ ("program", "The whole Main module.") ] [ "program" ]);
         tool Os.Run "fill"
           "Give the code for the hole a run stopped at: one Elm expression of the hole's type, \
@@ -211,30 +213,45 @@ let handled program json =
         let* () = program.on (Decided Discard) in
         Lwt.return (text (body ^ "\n\nThe changes of this run were dropped.") true)
       in
-      let* outcome =
-        Run.run run program.handler ~settle:(fun overlay ->
-            Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
-      in
-      match outcome with
-      | Error reason -> dropped ("The changes could not be applied: " ^ reason)
-      | Ok (Finished (Ok value), overlay) ->
-          let body = "main finished with:\n" ^ Value.to_elm value in
-          let* () = program.on (Ran body) in
-          Lwt.map (reported body) (applied (Handler.Overlay.changes overlay))
-      | Ok (Finished (Error (`Failed value)), _) ->
-          dropped ("main failed with:\n" ^ Value.to_elm value)
-      | Ok (Finished (Error ((`Interp _ | `Exhausted) as stop)), _) -> dropped (Run.stopped stop)
-      | Ok (Unfillable reason, _) -> dropped reason
-      | Ok (Reached hole, _) ->
-          program.started <- program.started + 1;
-          let name = Printf.sprintf "run-%d" program.started in
-          Hashtbl.replace program.waiting name hole;
-          let* () = program.on (Decided Discard) in
+      match Os.exposure program.os (Run.calls run) with
+      | Some { reads; inward; outward } ->
+          let summary =
+            Printf.sprintf
+              "read the project (%s), take in text from outside (%s) and send data out (%s)"
+              (String.concat ", " reads) (String.concat ", " inward) (String.concat ", " outward)
+          in
+          let* () = program.on (Exposed { summary; decision = Discard }) in
           Lwt.return
             (text
-               (Run.question hole ^ "\n\nCall `fill` with run \"" ^ name
-              ^ "\" and that expression as code; until then nothing of this run is applied.")
-               false)
+               ("Refused: this program would " ^ summary
+              ^ ". A program that does all three can leak the project, and over MCP there is \
+                 no person to say yes. Split the work so no program does all three.")
+               true)
+      | None ->
+        let* outcome =
+          Run.run run program.handler ~settle:(fun overlay ->
+              Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
+        in
+        match outcome with
+        | Error reason -> dropped ("The changes could not be applied: " ^ reason)
+        | Ok (Finished (Ok value), overlay) ->
+            let body = "main finished with:\n" ^ Value.to_elm value in
+            let* () = program.on (Ran body) in
+            Lwt.map (reported body) (applied (Handler.Overlay.changes overlay))
+        | Ok (Finished (Error (`Failed value)), _) ->
+            dropped ("main failed with:\n" ^ Value.to_elm value)
+        | Ok (Finished (Error ((`Interp _ | `Exhausted) as stop)), _) -> dropped (Run.stopped stop)
+        | Ok (Unfillable reason, _) -> dropped reason
+        | Ok (Reached hole, _) ->
+            program.started <- program.started + 1;
+            let name = Printf.sprintf "run-%d" program.started in
+            Hashtbl.replace program.waiting name hole;
+            let* () = program.on (Decided Discard) in
+            Lwt.return
+              (text
+                 (Run.question hole ^ "\n\nCall `fill` with run \"" ^ name
+                ^ "\" and that expression as code; until then nothing of this run is applied.")
+                 false)
     and resumed name code =
       match Hashtbl.find_opt program.waiting name with
       | None -> Lwt.return (text ("No run called " ^ name ^ " is waiting for a hole.") true)
@@ -258,7 +275,7 @@ let handled program json =
     | Error reason -> Lwt.return (text reason true)
     | Ok (`Run source) -> (
         let* () = program.on (Wrote source) in
-        match Run.compiled program.calls source with
+        match Run.compiled (Os.table program.os) source with
         | Error report ->
             let* () = program.on (Refused report) in
             Lwt.return (text report true)

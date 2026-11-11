@@ -240,6 +240,37 @@ let class_of os (tool : Value.tool) =
   | Shell _, _ :: _ -> Value.Egress
   | _, _ -> Handler.class_of tool
 
+type exposure = { reads : string list; inward : string list; outward : string list }
+
+let exposure os calls =
+  let networked = match os.allows.net with [] -> `Offline | _ :: _ -> `Networked in
+  let legs (call : Lang.call) =
+    match (call, networked) with
+    | Kernel Agent_read, _ -> Some ("read", [ `Reads ])
+    | Kernel Agent_grep, _ -> Some ("grep", [ `Reads ])
+    | Kernel Agent_shell, `Offline -> Some ("shell", [ `Reads ])
+    | Kernel Agent_shell, `Networked -> Some ("shell with --net", [ `Reads; `Inward; `Outward ])
+    | Kernel Agent_hole, _ -> Some ("hole", [ `Inward ])
+    | Driver name, _ -> Some (name, [ `Inward; `Outward ])
+    | Computed, _ -> Some ("a driver call", [ `Inward; `Outward ])
+    | ( Kernel
+          ( Agent_write | Agent_edit | Agent_enter | Agent_leave | Agent_merge | Agent_call
+          | Task_succeed | Task_fail | Task_and_then | Task_map | Task_map_err | Task_on_error
+          | Task_batch ),
+        _ ) ->
+        None
+  in
+  let giving leg =
+    List.filter_map
+      (fun call ->
+        Option.bind (legs call) (fun (name, given) ->
+            Option.map (fun _ -> name) (List.find_opt (( = ) leg) given)))
+      calls
+  in
+  match (giving `Reads, giving `Inward, giving `Outward) with
+  | (_ :: _ as reads), (_ :: _ as inward), (_ :: _ as outward) -> Some { reads; inward; outward }
+  | _ -> None
+
 let abi = 2
 
 let image os =

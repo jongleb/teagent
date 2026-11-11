@@ -26,4 +26,11 @@ module Calls : sig
   val source : t -> string
 end
 
+(** A call a compiled program can make, found before it runs. *)
+type call =
+  | Kernel of Data.Kernel.agent  (** One of Agent's tools, [hole] included. *)
+  | Driver of string  (** A driver call by its name, such as [fetch.get]. *)
+  | Computed  (** A driver call whose name is not written out. *)
+
 val compile : Calls.t -> string -> (t list, string) result
+val calls : t list -> call list

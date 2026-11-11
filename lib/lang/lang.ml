@@ -420,3 +420,56 @@ let compile calls source =
                     ];
               };
             ]
+
+type call = Kernel of Data.Kernel.agent | Driver of string | Computed
+
+let calls modules =
+  let rec term (written : Ir.Ast.term) =
+    match written with
+    | T_return _ | T_jump _ | T_fail _ -> []
+    | T_let { bind; body; _ } -> bound bind @ term body
+    | T_if { consequent; alternative; _ } -> term consequent @ term alternative
+    | T_switch { branches; default; _ } ->
+        List.concat_map (fun (_, branch) -> term branch) branches
+        @ Option.fold ~none:[] ~some:term default
+    | T_join { definition; body; _ } -> term definition @ term body
+  and bound (bind : Ir.Ast.bind) =
+    match bind with
+    | B_kernel { kernel = Platform { name; _ }; _ } ->
+        Option.fold ~none:[] ~some:(fun kernel -> [ `Kernel kernel ]) (Data.Kernel.agent_of_name name)
+    | B_call_closure { arguments = A_string name :: _; _ } -> [ `Named name ]
+    | B_closure { body; _ } -> term body
+    | B_atom _ | B_construct _ | B_cons _ | B_tuple _ | B_record _ | B_record_update _ | B_access _
+    | B_call _ | B_call_closure _ | B_partial _ | B_primitive _
+    | B_kernel { kernel = Language _; _ } ->
+        []
+  in
+  List.sort_uniq compare
+    (List.concat_map
+       (fun (compiled : t) ->
+         List.concat_map
+           (fun (declaration : Ir.Ast.declaration) ->
+             let found = term declaration.body in
+             let kernels =
+               List.filter_map
+                 (function
+                   | `Kernel
+                       ((Data.Kernel.Agent_read | Agent_write | Agent_edit | Agent_grep
+                        | Agent_shell | Agent_hole | Agent_enter | Agent_leave | Agent_merge) as
+                        kernel) ->
+                       Some (Kernel kernel)
+                   | `Kernel
+                       ( Data.Kernel.Agent_call | Task_succeed | Task_fail | Task_and_then
+                       | Task_map | Task_map_err | Task_on_error | Task_batch )
+                   | `Named _ ->
+                       None)
+                 found
+             in
+             match List.mem (`Kernel Data.Kernel.Agent_call) found with
+             | false -> kernels
+             | true -> (
+                 match List.filter_map (function `Named name -> Some (Driver name) | `Kernel _ -> None) found with
+                 | [] -> Computed :: kernels
+                 | named -> named @ kernels))
+           compiled.declarations)
+       modules)

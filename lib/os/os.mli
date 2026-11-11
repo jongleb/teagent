@@ -34,6 +34,15 @@ type view = {
 val view : t -> view
 val workspace : t -> Tools.t
 val table : t -> Lang.Calls.t
+
+(** The three legs of a leak in one program, each with the calls that give it. *)
+type exposure = {
+  reads : string list;  (** Calls that read the project. *)
+  inward : string list;  (** Calls that bring in text the model did not write. *)
+  outward : string list;  (** Calls that send data out. *)
+}
+
 val class_of : t -> Value.tool -> Value.class_
+val exposure : t -> Lang.call list -> exposure option
 val abi : int
 val image : t -> string

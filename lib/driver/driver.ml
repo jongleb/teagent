@@ -15,6 +15,7 @@ type event =
   | Staged of string
   | Decided of decision
   | Held of { diff : string; decision : decision }
+  | Exposed of { summary : string; decision : decision }
   | Committed of (Tools.Path.t list, string) result
   | Ran of string
   | Guessed of string
@@ -29,9 +30,8 @@ type world = {
   approve : string -> decision Lwt.t;
   person : string -> Device.consent Lwt.t;
   handler : Handler.Overlay.t Handler.t;
-  boot : Handler.Boot.t;
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
-  calls : Lang.Calls.t;
+  os : Os.t;
   recorded : event list;
 }
 
@@ -58,6 +58,7 @@ let solve world ~on task =
   in
   let decisions = queued (function Decided decision -> Some decision | _ -> None) in
   let holds = queued (function Held { decision; _ } -> Some decision | _ -> None) in
+  let exposures = queued (function Exposed { decision; _ } -> Some decision | _ -> None) in
   let commits = queued (function Committed outcome -> Some outcome | _ -> None) in
   let ask ~system history =
     match next replies with
@@ -114,6 +115,11 @@ let solve world ~on task =
           cannot see what `mounts` hide, and keeps its own changes apart. They reach yours \
           only through `merge`, which fails with the changes that clash if a file moved \
           meanwhile. Use it to try something you may throw away.\n\
+          - A program that reads the project (read, grep, shell), takes in text from outside \
+          (a driver such as Fetch, a hole, shell under --net) and sends data out (a driver, shell \
+          under --net) can leak the project, so it runs only if the person says yes before it \
+          starts. Keep reading the project and reaching the network in separate programs when \
+          you can.\n\
           - When the task is done, reply in plain text without a code block, and state the \
           facts you found: names, paths, numbers.";
          "The modules this run offers: Agent, and drivers such as Fetch, which a program \
@@ -122,14 +128,14 @@ let solve world ~on task =
           taken back, so it goes only if the person says yes; otherwise it fails with \
           `Declined`, and you should tell them what you wanted to send.\n\n\
           ```elm\n"
-         ^ Lang.Calls.source world.calls ^ "```";
+         ^ Lang.Calls.source (Os.table world.os) ^ "```";
          "The examples below show the style only. Each solves a different task from yours; \
           write a new program for your task instead of copying one.";
        ]
       @ List.map (fun example -> "An example program:\n\n```elm\n" ^ example ^ "```") Examples.all)
   in
   let watched =
-    Handler.booted world.boot ~person:world.person
+    Handler.booted (Os.view world.os).boot ~person:world.person
       ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
         {
           perform =
@@ -145,6 +151,7 @@ let solve world ~on task =
                     steps := [];
                     decisions := [];
                     holds := [];
+                    exposures := [];
                     commits := [];
                     inner.perform tool overlay
                 | None -> inner.perform tool overlay
@@ -253,6 +260,33 @@ let solve world ~on task =
             in
             Lwt.return (Result.map (fun () -> paths withheld) applied))
   in
+  let cleared run =
+    match Os.exposure world.os (Run.calls run) with
+    | None -> Lwt.return (Ok run)
+    | Some { reads; inward; outward } -> (
+        let summary =
+          Printf.sprintf
+            "read the project (%s), take in text from outside (%s) and send data out (%s)"
+            (String.concat ", " reads) (String.concat ", " inward) (String.concat ", " outward)
+        in
+        let* decision =
+          match next exposures with
+          | Some decision -> Lwt.return decision
+          | None ->
+              Lwt.map
+                (function Device.Agrees -> Apply | Declines -> Discard)
+                (world.person summary)
+        in
+        let+ () = on (Exposed { summary; decision }) in
+        match decision with
+        | Apply -> Ok run
+        | Discard ->
+            Error
+              ("The person did not let this program " ^ summary
+             ^ ". A program that does all three can leak the project, so it needs their yes. \
+                Do the task without one of the three, or tell the person to run teagent with \
+                --ask."))
+  in
   let executed history run =
     let refused history = function
       | `Discarded -> Error Discarded
@@ -317,7 +351,11 @@ let solve world ~on task =
                     | None -> again "Reply with one ```elm block holding only the expression."
                     | Some code -> (
                         match Run.filled hole code with
-                        | Ok run -> ran history run
+                        | Ok run -> (
+                            let* cleared = cleared run in
+                            match cleared with
+                            | Ok run -> ran history run
+                            | Error refusal -> again refusal)
                         | Error report ->
                             let* () = on (Refused report) in
                             again ("That code does not compile in place of the hole:\n\n" ^ report)))
@@ -367,7 +405,7 @@ let solve world ~on task =
         | Some source, _, _ -> (
             let* () = on (Wrote text) in
             let history = history @ [ { Llm.role = Assistant; text } ] in
-            match Run.compiled world.calls source with
+            match Run.compiled (Os.table world.os) source with
             | Error report when round >= 4 ->
                 let* () = on (Refused report) in
                 Lwt.return { ending = Error (Never_compiled report); rounds = List.rev rounds }
@@ -390,7 +428,12 @@ let solve world ~on task =
                     ])
                   rounds runs nudged (round + 1) (Some source)
             | Ok run -> (
-                let* result = executed history run in
+                let* result =
+                  let* cleared = cleared run in
+                  match cleared with
+                  | Ok run -> executed history run
+                  | Error refusal -> Lwt.return (Ok (history, refusal))
+                in
                 match result with
                 | Error stop -> Lwt.return { ending = Error stop; rounds = List.rev (round :: rounds) }
                 | Ok (history, result) ->
@@ -426,10 +469,9 @@ let explained = function
   | Discarded -> "Stopped: the changes were not applied."
   | Too_many_programs -> "Stopped after 8 programs without an answer."
 
-let replayed calls boot recorded =
+let replayed os recorded =
   {
-    calls;
-    boot;
+    os;
     recorded;
     ask = (fun ~system:_ _ -> Lwt.return (Error (`Llm (Llm.Transport "the log has no more replies"))));
     approve = (fun _ -> Lwt.return Discard);
@@ -456,8 +498,8 @@ let undone events =
                   (Handler.Overlay.changes overlay),
               Handler.Overlay.empty )
         | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
-        | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Held _ | Ran _
-        | Guessed _
+        | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Held _
+        | Exposed _ | Ran _ | Guessed _
         | Answered _ | Filled _ ->
             (committed, overlay))
       ([], Handler.Overlay.empty) events
@@ -498,6 +540,16 @@ let event_to_json event : Yojson.Safe.t =
             `Assoc
               [
                 ("diff", `String diff);
+                ("decision", `String (match decision with Apply -> "apply" | Discard -> "discard"));
+              ] );
+        ]
+  | Exposed { summary; decision } ->
+      `Assoc
+        [
+          ( "exposed",
+            `Assoc
+              [
+                ("summary", `String summary);
                 ("decision", `String (match decision with Apply -> "apply" | Discard -> "discard"));
               ] );
         ]
@@ -549,6 +601,11 @@ let event_of_json (json : Yojson.Safe.t) =
       Ok (Held { diff; decision = Apply })
   | `Assoc [ ("held", `Assoc [ ("diff", `String diff); ("decision", `String "discard") ]) ] ->
       Ok (Held { diff; decision = Discard })
+  | `Assoc [ ("exposed", `Assoc [ ("summary", `String summary); ("decision", `String "apply") ]) ] ->
+      Ok (Exposed { summary; decision = Apply })
+  | `Assoc [ ("exposed", `Assoc [ ("summary", `String summary); ("decision", `String "discard") ]) ]
+    ->
+      Ok (Exposed { summary; decision = Discard })
   | `Assoc [ ("committed", `List paths) ] ->
       Result.map
         (fun paths -> Committed (Ok paths))

@@ -199,6 +199,28 @@ let () =
          with
         | Contained, Egress, Egress -> None
         | _ -> Some "classes: a shell with granted hosts or Fetch.get is not Egress");
+        (let reach os body imports =
+           Result.map
+             (fun modules -> Os.exposure os (Lang.calls modules))
+             (Lang.compile (Os.table os) (program imports body))
+         in
+         let offline = Os.granted "/w" ~net:[] and online = Os.granted "/w" ~net:[ "registry.npmjs.org" ] in
+         match
+           ( reach offline
+               "read \"a\" |> mapErr (\\_ -> Fetch.Unreachable \"\") |> andThen (\\t -> Fetch.get t) |> map .status |> mapErr (\\_ -> NotFound \"\")"
+               "import Fetch",
+             reach offline "read \"a\" |> andThen (\\t -> write \"b\" t) |> map (\\_ -> 0)" "",
+             reach offline "shell \"ls\" |> map .code" "",
+             reach online "shell \"npm ci\" |> map .code" "",
+             reach offline "read \"a\" |> andThen (\\_ -> hole \"later\")" "" )
+         with
+        | ( Ok (Some { reads = [ "read" ]; inward = [ "fetch.get" ]; outward = [ "fetch.get" ] }),
+            Ok None,
+            Ok None,
+            Ok (Some { reads = [ "shell with --net" ]; _ }),
+            Ok None ) ->
+            None
+        | _ -> Some "exposure: a program with all three legs passed, or one without them was held");
         (match narrowed {|{ "nett": [] }|} (Os.granted "/w" ~net:[]) with
         | Error "there is no setting called nett" -> None
         | _ -> Some "an unknown setting was not refused");

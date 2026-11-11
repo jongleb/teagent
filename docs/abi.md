@@ -72,6 +72,7 @@ Each later line is one event, an object with a single key:
 | The diff shown for approval | `{"staged": diff}` |
 | The person's decision | `{"decided": "apply"}` or `{"decided": "discard"}` |
 | Changes to files other programs run, shown apart, and the person's answer | `{"held": {"diff": diff, "decision": "apply" or "discard"}}` |
+| A program that can leak, shown to the person before it ran, and their answer | `{"exposed": {"summary": text, "decision": "apply" or "discard"}}` |
 | The commit | `{"committed": ["path", ...]}`, the paths written, or `{"committed": reason}` |
 | What main returned | `{"ran": text}` |
 | A reply without a program before any program ran | `{"guessed": reply}` |
@@ -124,5 +125,11 @@ version too. A change to a driver's or a skill's source changes only the image.
 `test/sessions/abi2.jsonl` is a session logged under version 2. Every build of version 2 must
 replay it exactly.
 
-Version 2 added the `Egress` class, the `held` event, the paths in `committed`, and hidden
-`.env` files.
+Before a program or the code for a hole runs, teagent looks at the calls it can reach. If it
+can read the project (`read`, `grep`, `shell`), take in text from outside (a driver call, a
+`hole`, `shell` when `--net` grants hosts) and send data out (a driver call, `shell` when
+`--net` grants hosts), it runs only if the person says yes, and the answer is logged as
+`exposed`.
+
+Version 2 added the `Egress` class, the `held` and `exposed` events, the paths in `committed`,
+and hidden `.env` files.

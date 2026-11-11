@@ -112,6 +112,10 @@ let () =
     | Staged diff -> section "changes" diff
     | Decided Apply -> section "decision" "apply"
     | Decided Discard -> section "decision" "discard"
+    | Exposed { summary; decision } ->
+        section
+          ("program that can leak: " ^ match decision with Apply -> "allowed" | Discard -> "refused")
+          summary
     | Held { diff; decision } ->
         section
           ("files run outside the sandbox: "
@@ -213,9 +217,8 @@ let () =
           approve = approved;
           person;
           handler = Handler.staged (Os.workspace os) !shell;
-          boot = (Os.view os).boot;
           commit = Tools.commit (Os.workspace os);
-          calls = Os.table os;
+          os;
           recorded = [];
         }
   in
@@ -334,7 +337,7 @@ let () =
       let replayed = ref [] and os = profiled_as image in
       let _report =
         Lwt_main.run
-          (Driver.solve (Driver.replayed (Os.table os) (Os.view os).boot recorded)
+          (Driver.solve (Driver.replayed os recorded)
              ~on:(fun event ->
                replayed := event :: !replayed;
                printed os event)
@@ -393,9 +396,8 @@ let () =
                  approve = approved;
                  person;
                  handler = Handler.staged workspace !shell;
-                 boot = (Os.view os).boot;
-                 commit = Tools.commit workspace;
-                 calls = Os.table os;
+                        commit = Tools.commit workspace;
+                 os;
                  recorded = [];
                }
                task))

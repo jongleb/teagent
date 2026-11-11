@@ -19,6 +19,7 @@ type outcome =
   | Unfillable of string  (** Why the hole it reached cannot be filled. *)
 
 val compiled : Lang.Calls.t -> string -> (t, string) result
+val calls : t -> Lang.call list
 
 val run :
   t ->

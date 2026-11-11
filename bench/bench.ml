@@ -133,9 +133,8 @@ let () =
                            approve = (fun _ -> Lwt.return Driver.Apply);
                            person = (fun _ -> Lwt.return Device.Declines);
                            handler = Handler.staged (Tools.at workspace) !shell;
-                           boot = Handler.Boot.standard;
                            commit = Tools.commit (Tools.at workspace);
-                           calls = Lang.Calls.all;
+                           os = Os.granted "/project" ~net:[];
                            recorded = [];
                          }
                          ~on:(fun event ->
@@ -145,7 +144,7 @@ let () =
                                      | Filled { reply = text; _ })
                              ->
                                Lwt.return (Printf.printf "%s\n%s\n\n%!" name text)
-                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Held _ | Committed _) ->
+                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Held _ | Exposed _ | Committed _) ->
                                Lwt.return_unit)
                          (read (Filename.concat task "task.md")))
                   in

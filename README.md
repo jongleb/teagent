@@ -309,7 +309,7 @@ the question it exists to answer is still open.
 | | |
 | --- | --- |
 | Bench, reference programs | 20 of 20 tasks: reading, single-file edits, multi-file refactors, shell |
-| Gate of stage 0 | median compile rounds per task ≤ 2 on a frontier model: **not measured yet** |
+| Gate of stage 0 | median compile rounds per task ≤ 2 on a frontier model: **met.** An outside agent (Claude, frontier class) that saw only the `run` tool's description wrote programs for all 20 bench tasks; 20 of 20 compiled on the first try, 19 of 20 were right on the first run (2026-11-11). After the fixes the measure found, the three that needed a second run went through in one. The bench tasks are small; harder ones are next |
 | Local `qwen2.5-coder:7b` | 2 to 3 of 6–11 tasks; it copies examples and reaches for missing APIs |
 | Contained shell | macOS (Seatbelt, deny by default, APFS clone); Linux (bubblewrap, reflink copy) |
 | Network | off by default; hosts granted with `--net` go through teagent's proxy |

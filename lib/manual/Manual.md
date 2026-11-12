@@ -48,7 +48,9 @@
   The run stops there and shows the values in scope; the code you send is typechecked in that
   place and the program runs again without repeating finished calls. One description per hole.
   The code replaces the hole in the program's text: a hole in a function or a loop gets the
-  same code on every pass, so branch on the values or leave a new hole in a branch. A run
+  same code on every pass. Code that branches on the values decides every later pass without
+  you; when each pass needs your judgement, leave a new hole for unseen cases or run one
+  program per case. A run
   fills at most 8 holes; at a ninth it fails and writes nothing.
 - `spawn mounts task`: a child that sees the changes so far, not what `mounts` hide
   (`Hidden`, `Readonly`, `Scratch` path), with changes of its own. `merge child` takes them,

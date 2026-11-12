@@ -343,6 +343,11 @@ let compile calls source =
                     ^ "` is a reserved word in Elm, so it cannot name a variable or a field; pick \
                        another name." ))
                 [ "port"; "type"; "module"; "import"; "exposing"; "as"; "where"; "alias"; "effect" ]
+            @ [
+                ( [ "I cannot find a `Debug." ],
+                  "There is no Debug module: to stop on purpose, `fail` with a value; to see a \
+                   value, return it from main." );
+              ]
           in
           let errors =
             List.sort_uniq String.compare

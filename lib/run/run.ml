@@ -178,8 +178,9 @@ let question hole =
          (String.split_on_char '\n' hole.run.source))
   ^ ") and Basics, List, Maybe, Result, String, Char and Tuple; it cannot add an import. It \
      takes the hole's place in the program, so if the hole is in a function or a loop, this one \
-     expression runs every time main gets there: to decide case by case, branch on the values, \
-     or leave a new hole in a branch. "
+     expression runs every time main gets there. Code that branches on the values decides every \
+     later pass without you; when each pass needs your judgement, leave a new hole for the cases \
+     you have not seen, or run one program per case. "
   ^
   match 7 - hole.run.fills with
   | 0 -> "This is the last hole a run can fill: if main reaches a hole in this code, the run fails."

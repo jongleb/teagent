@@ -276,7 +276,7 @@ anything.
 
 | Setting | What it does |
 | --- | --- |
-| `tools` | The tools served over MCP; the others do not exist for the agent. All by default. The `Agent` module of every program is cut to the same list: without `bash` there is no `shell`, and a program that calls it does not compile. `run` adds the `run` and `fill` tools; `fetch` gives programs the `Fetch` module. |
+| `tools` | The tools served over MCP; the others do not exist for the agent. All by default. The `Agent` module of every program is cut to the same list: without `bash` there is no `shell`, and a program that calls it does not compile. `run` adds the `run` and `fill` tools; `fetch` gives programs the `Fetch` module; `model` gives them `Model.judge`, which asks the model teagent runs with (`--model`, `--openai`) to pick one of a list of answers. |
 | `mounts` | What a path is to the agent. `hidden`: it can neither read nor write it, and the shell's copy does not have it. `readonly`: it can read it; a write is refused, and a command's change to it stops the whole commit. `scratch`: programs and commands read and write it while a program runs, and nothing written there reaches the project or the diff you approve. Where several cover a path, the strictest holds. |
 | `hidden`, `readonly` | Lists of paths, a shorthand for the same kinds of mount. |
 | `reads` | Where a contained command may read, besides the system folders, `~/.gitconfig` and its own copy. Without it, a command may read any file you can, except the ones below. |

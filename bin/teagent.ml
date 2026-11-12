@@ -242,6 +242,12 @@ let () =
           ("The log was made on image " ^ image ^ ", and this OS is image " ^ Os.image os
          ^ ".\nUse the same profile, skills and --net hosts as the session did.")
   in
+  let tooled os =
+    Result.fold
+      ~ok:(fun provider -> Handler.judging provider (Handler.staged (Os.workspace os) !shell))
+      ~error:(fun _ -> Handler.staged (Os.workspace os) !shell)
+      (Llm.configured ~model:!model ~effort:!effort ~openai:!openai)
+  in
   let live os =
     match Llm.configured ~model:!model ~effort:!effort ~openai:!openai with
     | Error reason -> failed reason
@@ -250,7 +256,7 @@ let () =
           Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
           approve = approved;
           person;
-          handler = Handler.staged (Os.workspace os) !shell;
+          handler = Handler.judging provider (Handler.staged (Os.workspace os) !shell);
           commit = Tools.commit (Os.workspace os);
           os;
           recorded = [];
@@ -349,7 +355,7 @@ let () =
               | [] -> Lwt.return (Error `Silent));
           approve = approved;
           person;
-          handler = Handler.staged (Os.workspace os) !shell;
+          handler = tooled os;
           commit = Tools.commit (Os.workspace os);
           os;
           recorded;
@@ -377,7 +383,7 @@ let () =
       prerr_endline ("teagent MCP server in " ^ !directory ^ ", logging to " ^ log);
       Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
           let program =
-            Mcp.start os !shell ~on:(fun event ->
+            Mcp.start os (tooled os) ~on:(fun event ->
                 Out_channel.output_string channel
                   (Yojson.Safe.to_string (Driver.event_to_json event) ^ "\n");
                 Out_channel.flush channel;

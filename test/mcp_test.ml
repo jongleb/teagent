@@ -12,7 +12,9 @@ let () =
   placed "lib/c.ml" "let z = 3\n";
   let events = ref [] in
   let program =
-    Mcp.start (Os.granted workspace ~net:[]) Handler.Contained ~on:(fun event ->
+    Mcp.start (Os.granted workspace ~net:[])
+      (Handler.staged (Os.workspace (Os.granted workspace ~net:[])) Handler.Contained)
+      ~on:(fun event ->
         events := event :: !events;
         Lwt.return_unit)
   in

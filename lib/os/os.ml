@@ -1,4 +1,4 @@
-type call = Bash | Read | Write | Edit | Grep | Run | Fetch
+type call = Bash | Read | Write | Edit | Grep | Run | Fetch | Model
 
 let calls =
   [
@@ -9,6 +9,7 @@ let calls =
     ("grep", Grep);
     ("run", Run);
     ("fetch", Fetch);
+    ("model", Model);
   ]
 
 type view = {
@@ -316,7 +317,10 @@ let narrowed json os =
   | _ -> Error "it is not a JSON object"
 
 let view os = os.allows
-let device = function Fetch -> Some Device.Fetch | Bash | Read | Write | Edit | Grep | Run -> None
+let device = function
+  | Fetch -> Some Device.Fetch
+  | Model -> Some Device.Model
+  | Bash | Read | Write | Edit | Grep | Run -> None
 
 let workspace os =
   Tools.limited
@@ -341,7 +345,7 @@ let table os =
             | Write -> Some Data.Kernel.Agent_write
             | Edit -> Some Data.Kernel.Agent_edit
             | Grep -> Some Data.Kernel.Agent_grep
-            | Run | Fetch -> None)
+            | Run | Fetch | Model -> None)
           missing)
   |> Lang.Calls.unplugged (List.filter_map device missing)
   |> Lang.Calls.taught os.skills

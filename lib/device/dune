@@ -9,6 +9,17 @@
     (cat Fetch.elm)
     (echo "|elm}\n")))))
 
+(rule
+ (target model_elm.ml)
+ (deps Model.elm)
+ (action
+  (with-stdout-to
+   model_elm.ml
+   (progn
+    (echo "let source = {elm|")
+    (cat Model.elm)
+    (echo "|elm}\n")))))
+
 (library
  (name device)
- (libraries lwt tools value))
+ (libraries llm lwt tools value))

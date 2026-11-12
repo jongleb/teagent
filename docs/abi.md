@@ -24,8 +24,13 @@ function below becomes one call; the column on the right is its JSON in the log.
 | `merge : Child a -> Task (List Change) a` | Staged | `{"merge": [{"file", "base", "content"}]}`, `null` for a missing file |
 | `Fetch.get : String -> Task FetchErr Response` | Egress | `{"call": {"name": "fetch.get", "argument": value}}` |
 | `Fetch.post : String -> String -> Task FetchErr Response` | Irreversible | `{"call": {"name": "fetch.post", "argument": value}}` |
+| `Model.judge : String -> List String -> Task ModelErr String` | Pure | `{"call": {"name": "model.judge", "argument": value}}` |
 
-`IoErr` is `NotFound String | Denied String | Conflict String`. The classes are `Pure` (reads
+`IoErr` is `NotFound String | Denied String | Conflict String`. `Model.judge question answers`
+sends the question and the answers to the model teagent runs with and returns the answer it
+picks, as written; a reply that is none of them is `Unclear reply`, and a run with no model is
+`Unreachable`. It is `Pure` because that model is the one the session already shows the project
+to; a replay answers it from the log. The classes are `Pure` (reads
 only), `Staged` (changes the overlay), `Contained` (a sandboxed command whose writes are staged),
 `Egress` (sends data to a granted host) and `Irreversible` (asks the person first). A driver adds calls only through
 `call` with a dotted name. Its Elm module is part of the image (section 4), so a driver can
@@ -104,7 +109,7 @@ keys in this order:
 
 ```json
 {"abi": 2,
- "offers": ["bash", "read", "write", "edit", "grep", "run", "fetch"],
+ "offers": ["bash", "read", "write", "edit", "grep", "run", "fetch", "model"],
  "mounts": [["path", "hidden"], ...],
  "reads": "anywhere" or ["/abs/path", ...],
  "net": ["host", ...],

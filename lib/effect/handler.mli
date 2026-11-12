@@ -38,6 +38,7 @@ val class_of : Value.tool -> Value.class_
 
 val run : Tools.t -> unit t
 val staged : Tools.t -> shell -> Overlay.t t
+val judging : Llm.t -> 'state t -> 'state t
 
 (** The layers an OS boots around the tools, outermost first. *)
 module Boot : sig

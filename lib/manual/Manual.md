@@ -49,9 +49,13 @@
   place and the program runs again without repeating finished calls. One description per hole.
   The code replaces the hole in the program's text: a hole in a function or a loop gets the
   same code on every pass. Code that branches on the values decides every later pass without
-  you; when each pass needs your judgement, leave a new hole for unseen cases or run one
-  program per case. A run
+  you; when each pass needs judgement, call `Model.judge` on each item. A run
   fills at most 8 holes; at a ninth it fails and writes nothing.
+- `Model.judge question answers` (`import Model`): the model teagent runs with picks one of
+  `answers` and it comes back as written; `Unclear reply` if it named none, `Unreachable` if
+  this run has no model. Use it for a judgement per item in a loop (route each ticket, classify
+  each file): the loop stays one run and its changes are written together. Keyword rules decide
+  without reading; a hole is filled once for every pass.
 - `spawn mounts task`: a child that sees the changes so far, not what `mounts` hide
   (`Hidden`, `Readonly`, `Scratch` path), with changes of its own. `merge child` takes them,
   or fails with the clashes if a file moved meanwhile; an unmerged child leaves nothing.

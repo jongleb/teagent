@@ -11,7 +11,7 @@ type t = {
   performed : Value.tool list ref;  (** The calls of this connection so far, newest first. *)
 }
 
-let start os shell ~on =
+let start os tools ~on =
   let performed = ref [] in
   {
     workspace = Os.workspace os;
@@ -34,7 +34,7 @@ let start os shell ~on =
                 in
                 Lwt.return step);
           })
-        (Handler.staged (Os.workspace os) shell);
+        tools;
     serves = (Os.view os).offers;
     os;
     on;
@@ -158,6 +158,7 @@ let handled program json =
             (field "pattern")
       | Some Run -> Result.map (fun source -> `Run source) (field "program")
       | Some Fetch -> Error "fetch is not a tool of its own: a program sent to run reaches it as Fetch.get."
+      | Some Model -> Error "model is not a tool of its own: a program sent to run reaches it as Model.judge."
       | None -> (
           match (name, offered Os.Run) with
           | "fill", Some _ ->

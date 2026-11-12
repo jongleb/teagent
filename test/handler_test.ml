@@ -48,9 +48,97 @@ let () =
     | Handler.Stopped _ -> Some (name ^ ": stopped early")
     | Handler.Reached _ -> Some (name ^ ": reached a hole")
   in
+  let judging_port =
+    let socket = Lwt_unix.socket PF_INET SOCK_STREAM 0 in
+    Lwt_main.run (Lwt_unix.bind socket (ADDR_INET (Unix.inet_addr_loopback, 0)));
+    Lwt_unix.listen socket 8;
+    let rec accepted () =
+      Lwt.bind (Lwt_unix.accept socket) (fun (client, _) ->
+          let input = Lwt_io.of_fd ~mode:Input client and output = Lwt_io.of_fd ~mode:Output client in
+          let rec headers length =
+            Lwt.bind (Lwt_io.read_line input) (fun line ->
+                match String.split_on_char ':' (String.lowercase_ascii (String.trim line)) with
+                | [ "" ] -> Lwt.return length
+                | [ "content-length"; value ] -> headers (int_of_string (String.trim value))
+                | _ -> headers length)
+          in
+          Lwt.async (fun () ->
+              Lwt.bind (Lwt_io.read_line input) (fun _ ->
+                  Lwt.bind (headers 0) (fun length ->
+                      Lwt.bind (Lwt_io.read ~count:length input) (fun body ->
+                          let reply =
+                            Yojson.Safe.to_string
+                              (`Assoc
+                                [
+                                  ( "choices",
+                                    `List
+                                      [
+                                        `Assoc
+                                          [
+                                            ( "message",
+                                              `Assoc
+                                                [
+                                                  ( "content",
+                                                    `String
+                                                      (match Str.string_match (Str.regexp ".*4111") body 0 with
+                                                      | true -> " Security\n"
+                                                      | false -> "maybe") );
+                                                ] );
+                                          ];
+                                      ] );
+                                ])
+                          in
+                          Lwt.bind
+                            (Lwt_io.write output
+                               (Printf.sprintf
+                                  "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
+                                  (String.length reply) reply))
+                            (fun () -> Lwt.bind (Lwt_io.flush output) (fun () -> Lwt_unix.close client))))));
+          accepted ())
+    in
+    Lwt.async accepted;
+    match Lwt_unix.getsockname socket with ADDR_INET (_, port) -> port | ADDR_UNIX _ -> 0
+  in
   let failures =
     List.filter_map Fun.id
       [
+        (let workspace = fresh () in
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\
+              import Model\n\n\n\
+              main =\n\
+             \    Model.judge \"My card is 4111, still no refund.\" [ \"security\", \"billing\" ]\n\
+             \        |> andThen\n\
+             \            (\\picked ->\n\
+             \                Model.judge \"Something odd.\" [ \"security\", \"billing\" ]\n\
+             \                    |> onError\n\
+             \                        (\\problem ->\n\
+             \                            case problem of\n\
+             \                                Model.Unclear reply ->\n\
+             \                                    succeed (picked ++ \" / \" ++ reply)\n\n\
+             \                                _ ->\n\
+             \                                    succeed \"unreachable\"\n\
+             \                        )\n\
+             \            )\n"
+         with
+         | Error error -> explained "judge" error
+         | Ok (program, task) ->
+             let outcome, () =
+               Lwt_main.run
+                 (Handler.interpret
+                    (Handler.judging
+                       (Llm.Openai_compatible
+                          { url = Printf.sprintf "http://127.0.0.1:%d/v1" judging_port; key = None; model = "stub" })
+                       (Handler.run (Tools.at workspace)))
+                    program () task)
+             in
+             finished "judge"
+               (function
+                 | V_string "security / maybe" -> None
+                 | value -> Some ("judge: " ^ Value.to_elm value))
+               outcome);
         (let workspace = fresh () in
          match started rename with
          | Error error -> explained "run 01_rename" error

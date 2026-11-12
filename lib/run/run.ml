@@ -179,8 +179,7 @@ let question hole =
   ^ ") and Basics, List, Maybe, Result, String, Char and Tuple; it cannot add an import. It \
      takes the hole's place in the program, so if the hole is in a function or a loop, this one \
      expression runs every time main gets there. Code that branches on the values decides every \
-     later pass without you; when each pass needs your judgement, leave a new hole for the cases \
-     you have not seen, or run one program per case. "
+     later pass without you; when each pass needs judgement, call Model.judge on each item. "
   ^
   match 7 - hole.run.fills with
   | 0 -> "This is the last hole a run can fill: if main reaches a hole in this code, the run fails."

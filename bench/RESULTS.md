@@ -217,3 +217,28 @@ What it says:
 
 Next: rerun the holes arm on `j01` with both models on `651e271`, to see whether the new advice
 removes the keyword rules without bringing back the hole in a loop.
+
+## The hole's advice, checked (2026-11-12)
+
+The holes arm on `j01` again, five runs per model, on `651e271`, whose hole question says that
+code branching on values decides later passes without the model, and to leave a new hole for
+unseen cases or run one program per case when each needs judgement.
+
+| Model | Solved | Runs that filled holes | Ran into the limit of 8 | Keyword rules | Compile failures |
+| --- | --- | --- | --- | --- | --- |
+| Opus | 5/5 | 4 | 4 | 0 | 5 |
+| Sonnet | 4/5 | 2 | 0 | 2 (one wrong: T7, T9) | 3 |
+
+What it says:
+
+- The advice works for Opus and walks it into the limit: every Opus run that used holes left a
+  new hole per ticket, and nine tickets need nine fills. All four restarted or planned around
+  it, and all five got every route right.
+- It does not stop Sonnet: two of five still wrote keyword rules in a fill, and one routed T7
+  and T9 wrongly and wrote it. The other three ran one program per ticket.
+- Five of the eight compile failures were one bug: a fill of several lines that ends in a `case`
+  did not parse, because the `)` teagent closes the fill with came right after the last branch.
+  Fixed in `5b7e8ee`; the `)` of a fill of several lines now goes on a line of its own.
+
+Next: the limit of 8 decides whether one hole per item is a pattern an agent can use; that is
+the person's decision.

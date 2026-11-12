@@ -103,3 +103,33 @@ What it says:
 Next: holes do not save calls on a chain the model must judge step by step. What they can still
 win on is that a chain's changes stay staged until its last step, and that a fill is shorter than
 a program; a measure of that needs tasks where a late step shows an early write was wrong.
+
+## Chains a late step overturns (2026-11-12)
+
+`bench/staged`: a release whose gate, once the release is rightly prepared, blocks it and asks
+for every file back (`k01`), and a setting rename whose check then names, one at a time, two
+services that must keep the old setting too (`k02`). Same arms as above, one run per task. A
+new measure, taken by the harness after every call and unseen by the agent: the calls after
+which the project on disk was half done, neither as it was nor as it should end.
+
+| Arm | Solved | teagent calls | Calls left half done | Tokens | Wall time |
+| --- | --- | --- | --- | --- | --- |
+| tools | 2/2 | 12 (5, 7) | 5 (2, 3) | 82k | 82 s |
+| program | 2/2 | 8 (3, 5) | 2 (0, 2) | 88k | 80 s |
+| holes | 2/2 | 12 (4, 8) | 0 (0, 0) | 98k | 119 s |
+
+What it says:
+
+- Staging is what the programs bought, not fewer calls. To undo the blocked release, the
+  program and holes arms wrote it and ran the gate in one program that failed when the gate did:
+  nothing reached the disk. The tools arm wrote it, saw the block, and rewrote six files from
+  what it had printed earlier; its tar backup, named with a dot, was silently dropped by the
+  shell, which now says so (`c747ef2`).
+- Only holes kept the revised chain whole: four fills took the rename through both corrections
+  before anything was written. Programs without holes committed each correction on its own.
+- Holes cost the most here, and part of that was teagent: one compile failure each, and
+  `List.filter` crashed on a test computed from command output, a label the filter did not
+  peel (`879b1ec`); a fill also printed again the compiler report of an earlier fill.
+
+Next: k = 5 on `bench/staged` and `bench/judge`, with a second model, now that the tasks and
+the harness have held up.

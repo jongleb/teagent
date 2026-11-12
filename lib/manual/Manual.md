@@ -17,8 +17,10 @@
 - Tasks run one after another in `andThen` / `batch` order; `batch` stops at the first failure.
   `map2 f a b` runs `a`, then `b`, and combines them.
 - `write` and `edit` are staged; later `read`, `grep` and `shell` see them. They are written
-  together, and only if `main` succeeds: a failed, crashed or looping `main` writes nothing, so
-  failing on purpose after a bad check throws changes away.
+  together, and only if `main` succeeds: a failed, crashed or looping `main` writes nothing.
+- So check the result before `main` succeeds: grep for what must be gone or must stay, run the
+  tests, and `fail` when it is wrong. A replace that also hit a longer name (`log(` in
+  `dialog(`) is caught this way and never written.
 - The value of `main` comes back in Elm syntax. Secret-looking text shows as
   `[redacted secret]`.
 - Paths are relative to the project root. Absolute paths, `..`, anything under `.git`,
@@ -72,4 +74,6 @@ person's rules); `Conflict reason` (`edit` did not match once, or the file chang
 
 `teagent -C project --exec program.elm` does what `run` does and prints only the result and
 the files written. Exit code: 0 done, 1 does not compile, 3 some files held, 4 `main` failed
-(nothing written). `--dry-run` writes nothing; `--trace` prints every call.
+(nothing written), 5 stopped at a hole (nothing written yet). At a hole it prints the values in
+scope and the session log; `teagent --fill LOG code.elm` puts the expression in the hole and goes
+on, exiting the same way. `--dry-run` writes nothing; `--trace` prints every call.

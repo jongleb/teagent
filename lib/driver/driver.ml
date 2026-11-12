@@ -22,11 +22,17 @@ type event =
   | Answered of string
   | Filled of { hole : string; reply : string }
 
-type stop = Llm_failed of Llm.error | Never_compiled of string | Discarded | Too_many_programs
+type stop =
+  | Llm_failed of Llm.error
+  | Never_compiled of string
+  | Discarded
+  | Too_many_programs
+  | Unanswered
+  | Open_hole of string
 type report = { ending : (string, stop) result; rounds : int list }
 
 type world = {
-  ask : system:string -> Llm.message list -> (string, [ `Llm of Llm.error ]) result Lwt.t;
+  ask : system:string -> Llm.message list -> (string, [ `Llm of Llm.error | `Silent ]) result Lwt.t;
   approve : string -> decision Lwt.t;
   person : string -> Device.consent Lwt.t;
   handler : Handler.Overlay.t Handler.t;
@@ -301,6 +307,7 @@ let solve world ~on task =
                 let* reply = ask ~system history in
                 match reply with
                 | Error (`Llm problem) -> Lwt.return (Error (Llm_failed problem))
+                | Error `Silent -> Lwt.return (Error (Open_hole (Run.question hole)))
                 | Ok text -> (
                     let* () = on (Filled { hole = Run.description hole; reply = text }) in
                     let history = history @ [ { Llm.role = Assistant; text } ] in
@@ -358,6 +365,7 @@ let solve world ~on task =
     match reply with
     | Error (`Llm problem) ->
         Lwt.return { ending = Error (Llm_failed problem); rounds = List.rev rounds }
+    | Error `Silent -> Lwt.return { ending = Error Unanswered; rounds = List.rev rounds }
     | Ok text -> (
         match (program_in text, rounds, nudged) with
         | None, [], `Not_nudged ->
@@ -443,6 +451,8 @@ let explained = function
   | Never_compiled _ -> "The program still did not compile after 4 rounds."
   | Discarded -> "Stopped: the changes were not applied."
   | Too_many_programs -> "Stopped after 8 programs without an answer."
+  | Unanswered -> "Stopped: no reply came after the last run."
+  | Open_hole question -> question
 
 let replayed os recorded =
   {

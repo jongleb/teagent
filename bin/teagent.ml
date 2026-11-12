@@ -11,7 +11,14 @@ let () =
   let trace = ref `Brief in
   Arg.parse
     [
-      ("-C", Arg.Set_string directory, "DIR  Work in DIR (default: the current directory)");
+      ( "-C",
+        Arg.String
+          (fun folder ->
+            directory :=
+              match Filename.is_relative folder with
+              | true -> Filename.concat (Sys.getcwd ()) folder
+              | false -> folder),
+        "DIR  Work in DIR (default: the current directory)" );
       ( "--model",
         Arg.String (fun id -> model := Some id),
         "ID  The model (default: claude-opus-5-5)" );
@@ -45,6 +52,11 @@ let () =
       ( "--exec",
         Arg.String (fun file -> mode := `Exec file),
         "FILE  Run a Dartea program you wrote, with no model" );
+      ( "--fill",
+        (let log = ref "" in
+         Arg.Tuple
+           [ Arg.Set_string log; Arg.String (fun file -> mode := `Fill (!log, file)) ]),
+        "LOG FILE  Give the code in FILE to the hole the --exec run logged in LOG stopped at" );
       ( "--net",
         Arg.String (fun host -> net := String.lowercase_ascii host :: !net),
         "HOST  Let contained commands reach HOST, or every name under it as *.HOST; repeat it" );
@@ -106,7 +118,7 @@ let () =
     match (event, !mode, !trace) with
     | ( ( Wrote _ | Performed _ | Deferred _ | Staged _ | Decided _ | Guessed _ | Answered _
         | Filled _ ),
-        `Exec _,
+        (`Exec _ | `Fill _),
         `Brief ) ->
         Lwt.return_unit
     | _ -> (
@@ -265,7 +277,7 @@ let () =
                task)
         in
         (match (!mode, !trace) with
-        | `Exec _, `Brief -> Printf.printf "\nsession log: %s\n" log
+        | (`Exec _ | `Fill _), `Brief -> Printf.printf "\nsession log: %s\n" log
         | _ ->
             Printf.printf "\ncompile rounds per program: %s\nsession log: %s\n"
               (String.concat ", " (List.map string_of_int report.rounds))
@@ -296,16 +308,55 @@ let () =
   in
   let finished (report : Driver.report) =
     match report.ending with
-    | Ok _ when !held > 0 ->
+    | (Ok _ | Error Unanswered) when !held > 0 ->
         prerr_endline
           "\nSome changes were not written: files that other programs run need --ask and a yes.";
         exit 3
-    | Ok _ -> ()
+    | Ok _ | Error Unanswered -> ()
     | Error Discarded when !approval = `Dry ->
         print_endline "\nNothing was written: this was a dry run."
     | Error stop ->
         prerr_endline (Driver.explained stop);
         exit 1
+  in
+  let contents file =
+    match In_channel.with_open_text file In_channel.input_all with
+    | exception Sys_error reason -> failed reason
+    | source -> source
+  in
+  let by_hand log ~skipped os recorded code task =
+    let replies = ref [ "```elm\n" ^ code ^ "\n```" ] in
+    let report =
+      logged log ~skipped os
+        {
+          ask =
+            (fun ~system:_ _ ->
+              match !replies with
+              | reply :: rest ->
+                  replies := rest;
+                  Lwt.return (Ok reply)
+              | [] -> Lwt.return (Error `Silent));
+          approve = approved;
+          person;
+          handler = Handler.staged (Os.workspace os) !shell;
+          commit = Tools.commit (Os.workspace os);
+          os;
+          recorded;
+        }
+        task
+    in
+    match report.ending with
+    | Error (Open_hole question) ->
+        Printf.printf "\n%s\n\nNothing is written yet. Send the expression with: teagent --fill %s FILE\n"
+          question log;
+        exit 5
+    | _ -> (
+        finished report;
+        match String.starts_with ~prefix:"main finished with:" !ran with
+        | true -> ()
+        | false ->
+            prerr_endline "\nmain did not succeed, so nothing was written.";
+            exit 4)
   in
   match !mode with
   | `Mcp ->
@@ -402,43 +453,18 @@ let () =
       let os = profiled_as image in
       finished (logged file ~skipped:(List.length recorded) os { (live os) with recorded } task)
   | `Exec file -> (
-      let source =
-        match In_channel.with_open_text file In_channel.input_all with
-        | exception Sys_error reason -> failed reason
-        | source -> source
-      in
-      let os = profiled () in
+      let source = contents file and os = profiled () in
       match Lang.compile (Os.table os) source with
       | Error report ->
           print_endline report;
           exit 1
       | Ok _ ->
-          let workspace = Os.workspace os in
-          let replies = ref [ "```elm\n" ^ source ^ "```" ] in
           let task = "Run the program in " ^ file in
-          finished
-            (logged (started task os) ~skipped:0 os
-               {
-                 ask =
-                   (fun ~system:_ _ ->
-                     match !replies with
-                     | reply :: rest ->
-                         replies := rest;
-                         Lwt.return (Ok reply)
-                     | [] -> Lwt.return (Ok "Done."));
-                 approve = approved;
-                 person;
-                 handler = Handler.staged workspace !shell;
-                 commit = Tools.commit workspace;
-                 os;
-                 recorded = [];
-               }
-               task);
-          match String.starts_with ~prefix:"main finished with:" !ran with
-          | true -> ()
-          | false ->
-              prerr_endline "\nmain did not succeed, so nothing was written.";
-              exit 4)
+          by_hand (started task os) ~skipped:0 os [] source task)
+  | `Fill (log, file) ->
+      let task, place, image, recorded = loaded log in
+      Option.iter (fun place -> directory := place) place;
+      by_hand log ~skipped:(List.length recorded) (profiled_as image) recorded (contents file) task
   | `Fresh -> (
       match String.concat " " (List.rev !words) with
       | "" -> failed "Say what to do: teagent [options] TASK..."

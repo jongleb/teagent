@@ -479,6 +479,72 @@ let () =
                    (List.map
                       (fun event -> Yojson.Safe.to_string (Driver.event_to_json event))
                       events)));
+        (let workspace = fresh () in
+         let world recorded replies =
+           {
+             Driver.ask =
+               (fun ~system:_ _ ->
+                 match !replies with
+                 | reply :: rest ->
+                     replies := rest;
+                     Lwt.return (Ok reply)
+                 | [] -> Lwt.return (Error `Silent));
+             approve = (fun _ -> Lwt.return Driver.Apply);
+             handler = Handler.staged (Tools.at workspace) Handler.Open;
+             commit = Tools.commit (Tools.at workspace);
+             os = Os.granted "/project" ~net:[];
+             person = (fun _ -> Lwt.return Device.Declines);
+             recorded;
+           }
+         in
+         let stopped, recorded =
+           collected
+             (world []
+                (ref
+                   [
+                     fenced
+                       "module Main exposing (main)\n\n\
+                        import Agent exposing (..)\n\n\n\
+                        main : Task IoErr String\n\
+                        main =\n\
+                       \    edit { path = \"lib/a.ml\", old = \"Foo.bar\", new = \"Foo.baz\" }\n\
+                       \        |> andThen (\\_ -> read \"lib/a.ml\")\n\
+                       \        |> andThen (\\text -> hole \"shout it\")\n";
+                   ]))
+         in
+         let untouched = contents workspace "lib/a.ml" in
+         let finished, resumed =
+           collected (world recorded (ref [ fenced "succeed (String.toUpper text)\n" ]))
+         in
+         match
+           ( stopped.ending,
+             recorded,
+             untouched,
+             finished.ending,
+             List.filteri (fun index _ -> index >= List.length recorded) resumed,
+             contents workspace "lib/a.ml" )
+         with
+         | ( Error (Open_hole question),
+             [ Wrote _; Performed { tool = Edit _; _ }; Performed { tool = Read _; _ } ],
+             "let x = Foo.bar 1\n",
+             Error Unanswered,
+             [
+               Filled { hole = "shout it"; _ };
+               Staged _;
+               Decided Apply;
+               Committed (Ok [ _ ]);
+               Ran "main finished with:\n\"LET X = FOO.BAZ 1\\n\"";
+             ],
+             "let x = Foo.baz 1\n" )
+           when String.starts_with ~prefix:"main reached `hole \"shout it\"`" question ->
+             None
+         | _ ->
+             Some
+               ("silent: a hole without a reply did not stop, or its log did not go on\n"
+               ^ String.concat "\n"
+                   (List.map
+                      (fun event -> Yojson.Safe.to_string (Driver.event_to_json event))
+                      resumed)));
         (let workspace, report, events = spawned in
          let ran =
            List.find_map (function Driver.Ran text -> Some text | _ -> None) events

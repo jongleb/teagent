@@ -438,6 +438,10 @@ What `--exec` does:
    was a dry run."
 4. Without it, it commits; with `--ask`, it asks first.
 5. It writes a session log, so `--replay` works on it too.
+6. At a `hole` it stops with code **5**, writes nothing yet, and prints the values in scope and
+   the log. `teagent --fill LOG code.elm` puts the expression from `code.elm` in the hole: the
+   calls already made are answered from the log, the program goes on, and it ends the same way,
+   at the next hole or with the commit.
 
 This only protects you if the other agent **has no other way** to act. If it also has its own
 terminal or its own file editing, it can simply skip teagent. The next section shows how to
@@ -530,6 +534,7 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl
 | `--undo FILE` | put back every file a session changed | off |
 | `--mcp` | serve tools and `run` to another agent | off |
 | `--exec FILE` | run a program you wrote, no model | off |
+| `--fill LOG FILE` | give the code in `FILE` to the hole an `--exec` run stopped at | off |
 | `--replay FILE` | replay a log, no model, no disk | off |
 | `--resume FILE` | finish a session from its log | off |
 

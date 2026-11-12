@@ -292,23 +292,29 @@ let () =
   let started task os =
     let sessions = List.fold_left Filename.concat (Sys.getenv "HOME") [ ".teagent"; "sessions" ] in
     List.iter
-      (fun directory -> if not (Sys.file_exists directory) then Sys.mkdir directory 0o700)
+      (fun directory ->
+        match Sys.mkdir directory 0o700 with
+        | () -> ()
+        | exception Sys_error _ when Sys.file_exists directory -> ())
       [ Filename.dirname sessions; sessions ];
-    let log =
-      Filename.concat sessions (Printf.sprintf "%04d.jsonl" (Array.length (Sys.readdir sessions) + 1))
+    let rec opened number =
+      let log = Filename.concat sessions (Printf.sprintf "%04d.jsonl" number) in
+      match Out_channel.open_gen [ Open_wronly; Open_creat; Open_excl; Open_text ] 0o600 log with
+      | channel -> (log, channel)
+      | exception Sys_error _ when Sys.file_exists log -> opened (number + 1)
     in
-    Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_excl; Open_text ] 0o600 log
-      (fun channel ->
-        Out_channel.output_string channel
-          (Yojson.Safe.to_string
-             (`Assoc
-                [
-                  ("task", `String task);
-                  ("directory", `String !directory);
-                  ("abi", `Int Os.abi);
-                  ("image", `String (Os.image os));
-                ])
-          ^ "\n"));
+    let log, channel = opened (Array.length (Sys.readdir sessions) + 1) in
+    Out_channel.output_string channel
+      (Yojson.Safe.to_string
+         (`Assoc
+            [
+              ("task", `String task);
+              ("directory", `String !directory);
+              ("abi", `Int Os.abi);
+              ("image", `String (Os.image os));
+            ])
+      ^ "\n");
+    Out_channel.close channel;
     log
   in
   let finished (report : Driver.report) =

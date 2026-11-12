@@ -514,7 +514,17 @@ let () =
          in
          let untouched = contents workspace "lib/a.ml" in
          let finished, resumed =
-           collected (world recorded (ref [ fenced "succeed (String.toUpper text)\n" ]))
+           collected
+             (world recorded
+                (ref
+                   [
+                     fenced
+                       "case String.left 3 text of\n\
+                       \    \"let\" ->\n\
+                       \        succeed (String.toUpper text)\n\n\
+                       \    _ ->\n\
+                       \        succeed text\n";
+                   ]))
          in
          match
            ( stopped.ending,

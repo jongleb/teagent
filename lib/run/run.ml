@@ -199,7 +199,8 @@ let filled hole code =
         Buffer.add_string buffer (String.sub source from (at - from));
         Buffer.add_char buffer '(';
         Buffer.add_string buffer (String.concat ("\n" ^ String.make (column + 1) ' ') lines);
-        Buffer.add_char buffer ')';
+        Buffer.add_string buffer
+          (match lines with [ _ ] -> ")" | [] | _ :: _ :: _ -> "\n" ^ String.make column ' ' ^ ")");
         at + String.length hole.needle)
       0 hole.spots
   in

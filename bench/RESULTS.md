@@ -236,7 +236,7 @@ What it says:
   it, and all five got every route right.
 - It does not stop Sonnet: two of five still wrote keyword rules in a fill, and one routed T7
   and T9 wrongly and wrote it. The other three ran one program per ticket.
-- Five of the eight compile failures were one bug: a fill of several lines that ends in a `case`
+- At least four of the eight compile failures were one bug: a fill of several lines that ends in a `case`
   did not parse, because the `)` teagent closes the fill with came right after the last branch.
   Fixed in `5b7e8ee`; the `)` of a fill of several lines now goes on a line of its own.
 

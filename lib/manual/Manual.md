@@ -47,6 +47,9 @@
 - `hole "what goes here"`: a task of any type, for code you can only write after seeing data.
   The run stops there and shows the values in scope; the code you send is typechecked in that
   place and the program runs again without repeating finished calls. One description per hole.
+  The code replaces the hole in the program's text: a hole in a function or a loop gets the
+  same code on every pass, so branch on the values or leave a new hole in a branch. A run
+  fills at most 8 holes; at a ninth it fails and writes nothing.
 - `spawn mounts task`: a child that sees the changes so far, not what `mounts` hide
   (`Hidden`, `Readonly`, `Scratch` path), with changes of its own. `merge child` takes them,
   or fails with the clashes if a file moved meanwhile; an unmerged child leaves nothing.

@@ -120,7 +120,10 @@ let run t ~seen (handler : Handler.Overlay.t Handler.t) ~settle =
           (Ok
              ( (match (t.fills >= 8, spots) with
                | true, _ ->
-                   Unfillable "main reached a ninth hole; write the rest of the program yourself."
+                   Unfillable
+                     "main reached a ninth hole, and a run fills at most 8, so nothing of this \
+                      run was written. Start a new program that does what the fills did, with \
+                      what they showed you written into it."
                | false, [] ->
                    Unfillable
                      "main reached a hole that is not written as `hole \"…\"` with a plain \
@@ -165,7 +168,22 @@ let question hole =
     | 0 -> ""
     | _ -> "\n\nThe program now reads:\n\n```elm\n" ^ hole.run.source ^ "```")
   ^ "\n\nThe code for the hole is one Elm expression of the hole's type, a task. It may use the \
-     values above, the program's own definitions and Agent, and may hold holes of its own."
+     values above, the program's own definitions, what the program imports ("
+  ^ String.concat ", "
+      (List.filter_map
+         (fun line ->
+           match String.split_on_char ' ' (String.trim line) with
+           | "import" :: name :: _ -> Some name
+           | _ -> None)
+         (String.split_on_char '\n' hole.run.source))
+  ^ ") and Basics, List, Maybe, Result, String, Char and Tuple; it cannot add an import. It \
+     takes the hole's place in the program, so if the hole is in a function or a loop, this one \
+     expression runs every time main gets there: to decide case by case, branch on the values, \
+     or leave a new hole in a branch. "
+  ^
+  match 7 - hole.run.fills with
+  | 0 -> "This is the last hole a run can fill: if main reaches a hole in this code, the run fails."
+  | left -> Printf.sprintf "It may hold holes of its own; after this one, the run can fill %d more." left
 
 let filled hole code =
   let source = hole.run.source in

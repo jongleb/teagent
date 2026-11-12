@@ -176,8 +176,8 @@ What it says:
     were written: the only wrong result of the 75.
   - A run may reach at most 8 holes. Three `j01` runs filled a hole per ticket, met the ninth,
     lost their eight fills and started over.
-- Compile failures in fills came from names the program does not import (`Dict`, three
-  times) and from `port`, a reserved word, as a variable (four times, all in `j03`).
+- Of the holes arm's 8 compile failures, 2 used `Dict`, which the program did not import, and 4
+  used `port`, a reserved word, as a variable.
 
 Next: say in the hole's question that its code is used on every pass, and how many holes are
 left; decide whether the limit of 8 should hold for an outside agent; name `port` and imports in

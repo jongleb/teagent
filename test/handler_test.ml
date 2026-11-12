@@ -594,7 +594,7 @@ let () =
          let started_at = Unix.gettimeofday () in
          let contained, _ =
            Lwt_main.run
-             (Tools.contained quick [] "ulimit -t; ulimit -f; ulimit -u; sleep 20; echo late")
+             (Tools.contained quick Tools.Sandboxed [] "ulimit -t; ulimit -f; ulimit -u; sleep 20; echo late")
          in
          let opened = Lwt_main.run (Tools.shell quick "sleep 20; echo late") in
          let took = Unix.gettimeofday () -. started_at in
@@ -678,6 +678,40 @@ let () =
             in
             Some
               ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six; seven ])));
+        (match
+           ( Result.is_ok (Tools.Image.of_string "debian:12-slim"),
+             Result.is_ok (Tools.Image.of_string "ghcr.io/org/tool@sha256:ab12"),
+             Tools.Image.of_string "--privileged",
+             Tools.Image.of_string "a b",
+             Tools.Image.of_string "" )
+         with
+        | true, true, Error _, Error _, Error _ -> None
+        | _ -> Some "image: a bad image name was taken, or a good one refused");
+        (match
+           Sys.command "docker image inspect debian:12-slim >/dev/null 2>&1"
+         with
+        | 0 -> (
+            let workspace = fresh () in
+            Out_channel.with_open_text (Filename.concat workspace ".env") (fun channel ->
+                Out_channel.output_string channel "KEY=1\n");
+            match
+              Tools.Image.of_string "debian:12-slim"
+            with
+            | Error reason -> Some ("container: " ^ reason)
+            | Ok image -> (
+                let ran, written =
+                  Lwt_main.run
+                    (Tools.contained (Tools.at workspace) (Tools.Container image) []
+                       "uname -s; ls -a lib; test -e .env || echo hidden; echo made > made.txt; touch /etc/x 2>/dev/null || echo readonly; exit 3")
+                in
+                match
+                  ( ran.code,
+                    String.split_on_char '\n' (String.trim ran.out),
+                    List.map (fun (change : Tools.change) -> ((change.path :> string), change.after)) written )
+                with
+                | 3, [ "Linux"; "."; ".."; "a.ml"; "b.ml"; "c.ml"; "hidden"; "readonly" ], [ ("made.txt", Some "made\n") ] -> None
+                | _ -> Some ("container: the command did not run sealed in the image\n" ^ ran.out)))
+        | _ -> None);
         (let workspace = fresh () in
          Out_channel.with_open_text (Filename.concat workspace "mod.py") (fun channel ->
              Out_channel.output_string channel "x = 1\n");
@@ -686,7 +720,7 @@ let () =
              Out_channel.output_string channel "bye\n");
          let ran, written =
            Lwt_main.run
-             (Tools.contained (Tools.at workspace) []
+             (Tools.contained (Tools.at workspace) Tools.Sandboxed []
                 "python3 -c 'import mod' && pwd && printf 'x = 1\\n' > mod.py && rm gone/only.txt")
          in
          let committed = Lwt_main.run (Tools.commit (Tools.at workspace) written) in

@@ -66,7 +66,20 @@ val grep : t -> pattern:string -> glob:string -> found list Lwt.t
 val search : pattern:string -> glob:string -> path:string -> string -> found list
 val shell : t -> string -> ran Lwt.t
 
-val contained : t -> change list -> string -> (ran * change list) Lwt.t
+(** A container image, by a name docker can resolve locally. *)
+module Image : sig
+  type t
+
+  val of_string : string -> (t, string) result
+  val to_string : t -> string
+end
+
+(** Where a contained command runs. *)
+type isolation =
+  | Sandboxed  (** Under sandbox-exec (macOS) or bwrap (Linux), with the host's tools. *)
+  | Container of Image.t  (** In a docker container of this image, without network. *)
+
+val contained : t -> isolation -> change list -> string -> (ran * change list) Lwt.t
 
 val commit : t -> change list -> (unit, [> `Tools of error ]) result Lwt.t
 val redacted : string -> string

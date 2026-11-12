@@ -40,6 +40,14 @@ let () =
           ),
         "  contained: a sandboxed clone, no network, writes staged (default); open: the \
          workspace itself; off: never" );
+      ( "--container",
+        Arg.String
+          (fun image ->
+            Result.fold
+              ~ok:(fun image -> shell := Handler.Container image)
+              ~error:(fun reason -> raise (Arg.Bad reason))
+              (Tools.Image.of_string image)),
+        "IMAGE  Run shell commands in a docker container of IMAGE (pulled already), no network" );
       ( "--undo",
         Arg.String (fun file -> mode := `Undo file),
         "FILE  Put back every file a session changed, unless you changed it since" );

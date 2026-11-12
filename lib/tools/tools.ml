@@ -501,7 +501,28 @@ let () =
             | WSIGNALED signal | WSTOPPED signal -> 128 + abs signal))
   | _ -> ()
 
-let contained workspace staged command =
+module Image = struct
+  type t = string
+
+  let of_string text =
+    match
+      (not (String.equal text ""))
+      && (not (String.starts_with ~prefix:"-" text))
+      && String.for_all
+           (function
+             | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '.' | '_' | '-' | '/' | ':' | '@' -> true
+             | _ -> false)
+           text
+    with
+    | true -> Ok text
+    | false -> Error (text ^ " is not an image name such as debian:12-slim")
+
+  let to_string image = image
+end
+
+type isolation = Sandboxed | Container of Image.t
+
+let contained workspace isolation staged command =
   let refused out = Lwt.return ({ out; code = 126 }, []) in
   let rec removed path =
     let* stats = Lwt_unix.lstat path in
@@ -520,16 +541,28 @@ let contained workspace staged command =
     | S_REG | S_CHR | S_BLK | S_LNK | S_FIFO | S_SOCK -> Lwt_unix.unlink path
   in
   match
-    List.find_opt
-      (fun (program, _) -> Sys.file_exists program)
-      [ ("/usr/bin/sandbox-exec", `Seatbelt); ("/usr/bin/bwrap", `Bubblewrap) ]
+    match (isolation, workspace.limits.net) with
+    | Sandboxed, _ ->
+        Option.to_result
+          ~none:"A contained shell needs sandbox-exec (macOS) or bwrap (Linux); run with --shell open."
+          (List.find_opt
+             (fun (program, _) -> Sys.file_exists program)
+             [ ("/usr/bin/sandbox-exec", `Seatbelt); ("/usr/bin/bwrap", `Bubblewrap) ])
+    | Container _, _ :: _ ->
+        Error "A container gets no network yet: drop --net, or run with --shell contained."
+    | Container image, [] ->
+        Option.to_result
+          ~none:"--container needs docker in /usr/local/bin, /opt/homebrew/bin or /usr/bin."
+          (Option.map
+             (fun program -> (program, `Container image))
+             (List.find_opt Sys.file_exists
+                [ "/usr/local/bin/docker"; "/opt/homebrew/bin/docker"; "/usr/bin/docker" ]))
   with
-  | None ->
-      refused
-        "A contained shell needs sandbox-exec (macOS) or bwrap (Linux); run with --shell open."
-  | Some (program, sandbox) ->
+  | Error reason -> refused reason
+  | Ok (program, sandbox) ->
       let base = Unix.realpath (Filename.temp_dir "teagent-shadow" "") in
       let clone = Filename.concat base "work" and scratch = Filename.concat base "tmp" in
+      let named = "teagent-" ^ Filename.basename base in
       let shadow = at clone in
       let existing paths =
         List.filter_map
@@ -562,7 +595,7 @@ let contained workspace staged command =
       let socket = Filename.concat base "proxy.sock" in
       let proxy =
         match (workspace.limits.net, sandbox) with
-        | [], _ -> None
+        | [], _ | _ :: _, `Container _ -> None
         | _ :: _, `Seatbelt ->
             let listening = Unix.socket PF_INET SOCK_STREAM 0 in
             Unix.bind listening (ADDR_INET (Unix.inet_addr_loopback, 0));
@@ -647,6 +680,20 @@ let contained workspace staged command =
                     ~some:(fun _ -> [ Sys.executable_name; "--teagent-bridge"; socket ])
                     proxy
                 @ guarded) )
+        | `Container image ->
+            ( Array.append
+                (match Sys.file_exists "/usr/bin/sandbox-exec" with
+                | true -> [| "cp"; "-cR" |]
+                | false -> [| "cp"; "-a"; "--reflink=auto" |])
+                [| workspace.root ^ "/."; clone |],
+              Array.of_list
+                ([ "docker"; "run"; "--rm"; "--init"; "--pull"; "never"; "--network"; "none";
+                   "--read-only"; "--tmpfs"; "/tmp:exec"; "--pids-limit"; "1024"; "--memory"; "4g";
+                   "--user"; Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ());
+                   "--volume"; base ^ ":" ^ base; "--workdir"; clone; "--env"; "HOME=/tmp";
+                   "--env"; "TMPDIR=/tmp"; "--env"; "PYTHONPYCACHEPREFIX=/tmp/pycache";
+                   "--env"; "npm_config_ignore_scripts=true"; "--name"; named;
+                   Image.to_string image; "/bin/sh"; "-c"; command ]) )
       in
       Lwt.finalize
         (fun () ->
@@ -882,7 +929,7 @@ let contained workspace staged command =
                     Lwt.catch accepted (fun _ -> Lwt.return_unit)
                   in
                   Option.iter (fun (listening, _) -> Lwt.async (fun () -> served listening)) proxy;
-                  let* done_ =
+                  let running =
                     ran_in ~cwd:clone
                       ~env:
                         (Array.append
@@ -918,6 +965,27 @@ let contained workspace staged command =
                                           "VIRTUAL_ENV"; "DEVELOPER_DIR"; "SDKROOT" ])
                                  (Array.to_list (Unix.environment ())))))
                       program arguments
+                  in
+                  let* done_ =
+                    match sandbox with
+                    | `Seatbelt | `Bubblewrap -> running
+                    | `Container _ ->
+                        Lwt.pick
+                          [
+                            running;
+                            (let* () = Lwt_unix.sleep (Float.of_int workspace.limits.seconds) in
+                             let+ _ =
+                               ran_in ~cwd:base program
+                                 [| "docker"; "kill"; named |]
+                             in
+                             {
+                               out =
+                                 Printf.sprintf
+                                   "teagent: the command ran out of its %d seconds and was stopped\n"
+                                   workspace.limits.seconds;
+                               code = 137;
+                             });
+                          ]
                   in
                   let done_ =
                     let rec swapped text =

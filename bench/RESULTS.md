@@ -133,3 +133,52 @@ What it says:
 
 Next: k = 5 on `bench/staged` and `bench/judge`, with a second model, now that the tasks and
 the harness have held up.
+
+## Five runs per task (2026-11-12)
+
+`bench/judge` and `bench/staged`, three arms, five fresh runs per task: 75 runs, one model.
+Teagent as of `c747ef2`; from the second round on also `7a4d0b6`, which stopped parallel
+sessions from crashing over one log file (two tools-arm runs of the first round lost a read to
+it). "Half done" counts the calls after which the project on disk was neither as it was nor as
+it should end; in `j01` every routed ticket counts, since the desk's queue lives in the project.
+
+| Arm | Solved | teagent calls | Calls left half done | Compile failures | Tokens | Wall time |
+| --- | --- | --- | --- | --- | --- | --- |
+| tools | 25/25 | 162 | 84 | – | 1040k | 947 s |
+| program | 25/25 | 122 (−25%) | 54 | 2 | 1118k (+8%) | 993 s |
+| holes | 24/25 | 135 (−17%) | 13 | 8 | 1202k (+16%) | 1137 s |
+
+Calls per task, five runs each:
+
+| Task | tools | program | holes |
+| --- | --- | --- | --- |
+| j01_desk | 10–11 | 10 | 5–12 |
+| j02_invoice | 2–3 | 2 | 1–3 |
+| j03_deploy | 4–9 | 3–5 | 4–7 |
+| k01_release | 5–8 | 3–4 | 3–4 |
+| k02_rollout | 7–9 | 5–6 | 5–6 |
+
+What it says:
+
+- Programs saved a quarter of the calls and cost 8% more tokens; holes saved fewer calls and
+  cost 16% more. The savings come from the staged tasks and `j03`; on `j01` and `j02` the arms
+  tie, as in the pilot.
+- Staging is what the program arms bought. On `k01`, where the gate blocks a rightly prepared
+  release, every tools run wrote the release and then rewrote it back from what it had printed
+  (one kept a backup folder); every program and holes run failed `main` on the gate and wrote
+  nothing. Across the staged tasks and `j03`, programs left the project half done after 14
+  calls, tools after 44, holes after 2.
+- The agents used holes in 17 of 25 runs, 71 fills in all, and solved the same tasks. Where they
+  skipped them, the run looked like the program arm.
+- Holes have two traps, and both cost runs:
+  - A hole inside a loop or a function is filled once, for every pass. One `j01` run filled
+    the first ticket's hole with `succeed "billing"`, and all nine tickets went to billing and
+    were written: the only wrong result of the 75.
+  - A run may reach at most 8 holes. Three `j01` runs filled a hole per ticket, met the ninth,
+    lost their eight fills and started over.
+- Compile failures in fills came from names the program does not import (`Dict`, three
+  times) and from `port`, a reserved word, as a variable (four times, all in `j03`).
+
+Next: say in the hole's question that its code is used on every pass, and how many holes are
+left; decide whether the limit of 8 should hold for an outside agent; name `port` and imports in
+the compiler's reply. Then a second model.

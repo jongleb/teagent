@@ -73,3 +73,33 @@ What it says:
 
 Next: chains a shell loop cannot fold, where each step needs the model's judgement on data
 (the case `hole` is for), and k = 5.
+
+## Chains that need judgement (2026-11-12)
+
+`bench/judge`: three tasks whose state lives outside the project, behind a client the agent may
+use but not read, so the chain cannot be dumped up front: a help desk that shows the next ticket
+only once the last one is routed by prose rules (`j01`), the first of 32 releases whose invoice
+does not add up (`j02`), and a cluster check that names one problem at a time, ports taken
+included (`j03`). Three arms, one run per task, the description as of `b83a413`: tools; programs
+without holes; programs with holes, which `--exec` and `--fill` now offer from the shell.
+
+| Arm | Solved | teagent calls | Tokens | Wall time |
+| --- | --- | --- | --- | --- |
+| tools | 3/3 | 17 (11, 2, 4) | 125k | 107 s |
+| program | 2/3 | 17 (10, 3, 4) | 138k | 145 s |
+| holes | 3/3 | 17 (10, 2, 5) | 139k | 139 s |
+
+What it says:
+
+- No arm saved a call. Where every step needs a judgement (`j01`), each arm took one call per
+  ticket, and the holes arm chose not to use holes: a fill per ticket is a round trip per ticket.
+- Where the next step is mechanical, every arm folded the chain again: all 32 invoices rendered
+  in one loop, the next free port found by a loop in `sh` or a recursive program.
+- The one hole chain (`j03`, three fills) found a bug in teagent, not in holes: a local `let`
+  function that calls itself crashed the interpreter. Fixed in `3207286`.
+- The program arm's miss was the task's fault: v18's subtotal of 160.00 could be read as the sum
+  before the discount. It now shows 148.00, which no reading makes right.
+
+Next: holes do not save calls on a chain the model must judge step by step. What they can still
+win on is that a chain's changes stay staged until its last step, and that a fill is shorter than
+a program; a measure of that needs tasks where a late step shows an early write was wrong.

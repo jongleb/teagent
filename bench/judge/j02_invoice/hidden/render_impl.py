@@ -37,7 +37,7 @@ def render(n):
         if discount_line:
             out.append("%-24s %s" % ("Order discount 10%", money(-disc)))
             out.append("")
-            out.append("%-24s %s" % ("Subtotal", money(gross if n >= 18 else net)))
+            out.append("%-24s %s" % ("Subtotal", money(gross - cents(lines[0][3] * D("0.10")) if n >= 18 else net)))
         else:
             out.append("")
             out.append("%-24s %s" % ("Subtotal", money(gross)))

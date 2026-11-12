@@ -1,2 +1,2 @@
 v18
-The subtotal under the discount line shows 160.00, the amount before the discount, instead of 144.00; VAT 28.80 and the total 172.80 are still right (from v23 on, VAT is also wrong).
+The subtotal under the discount line shows 148.00 (10% taken off the first line only) instead of 144.00, so the figures do not add up; VAT 28.80 and the total 172.80 are still right. From v23 on, VAT is also taken before the discount (32.00, total 176.00).

@@ -188,7 +188,7 @@ the compiler's reply. Then a second model.
 The same 75 runs with Sonnet, on teagent as of `4057fce`: the hole's question now names the
 modules a fill may use, says that a hole in a loop or a function gets the same code on every
 pass, and how many holes are left. Calls are counted by the harness this time, not by the agent,
-whose own count was off in a quarter of Sonnet's runs; Opus is recounted the same way.
+whose own count was off in 27 of Sonnet's 75 runs and 4 of Opus's; Opus is recounted the same way.
 
 | Model | Arm | Solved | teagent calls | Calls left half done (`j03`, `k01`, `k02`) | Runs that filled a hole | Compile failures |
 | --- | --- | --- | --- | --- | --- | --- |

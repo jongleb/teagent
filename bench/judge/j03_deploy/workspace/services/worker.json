@@ -1,0 +1,13 @@
+{
+  "name": "worker",
+  "kind": "worker",
+  "memory": 1024,
+  "replicas": 1,
+  "depends": [
+    "db"
+  ],
+  "env": {
+    "DATABASE_URL": "postgres://app:hunter2@db:5432/app",
+    "QUEUE": "jobs"
+  }
+}

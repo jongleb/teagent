@@ -1,0 +1,20 @@
+{
+  "name": "api",
+  "kind": "api",
+  "memory": 4096,
+  "replicas": 2,
+  "port": 8000,
+  "depends": [
+    "db",
+    "cache"
+  ],
+  "optional": [
+    "cache"
+  ],
+  "env": {
+    "LOG_LEVEL": "info"
+  },
+  "health": {
+    "path": "/healthz"
+  }
+}

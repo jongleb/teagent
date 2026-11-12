@@ -1,0 +1,16 @@
+{
+  "name": "web",
+  "kind": "web",
+  "memory": 512,
+  "replicas": 2,
+  "port": 80,
+  "depends": [
+    "api"
+  ],
+  "env": {
+    "PUBLIC_URL": "https://shop.example.com"
+  },
+  "health": {
+    "path": "/healthz"
+  }
+}

@@ -1,4 +1,4 @@
-(data_only_dirs tasks hard long)
+(data_only_dirs tasks hard long judge)
 
 (executable
  (name bench)

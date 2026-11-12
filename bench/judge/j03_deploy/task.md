@@ -1,0 +1,1 @@
+`python3 deploy.py check` checks services/ against the cluster and prints the first problem it finds, or that the services are ready to deploy. Fix the service files as POLICY.md says until it reports them ready. deploy.py is the cluster's client: use it, do not read it or its data.

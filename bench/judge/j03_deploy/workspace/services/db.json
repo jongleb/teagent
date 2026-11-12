@@ -1,0 +1,9 @@
+{
+  "name": "db",
+  "kind": "database",
+  "memory": 2048,
+  "replicas": 1,
+  "port": 5432,
+  "depends": [],
+  "env": {}
+}

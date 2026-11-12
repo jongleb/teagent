@@ -245,7 +245,7 @@ let judging model inner =
             inner.perform tool sources state);
   }
 
-type shell = Open | Contained | Container of Tools.Image.t | Disabled
+type shell = Open | Contained | Disabled
 
 let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]
 
@@ -409,21 +409,6 @@ let staged workspace shell =
           (fun result -> Performed (result, overlay))
           (Device.perform (within overlay) ~name argument)
     | Shell command -> (
-        let isolated isolation =
-            Lwt.map
-              (fun (done_, written) ->
-                Performed
-                  ( Ok (ran done_),
-                    List.fold_left
-                      (fun overlay (change : Tools.change) ->
-                        stored overlay change.path
-                          (Option.fold ~none:change.before
-                             ~some:(fun (earlier : Tools.change) -> earlier.before)
-                             (Overlay.found overlay (change.path :> string)))
-                          change.after)
-                      overlay written ))
-              (Tools.contained (within overlay) isolation (unhidden overlay) command)
-        in
         match (shell, Overlay.visible overlay, overlay.parents) with
         | Open, _, _ :: _ ->
             Lwt.return
@@ -439,8 +424,20 @@ let staged workspace shell =
               (fun done_ -> Performed (Ok (ran done_), overlay))
               (Tools.shell workspace command)
         | Open, _ :: _, [] -> Lwt.return Blocked
-        | Contained, _, _ -> isolated Tools.Sandboxed
-        | Container image, _, _ -> isolated (Tools.Container image))
+        | Contained, _, _ ->
+            Lwt.map
+              (fun (done_, written) ->
+                Performed
+                  ( Ok (ran done_),
+                    List.fold_left
+                      (fun overlay (change : Tools.change) ->
+                        stored overlay change.path
+                          (Option.fold ~none:change.before
+                             ~some:(fun (earlier : Tools.change) -> earlier.before)
+                             (Overlay.found overlay (change.path :> string)))
+                          change.after)
+                      overlay written ))
+              (Tools.contained (within overlay) (unhidden overlay) command))
   in
   { perform }
 

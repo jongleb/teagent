@@ -31,7 +31,6 @@ type outcome =
 type shell =
   | Open  (** In the workspace itself, and only when nothing is staged. *)
   | Contained  (** In a sandboxed clone that sees the staged changes; its writes are staged. *)
-  | Container of Tools.Image.t  (** As [Contained], in a docker container of this image. *)
   | Disabled  (** Never; the program sees exit code 126. *)
 
 val shells : (string * shell) list

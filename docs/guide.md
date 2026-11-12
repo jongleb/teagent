@@ -187,13 +187,6 @@ seeing a different folder than the program, teagent first pauses: it shows the d
 staged changes and asks you to apply them, then runs the command. Nothing protects you from
 what the command itself does.
 
-**`--container IMAGE`.** Like `contained`, but the command runs in a docker container of
-`IMAGE` instead of the host's sandbox: the image's tools (Linux, GNU `sed`, whatever the image
-holds), no network, a read-only root with `/tmp` in memory, your user id, at most 1024
-processes and 4 GB. The container sees only the copy of the project; the rest of your machine
-does not exist for it. teagent never pulls: run `docker pull IMAGE` first. `--net` is refused
-with a container for now.
-
 **`--shell off`.** Commands never run. The program sees exit code 126 and the text
 `shell is disabled in this run`.
 
@@ -535,7 +528,6 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl
 | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh`, `max` | `high` |
 | `--openai URL` | an OpenAI-compatible server instead of Anthropic | off |
 | `--shell MODE` | `contained`, `open`, `off` | `contained` |
-| `--container IMAGE` | run commands in a docker container of `IMAGE`, no network | off |
 | `--net HOST` | let commands and `Fetch` reach `HOST`, or every name under it as `*.HOST`; repeat it | no network |
 | `--ask` | ask before applying, before anything irreversible, before project content goes out, and before files other programs run | off: apply, and answer every other question no |
 | `--dry-run` | show the changes, write nothing | off |

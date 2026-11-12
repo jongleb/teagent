@@ -43,8 +43,7 @@
   changes. `out` is stdout and stderr; a non-zero `code` is a result, not a failure. Files it
   writes or deletes become staged changes, except caches (`__pycache__`, `*.pyc`, `_build`,
   `node_modules`, dot names). Paths in `out` name the project. No network unless hosts were
-  granted, no API keys, 30 minutes. A refused command returns code 126 and the reason. When
-  teagent runs with `--container IMAGE`, the command runs in that image (Linux tools) instead.
+  granted, no API keys, 30 minutes. A refused command returns code 126 and the reason.
 - `hole "what goes here"`: a task of any type, for code you can only write after seeing data.
   The run stops there and shows the values in scope; the code you send is typechecked in that
   place and the program runs again without repeating finished calls. One description per hole.

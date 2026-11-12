@@ -160,6 +160,12 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
   if program.steps < 0 then raise (Stopped Budget_exhausted);
   match current with
   | T_return returned -> atom program ~home scope returned
+  | T_let { name; bind = B_closure { parameters; captures = _; body = inner }; body } ->
+      term program ~home
+        (Value.Scope.add name
+           (Value.V_closure { home; parameters; scope; body = inner; recursion = Named name })
+           scope)
+        joins body
   | T_let { name; bind = bound; body } ->
       term program ~home
         (Value.Scope.add name (bind program ~home scope bound) scope)
@@ -242,6 +248,8 @@ and atom program ~home scope (written : Ir.Ast.atom) : Value.t =
   | A_unit -> V_unit
   | A_nil -> V_list []
   | A_constant name -> constant ~home name
+  | A_global (Local local as name) ->
+      Option.fold ~none:(top program ~home name) ~some:Fun.id (Value.Scope.find_opt local scope)
   | A_global name -> top program ~home name
 
 and top program ~home name =
@@ -261,7 +269,13 @@ and top program ~home name =
       value
   | Some { parameters; body; _ }, _, None ->
       V_closure
-        { home = found.module_name; parameters; scope = Value.Scope.empty; body }
+        {
+          home = found.module_name;
+          parameters;
+          scope = Value.Scope.empty;
+          body;
+          recursion = Anonymous;
+        }
   | None, Some 0, None | None, None, None -> constant ~home name
   | None, Some arity, None ->
       let parameters = List.init arity (Printf.sprintf "%%%d") in
@@ -270,6 +284,7 @@ and top program ~home name =
           home = found.module_name;
           parameters;
           scope = Value.Scope.empty;
+          recursion = Anonymous;
           body =
             T_let
               {
@@ -306,9 +321,13 @@ and called program (callee : Value.t) arguments : Value.t =
               (Value.Scope.add parameter argument scope)
               parameters arguments
         | (_ :: _ as parameters), [] ->
-            V_closure { closure with parameters; scope }
+            V_closure { closure with parameters; scope; recursion = Anonymous }
       in
-      saturated closure.scope closure.parameters arguments
+      saturated
+        (match closure.recursion with
+        | Anonymous -> closure.scope
+        | Named name -> Value.Scope.add name callee closure.scope)
+        closure.parameters arguments
   | _, _ :: _ -> stuck "a call of a value that is not a function"
 
 and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
@@ -717,7 +736,7 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
         | None, _ ->
             stuck ("an unknown platform kernel " ^ Data.Name.to_string name)))
   | B_closure { parameters; captures = _; body } ->
-      V_closure { home; parameters; scope; body }
+      V_closure { home; parameters; scope; body; recursion = Anonymous }
 
 let guarded run =
   match run () with

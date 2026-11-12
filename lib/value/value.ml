@@ -34,7 +34,13 @@ and closure = {
   parameters : string list;
   scope : t Scope.t;
   body : Ir.Ast.term;
+  recursion : recursion;
 }
+
+(** How a function's body reaches the function itself. *)
+and recursion =
+  | Anonymous
+  | Named of string  (** A local [let] function: calling it binds this name to it. *)
 
 (** A description of effects; nothing runs until a handler interprets it. *)
 and task =

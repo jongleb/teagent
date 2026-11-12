@@ -77,6 +77,37 @@ let () =
            started
              "module Main exposing (main)\n\n\
               import Agent exposing (..)\n\n\n\
+              main =\n\
+             \    read \"lib/c.ml\"\n\
+             \        |> andThen\n\
+             \            (\\text ->\n\
+             \                let\n\
+             \                    count n =\n\
+             \                        if n > 3 then succeed n else count (n + 1)\n\n\
+             \                    sumTo acc k =\n\
+             \                        if k == 0 then acc else sumTo (acc + k) (k - 1)\n\n\
+             \                    fromZero =\n\
+             \                        sumTo 0\n\
+             \                in\n\
+             \                count 0 |> map (\\c -> ( c, fromZero 10, String.length text ))\n\
+             \            )\n"
+         with
+         | Error error -> explained "local recursion" error
+         | Ok (program, task) ->
+             let outcome, () =
+               Lwt_main.run
+                 (Handler.interpret (Handler.run (Tools.at workspace)) program () task)
+             in
+             finished "local recursion"
+               (function
+                 | V_tuple [ V_number 4.; V_number 55.; V_number 10. ] -> None
+                 | value -> Some ("local recursion: " ^ Value.to_elm value))
+               outcome);
+        (let workspace = fresh () in
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\n\n\
               describe : IoErr -> String\n\
               describe problem =\n\
              \    case problem of\n\

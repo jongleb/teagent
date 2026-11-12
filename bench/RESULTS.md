@@ -182,3 +182,38 @@ What it says:
 Next: say in the hole's question that its code is used on every pass, and how many holes are
 left; decide whether the limit of 8 should hold for an outside agent; name `port` and imports in
 the compiler's reply. Then a second model.
+
+## A second model (2026-11-12)
+
+The same 75 runs with Sonnet, on teagent as of `4057fce`: the hole's question now names the
+modules a fill may use, says that a hole in a loop or a function gets the same code on every
+pass, and how many holes are left. Calls are counted by the harness this time, not by the agent,
+whose own count was off in a quarter of Sonnet's runs; Opus is recounted the same way.
+
+| Model | Arm | Solved | teagent calls | Calls left half done (`j03`, `k01`, `k02`) | Runs that filled a hole | Compile failures |
+| --- | --- | --- | --- | --- | --- | --- |
+| Opus | tools | 25/25 | 166 | 44 | – | – |
+| Opus | program | 25/25 | 122 | 14 | – | 2 |
+| Opus | holes | 24/25 | 135 | 2 | 17 | 8 |
+| Sonnet | tools | 25/25 | 217 | 88 | – | – |
+| Sonnet | program | 25/25 | 129 | 20 | – | 5 |
+| Sonnet | holes | 23/25 | 128 | 20 | 2 | 7 |
+
+What it says:
+
+- Programs pay off more for the weaker agent. Sonnet's tools arm edited files one at a time
+  (10 to 13 calls on `j03` against Opus's 4 to 9, up to 18 on `k02`) and left the project half
+  done twice as often; its program arm stayed within a few calls of Opus.
+- Staging held for both models: on `k01` every program and holes run wrote nothing when the gate
+  blocked, and every tools run rewrote the files by hand (all restored byte for byte).
+- Sonnet almost never used holes, and the two runs that did both failed the same way: on
+  `j01` they filled the hole with keyword rules that routed every later ticket without looking,
+  and T5, T7 and T9 went to the wrong queue. The new question's advice to "branch on the
+  values" invited that; `651e271` now says that code branching on values decides later passes
+  without the model, and to leave a new hole or run one program per case when each needs
+  judgement. One Sonnet run read the old text right and routed one ticket per program.
+- Sonnet tried `Debug.todo` four times; the compiler now answers that there is no Debug module
+  (`651e271`).
+
+Next: rerun the holes arm on `j01` with both models on `651e271`, to see whether the new advice
+removes the keyword rules without bringing back the hole in a loop.

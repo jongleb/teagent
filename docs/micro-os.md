@@ -150,6 +150,26 @@ What would make this a standard and not one program:
 - **Layers.** The overlay as a stack: a checkpoint is a layer, `fork` copies the stack, and
   `merge` returns conflicts as data.
 
+## Isolation of our own
+
+Decided 2026-11-12: commands run in isolation teagent builds itself, not through Docker; a
+`--container` flag that shelled out to Docker was built and dropped (`958037b`). What stays the
+same is everything around the command: the clone of the project with the staged changes, hidden
+paths removed, the changes harvested back into the overlay, and one commit at the end. What
+changes is how the command is sealed:
+
+- **Linux.** Namespaces of teagent's own (user, mount, PID, network, IPC, UTS) instead of bwrap:
+  the clone as the only writable mount, the host read-only or an image's root, no network but
+  the egress proxy.
+- **macOS.** A small Linux virtual machine through Virtualization.framework, booted per session
+  and reused across commands, with the clone shared over virtiofs. It gives the same Linux tools
+  on both systems, which ends the BSD `sed` and `cat -A` misses the bench recorded.
+- **Root file systems.** An image's root comes from OCI layers that teagent fetches and unpacks
+  itself, addressed by hash and pinned in the OS value, so the image hash covers the toolchain.
+
+Open: the VM helper needs Swift and the virtualization entitlement; the kernel and init to
+ship; how long a boot may take before a first command.
+
 ## The far end: a real unikernel
 
 The handlers are OCaml and the OS is a list of modules, which is the shape MirageOS builds

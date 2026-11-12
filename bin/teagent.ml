@@ -272,8 +272,12 @@ let () =
                  | Ran text -> ran := text
                  | _ -> ());
                  incr seen;
-                 if !seen > skipped then written (Driver.event_to_json event);
-                 printed os event)
+                 match (!seen > skipped, !mode) with
+                 | true, _ ->
+                     written (Driver.event_to_json event);
+                     printed os event
+                 | false, `Fill _ -> Lwt.return_unit
+                 | false, _ -> printed os event)
                task)
         in
         (match (!mode, !trace) with

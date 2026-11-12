@@ -108,6 +108,26 @@ let () =
            started
              "module Main exposing (main)\n\n\
               import Agent exposing (..)\n\n\n\
+              main =\n\
+             \    read \"lib/c.ml\"\n\
+             \        |> map (\\text -> List.filter (\\word -> word == String.left 3 text) [ \"let\", \"var\" ])\n"
+         with
+         | Error error -> explained "filter on read text" error
+         | Ok (program, task) ->
+             let outcome, () =
+               Lwt_main.run
+                 (Handler.interpret (Handler.run (Tools.at workspace)) program () task)
+             in
+             finished "filter on read text"
+               (function
+                 | V_list [ V_string "let" ] -> None
+                 | value -> Some ("filter on read text: " ^ Value.to_elm value))
+               outcome);
+        (let workspace = fresh () in
+         match
+           started
+             "module Main exposing (main)\n\n\
+              import Agent exposing (..)\n\n\n\
               describe : IoErr -> String\n\
               describe problem =\n\
              \    case problem of\n\
@@ -542,16 +562,18 @@ let () =
              flows "Fetch.get (String.join \",\" (List.map String.reverse [ t, \"k\" ]))",
              flows "if String.length t > 3 then Fetch.get \"x\" else Fetch.get \"y\"",
              flows "shell \"ls\" |> andThen (\\r -> Fetch.get r.out)",
-             flows "Fetch.get (String.toInt t |> Maybe.map (\\_ -> \"x\") |> Maybe.withDefault \"y\")" )
+             flows "Fetch.get (String.toInt t |> Maybe.map (\\_ -> \"x\") |> Maybe.withDefault \"y\")",
+             flows "Fetch.get (String.concat (List.filter (\\w -> w == t) [ \"x\", \"y\" ]))" )
          with
         | ( Some [ File "a.txt" ],
             Some [],
             Some [ File "a.txt" ],
             Some [ File "a.txt" ],
             Some [ Command ],
+            Some [ File "a.txt" ],
             Some [ File "a.txt" ] ) ->
             None
-        | one, two, three, four, five, six ->
+        | one, two, three, four, five, six, seven ->
             let shown =
               Option.fold ~none:"none" ~some:(fun sources ->
                   "["
@@ -567,7 +589,7 @@ let () =
                   ^ "]")
             in
             Some
-              ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six ])));
+              ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six; seven ])));
         (let workspace = fresh () in
          Out_channel.with_open_text (Filename.concat workspace "mod.py") (fun channel ->
              Out_channel.output_string channel "x = 1\n");

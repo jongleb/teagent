@@ -592,13 +592,19 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
                  called program callback [ V_number (Float.of_int index); item ])
                items)
       | Binary List_filter, [ callback; V_list items ] ->
-          V_list
-            (List.filter
-               (fun item ->
-                 match called program callback [ item ] with
-                 | V_bool truth -> truth
-                 | _ -> stuck "a filter whose test is not a Bool")
-               items)
+          let tested =
+            List.map (fun item -> (item, peeled (called program callback [ item ]))) items
+          in
+          Value.labelled
+            (List.concat_map (fun (_, (sources, _)) -> sources) tested)
+            (V_list
+               (List.filter_map
+                  (fun (item, (_, test)) ->
+                    match test with
+                    | Value.V_bool true -> Some item
+                    | V_bool false -> None
+                    | _ -> stuck "a filter whose test is not a Bool")
+                  tested))
       | Binary Bitwise_and, [ V_number left; V_number right ] ->
           V_number
             (int32

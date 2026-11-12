@@ -1,0 +1,1 @@
+{"description": "Add an email column to users, empty by default.", "steps": [{"op": "add_column", "table": "users", "column": "email", "default": ""}]}

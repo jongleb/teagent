@@ -1,0 +1,1 @@
+What timeout does the app run with, and which file sets it? The app reads app.ini. A line `include = PATH` loads another file first, with PATH relative to the including file, and a setting in the including file overrides the same setting in the file it includes.

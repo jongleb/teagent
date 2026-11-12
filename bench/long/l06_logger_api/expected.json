@@ -1,0 +1,141 @@
+{
+ "src/main.js": {
+  "up": "./",
+  "calls": [
+   [
+    "info",
+    "\"starting\""
+   ],
+   [
+    "info",
+    "`port ${port}`"
+   ]
+  ]
+ },
+ "src/cart.js": {
+  "up": "./",
+  "calls": [
+   [
+    "info",
+    "\"cart created\""
+   ],
+   [
+    "warn",
+    "`empty cart for ${user}`"
+   ],
+   [
+    "error",
+    "\"cart overflow\""
+   ]
+  ]
+ },
+ "src/pay/card.js": {
+  "up": "../",
+  "calls": [
+   [
+    "info",
+    "\"charging card\""
+   ],
+   [
+    "error",
+    "`card declined: ${code}`"
+   ]
+  ]
+ },
+ "src/pay/refund.js": {
+  "up": "../",
+  "calls": [
+   [
+    "warn",
+    "'refund requested'"
+   ],
+   [
+    "info",
+    "'refund sent'"
+   ]
+  ]
+ },
+ "src/user/session.js": {
+  "up": "../",
+  "calls": [
+   [
+    "info",
+    "\"session opened\""
+   ],
+   [
+    "info",
+    "\"session closed\""
+   ],
+   [
+    "warn",
+    "\"session expired\""
+   ]
+  ]
+ },
+ "src/user/profile.js": {
+  "up": "../",
+  "calls": [
+   [
+    "error",
+    "'profile missing'"
+   ]
+  ]
+ },
+ "src/jobs/nightly.js": {
+  "up": "../",
+  "calls": [
+   [
+    "info",
+    "\"nightly run\""
+   ],
+   [
+    "warn",
+    "`skipped ${count} jobs`"
+   ]
+  ]
+ },
+ "src/jobs/cleanup.js": {
+  "up": "../",
+  "calls": [
+   [
+    "info",
+    "\"cleanup\""
+   ],
+   [
+    "error",
+    "\"cleanup failed\""
+   ]
+  ]
+ },
+ "src/api/routes.js": {
+  "up": "../",
+  "calls": [
+   [
+    "info",
+    "\"routes ready\""
+   ]
+  ]
+ },
+ "src/api/errors.js": {
+  "up": "../",
+  "calls": [
+   [
+    "error",
+    "\"unhandled\""
+   ],
+   [
+    "warn",
+    "\"retrying\""
+   ]
+  ]
+ },
+ "src/ui/notify.js": {
+  "up": "../",
+  "calls": [
+   [
+    "info",
+    "\"notify\""
+   ]
+  ]
+ }
+}

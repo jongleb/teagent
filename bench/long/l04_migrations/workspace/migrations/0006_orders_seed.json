@@ -1,0 +1,1 @@
+{"description": "Seed two orders.", "steps": [{"op": "insert", "table": "orders", "rows": [{"id": 1, "user_id": 1, "total": 30}, {"id": 2, "user_id": 2, "total": 12}]}]}

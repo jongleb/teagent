@@ -1,0 +1,1 @@
+Bring db.json up to date: `python3 db.py migrate` applies the next pending migration from migrations/ and prints what it did, or `up to date` when none is left. If a migration fails, fix that migration file so it does what its `description` says, and go on. Change no other migration.

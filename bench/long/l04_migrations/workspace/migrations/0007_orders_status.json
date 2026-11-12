@@ -1,0 +1,1 @@
+{"description": "Add a status column to orders, 'new' by default.", "steps": [{"op": "add_column", "table": "orders", "column": "status", "default": "new"}]}

@@ -1,0 +1,1 @@
+Move src/ from the old `log(level, message)` in src/log.js to the `logger` object in src/logger.js: every call `log(LEVEL, MESSAGE)` becomes `logger.LEVEL(MESSAGE)`, every import of `log` from log.js becomes an import of `logger` from logger.js in the same folder, and src/log.js is deleted. Leave other code alone.

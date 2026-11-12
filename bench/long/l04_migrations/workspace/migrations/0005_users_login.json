@@ -1,0 +1,1 @@
+{"description": "Rename users.username to users.login.", "steps": [{"op": "rename_column", "table": "users", "from": "user_name", "to": "login"}]}

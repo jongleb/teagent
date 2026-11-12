@@ -1,0 +1,68 @@
+{
+  "applied": [
+    "0001_users",
+    "0002_users_seed",
+    "0003_users_email",
+    "0004_orders",
+    "0005_users_login",
+    "0006_orders_seed",
+    "0007_orders_status",
+    "0008_users_cleanup",
+    "0009_audit"
+  ],
+  "tables": {
+    "users": {
+      "columns": [
+        "id",
+        "login",
+        "active"
+      ],
+      "rows": [
+        {
+          "id": 1,
+          "login": "ada",
+          "active": true
+        },
+        {
+          "id": 2,
+          "login": "linus",
+          "active": true
+        }
+      ]
+    },
+    "orders": {
+      "columns": [
+        "id",
+        "user_id",
+        "total",
+        "status"
+      ],
+      "rows": [
+        {
+          "id": 1,
+          "user_id": 1,
+          "total": 30,
+          "status": "new"
+        },
+        {
+          "id": 2,
+          "user_id": 2,
+          "total": 12,
+          "status": "new"
+        }
+      ]
+    },
+    "audit": {
+      "columns": [
+        "id",
+        "event"
+      ],
+      "rows": [
+        {
+          "id": 1,
+          "event": "schema 9"
+        }
+      ]
+    }
+  }
+}

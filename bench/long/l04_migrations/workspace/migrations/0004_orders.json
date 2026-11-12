@@ -1,0 +1,1 @@
+{"description": "Create orders with id, user_id and total.", "steps": [{"op": "create_table", "table": "orders", "columns": ["id", "user_id", "total"]}]}

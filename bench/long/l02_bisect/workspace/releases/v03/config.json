@@ -1,0 +1,10 @@
+{
+  "version": "1.3.0",
+  "theme": "mono",
+  "decimals": 2,
+  "tax": 0.05,
+  "rounding": "half_even",
+  "discounts": {},
+  "banner": "",
+  "cache_seconds": 390
+}

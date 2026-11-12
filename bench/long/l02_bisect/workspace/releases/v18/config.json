@@ -1,0 +1,12 @@
+{
+  "version": "1.18.0",
+  "theme": "solar",
+  "decimals": 2,
+  "tax": 0.05,
+  "rounding": "half_even",
+  "discounts": {
+    "coffee": 0.1
+  },
+  "banner": "Spring sale",
+  "cache_seconds": 390
+}

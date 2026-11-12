@@ -1,0 +1,1 @@
+{"description": "Create audit with id and event, and record the migration.", "steps": [{"op": "create_table", "table": "audit", "columns": ["id", "event"]}, {"op": "insert", "table": "audit", "rows": [{"id": 1, "event": "schema 9"}]}]}

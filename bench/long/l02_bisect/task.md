@@ -1,0 +1,1 @@
+`python3 check.py releases/vNN` checks one release. The oldest release passes and the newest fails. Find the first release that fails and the setting whose change in that release breaks it, and say both. Do not change anything.

@@ -1,0 +1,12 @@
+{
+  "version": "1.31.0",
+  "theme": "mono",
+  "decimals": 2,
+  "tax": 0.05,
+  "rounding": "half_up",
+  "discounts": {
+    "coffee": 0.1
+  },
+  "banner": "",
+  "cache_seconds": 330
+}

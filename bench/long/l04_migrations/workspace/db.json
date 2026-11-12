@@ -1,0 +1,9 @@
+{
+  "applied": ["0001_users", "0002_users_seed"],
+  "tables": {
+    "users": {
+      "columns": ["id", "username"],
+      "rows": [{"id": 1, "username": "ada"}, {"id": 2, "username": "linus"}]
+    }
+  }
+}

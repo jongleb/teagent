@@ -1,0 +1,1 @@
+Blocked: core 3.0.0 is a major release (Config.load_file was removed), and a major release of core needs a migration guide approved by the core team, which is missing; every file is back as it was.

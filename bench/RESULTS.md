@@ -36,3 +36,40 @@ What it says, and what it does not:
 
 Next: tasks with long chains, five runs per task, a second model, and a smaller description and
 output, measured by ablation.
+
+## Long chains (2026-11-12)
+
+`bench/long`: six tasks built as chains in which each step needs the result of the one before
+(follow includes, bisect 40 releases, five bugs the tests show one at a time, migrations applied
+one per run, a transitive import graph, an API change across 11 files). Same protocol and arms as
+above, one run per task, the description and `--exec` output as of `4eb5bd0`.
+
+| Task | tools calls | program calls |
+| --- | --- | --- |
+| l01_config_chain | 1 | 1 |
+| l02_bisect | 2 | 2 |
+| l03_fix_chain | 8 | 2 |
+| l04_migrations | 3 | 2 |
+| l05_dead_modules | 3 | 3 |
+| l06_logger_api | 4 (one never reached the tool) | 3 |
+
+| Arm | Solved | teagent calls | Tokens | Wall time |
+| --- | --- | --- | --- | --- |
+| tools | 6/6 | 21 | 242k | 185 s |
+| program | 6/6 | 13 (−38%) | 260k (+7%) | 185 s |
+
+What it says:
+
+- The chains were long only for an agent that walks them. Both arms collapsed them: a loop in
+  `sh` over every release or migration, one command printing every file. Where a chain runs
+  through the shell, `bash` already is a program.
+- The calls saved came from edits: the five fixes of `l03` were five `edit` calls in one arm and
+  one program in the other. Wall time did not move.
+- The trap in `l06` (`dialog(` contains `log(`) caught the program arm: an unbounded
+  `String.replace` rewrote two `dialog` calls, `main` succeeded, and the bad edits were written
+  and fixed by the next call. Staging only protects a program that checks its own result.
+- The tools arm lost a call to BSD `sed` and one to shell quoting; the program arm had no compile
+  failures.
+
+Next: chains a shell loop cannot fold, where each step needs the model's judgement on data
+(the case `hole` is for), and k = 5.

@@ -115,11 +115,12 @@ let () =
   in
   let section title body = Lwt.return (Printf.printf "\n── %s ──\n%s\n%!" title body) in
   let printed os (event : Driver.event) =
-    match (event, !mode, !trace) with
-    | ( ( Wrote _ | Performed _ | Deferred _ | Staged _ | Decided _ | Guessed _ | Answered _
-        | Filled _ ),
+    match (event, !mode, !trace, !approval) with
+    | Staged _, (`Exec _ | `Fill _), `Brief, (`Auto | `Ask)
+    | ( ( Wrote _ | Performed _ | Deferred _ | Decided _ | Guessed _ | Answered _ | Filled _ ),
         (`Exec _ | `Fill _),
-        `Brief ) ->
+        `Brief,
+        _ ) ->
         Lwt.return_unit
     | _ -> (
     match event with
@@ -354,6 +355,7 @@ let () =
         Printf.printf "\n%s\n\nNothing is written yet. Send the expression with: teagent --fill %s FILE\n"
           question log;
         exit 5
+    | Error Discarded -> finished report
     | _ -> (
         finished report;
         match String.starts_with ~prefix:"main finished with:" !ran with

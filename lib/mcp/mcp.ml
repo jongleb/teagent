@@ -70,7 +70,7 @@ let handled program json =
         tool Os.Bash "bash"
           "Run a shell command with /bin/sh in a sandboxed copy of the project: no network, no \
            writes outside the copy. Files the command writes or deletes are applied to the project \
-           when it ends. Returns stdout and stderr together, then the exit code."
+           when it ends, except names starting with a dot, _build, node_modules and Python caches. Returns stdout and stderr together, then the exit code."
           (schema [ ("command", "The command to run, as you would type it in sh.") ] [ "command" ]);
         tool Os.Read "read" "Read a file of the project. Paths are relative to the project folder."
           (schema [ ("path", "The file, relative to the project folder.") ] [ "path" ]);

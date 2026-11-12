@@ -727,7 +727,36 @@ let contained workspace staged command =
                   let* () =
                     Lwt_list.iter_s (fun change -> Lwt.map ignore (placed shadow change)) staged
                   in
+                  let rec dotted relative =
+                    let* names =
+                      Lwt.catch
+                        (fun () ->
+                          Lwt_stream.to_list
+                            (Lwt_unix.files_of_directory (Filename.concat clone relative)))
+                        (fun _ -> Lwt.return [])
+                    in
+                    Lwt.map List.concat
+                      (Lwt_list.map_s
+                         (fun name ->
+                           let path = if String.equal relative "" then name else relative ^ "/" ^ name in
+                           match name with
+                           | "." | ".." | "_build" | "node_modules" | "__pycache__" -> Lwt.return []
+                           | _ when String.starts_with ~prefix:"." name -> Lwt.return [ path ]
+                           | _ -> (
+                               let* stats =
+                                 Lwt.catch
+                                   (fun () -> Lwt.map Option.some (Lwt_unix.lstat (Filename.concat clone path)))
+                                   (fun _ -> Lwt.return None)
+                               in
+                               match stats with
+                               | Some { st_kind = S_DIR; _ } -> dotted path
+                               | Some { st_kind = S_REG | S_CHR | S_BLK | S_LNK | S_FIFO | S_SOCK; _ }
+                               | None ->
+                                   Lwt.return []))
+                         (List.sort String.compare names))
+                  in
                   let* untouched = walked clone "" in
+                  let* hidden = dotted "" in
                   let connections = ref [] in
                   let served listening =
                     let listening = Lwt_unix.of_unix_file_descr listening in
@@ -918,6 +947,20 @@ let contained workspace staged command =
                           out =
                             done_.out ^ "\nteagent: blocked connections to "
                             ^ String.concat ", " blocked ^ ", which the profile's net does not list\n";
+                        }
+                  in
+                  let* done_ =
+                    let+ appeared = dotted "" in
+                    match List.filter (fun path -> not (List.mem path hidden)) appeared with
+                    | [] -> done_
+                    | dropped ->
+                        {
+                          done_ with
+                          out =
+                            done_.out
+                            ^ "\nteagent: not kept, because names starting with a dot are not part \
+                               of the project: "
+                            ^ String.concat ", " dropped ^ "\n";
                         }
                   in
                   let* touched = walked clone "" in

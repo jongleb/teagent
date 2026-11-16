@@ -10,4 +10,7 @@
   (source_tree tasks)
   (glob_files programs/*.elm))
  (action
-  (run %{exe:bench.exe} --reference)))
+  (setenv
+   TMPDIR
+   /tmp
+   (run %{exe:bench.exe} --reference))))

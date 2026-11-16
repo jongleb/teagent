@@ -13,4 +13,7 @@
   (setenv
    TMPDIR
    /tmp
-   (run %{exe:bench.exe} --reference))))
+   (setenv
+    CLICOLOR_FORCE
+    0
+    (run %{exe:bench.exe} --reference)))))

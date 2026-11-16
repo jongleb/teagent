@@ -11,6 +11,7 @@ module Skill : sig
   type t
 
   val of_source : name:string -> string -> (t, string) result
+  val name : t -> string
   val source : t -> string
 end
 

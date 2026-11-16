@@ -71,7 +71,7 @@ let () =
         "  Print the version and exit" );
       ( "--mcp",
         Arg.Unit (fun () -> mode := `Mcp),
-        "  Serve bash, read, write, edit, grep, run and fill to another agent over MCP (stdio)" );
+        "  Serve bash, read, write, edit, grep, run, fill and save to another agent over MCP (stdio)" );
     ]
     (fun word -> words := word :: !words)
     "teagent [options] TASK...";
@@ -110,14 +110,35 @@ let () =
             (Result.bind (Lang.Skill.of_source ~name:"Rules" source) (fun rules ->
                  Os.ruled rules granted))
     in
-    match Sys.file_exists file with
-    | false -> granted
-    | true ->
-        Result.fold ~ok:Fun.id
-          ~error:(fun reason -> failed (file ^ ": " ^ reason))
-          (match Yojson.Safe.from_file file with
-          | json -> Os.narrowed json granted
-          | exception Yojson.Json_error reason -> Error reason)
+    let narrowed =
+      match Sys.file_exists file with
+      | false -> granted
+      | true ->
+          Result.fold ~ok:Fun.id
+            ~error:(fun reason -> failed (file ^ ": " ^ reason))
+            (match Yojson.Safe.from_file file with
+            | json -> Os.narrowed json granted
+            | exception Yojson.Json_error reason -> Error reason)
+    in
+    let folder = List.fold_left Filename.concat !directory [ ".teagent"; "saved" ] in
+    List.fold_left
+      (fun os name ->
+        Option.fold ~none:os
+          ~some:(fun module_name ->
+            let file = Filename.concat folder name in
+            Result.fold ~ok:Fun.id
+              ~error:(fun reason ->
+                prerr_endline (file ^ " is not installed:\n" ^ reason);
+                os)
+              (Result.bind
+                 (Lang.Skill.of_source ~name:module_name
+                    (In_channel.with_open_text file In_channel.input_all))
+                 (fun skill -> Os.learned skill os)))
+          (Filename.chop_suffix_opt ~suffix:".elm" name))
+      narrowed
+      (match Sys.readdir folder with
+      | exception Sys_error _ -> []
+      | names -> List.sort String.compare (Array.to_list names))
   in
   let section title body = Lwt.return (Printf.printf "\n── %s ──\n%s\n%!" title body) in
   let printed os (event : Driver.event) =
@@ -168,7 +189,8 @@ let () =
     | Ran result -> section "result" result
     | Guessed reply -> section "guess, sent back" reply
     | Answered reply -> section "answer" reply
-    | Filled { hole; reply } -> section ("hole " ^ Value.to_elm (V_string hole)) reply)
+    | Filled { hole; reply } -> section ("hole " ^ Value.to_elm (V_string hole)) reply
+    | Saved { name; source } -> section ("saved " ^ name) source)
   in
   let loaded file =
     match In_channel.with_open_text file In_channel.input_lines with
@@ -388,38 +410,53 @@ let () =
       let log = started "MCP session" os in
       prerr_endline ("teagent MCP server in " ^ !directory ^ ", logging to " ^ log);
       Out_channel.with_open_gen [ Open_wronly; Open_append; Open_text ] 0o600 log (fun channel ->
+          let output = Lwt_mutex.create () in
+          let send json =
+            Lwt_mutex.with_lock output (fun () ->
+                Lwt.bind
+                  (Lwt_io.write_line Lwt_io.stdout (Yojson.Safe.to_string json))
+                  (fun () -> Lwt_io.flush Lwt_io.stdout))
+          in
           let program =
-            Mcp.start os (tooled os) ~on:(fun event ->
+            Mcp.start os (tooled os) ~send ~on:(fun event ->
                 Out_channel.output_string channel
                   (Yojson.Safe.to_string (Driver.event_to_json event) ^ "\n");
                 Out_channel.flush channel;
                 Lwt.return_unit)
           in
-          let rec served () =
-            match In_channel.input_line stdin with
-            | None -> ()
-            | Some "" -> served ()
-            | Some line ->
-                let answer =
-                  match Yojson.Safe.from_string line with
-                  | json -> Lwt_main.run (Mcp.handled program json)
-                  | exception Yojson.Json_error _ ->
-                      Some
-                        (`Assoc
-                          [
-                            ("jsonrpc", `String "2.0");
-                            ("id", `Null);
-                            ("error", `Assoc [ ("code", `Int (-32700)); ("message", `String "Parse error") ]);
-                          ])
-                in
-                Option.iter
-                  (fun answer ->
-                    print_string (Yojson.Safe.to_string answer ^ "\n");
-                    flush stdout)
-                  answer;
-                served ()
+          let answered json =
+            Lwt.bind (Mcp.handled program json) (function
+              | Some answer -> send answer
+              | None -> Lwt.return_unit)
           in
-          served ())
+          let requests, pushed = Lwt_stream.create () in
+          let rec read () =
+            Lwt.bind (Lwt_io.read_line_opt Lwt_io.stdin) (function
+              | None ->
+                  pushed None;
+                  Lwt.return_unit
+              | Some "" -> read ()
+              | Some line ->
+                  Lwt.bind
+                    (match Yojson.Safe.from_string line with
+                    | exception Yojson.Json_error _ ->
+                        send
+                          (`Assoc
+                            [
+                              ("jsonrpc", `String "2.0");
+                              ("id", `Null);
+                              ("error", `Assoc [ ("code", `Int (-32700)); ("message", `String "Parse error") ]);
+                            ])
+                    | `Assoc fields as json -> (
+                        match List.assoc_opt "method" fields with
+                        | Some _ ->
+                            pushed (Some json);
+                            Lwt.return_unit
+                        | None -> answered json)
+                    | json -> answered json)
+                    read)
+          in
+          Lwt_main.run (Lwt.join [ read (); Lwt_stream.iter_s answered requests ]))
   | `Undo file -> (
       let _, place, _, recorded = loaded file in
       let workspace = Option.value ~default:!directory place in

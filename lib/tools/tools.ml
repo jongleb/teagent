@@ -159,33 +159,51 @@ let read workspace (path : Path.t) =
         (fun () -> Lwt.map Result.ok (Lwt_io.with_file ~mode:Lwt_io.Input file Lwt_io.read))
         (fun problem -> Lwt.return (Error (failed path problem)))
 
+let stored shown file content =
+  let staging = Filename.concat (Filename.dirname file) ("." ^ Filename.basename file ^ ".teagent") in
+  let rec made directory =
+    Lwt.catch
+      (fun () -> Lwt_unix.mkdir directory 0o755)
+      (function
+        | Unix.Unix_error (EEXIST, _, _) -> Lwt.return_unit
+        | Unix.Unix_error (ENOENT, _, _) ->
+            let* () = made (Filename.dirname directory) in
+            Lwt_unix.mkdir directory 0o755
+        | problem -> Lwt.fail problem)
+  in
+  Lwt.catch
+    (fun () ->
+      let* () = made (Filename.dirname file) in
+      let* () =
+        Lwt_io.with_file ~mode:Lwt_io.Output staging (fun channel -> Lwt_io.write channel content)
+      in
+      let* () = Lwt_unix.rename staging file in
+      Lwt.return (Ok ()))
+    (fun problem -> Lwt.return (Error (failed shown problem)))
+
 let write workspace (path : Path.t) content =
   match located workspace `Writing path with
   | Error _ as denied -> Lwt.return denied
-  | Ok file ->
-      let staging =
-        Filename.concat (Filename.dirname file) ("." ^ Filename.basename file ^ ".teagent")
-      in
-      let rec made directory =
-        Lwt.catch
-          (fun () -> Lwt_unix.mkdir directory 0o755)
-          (function
-            | Unix.Unix_error (EEXIST, _, _) -> Lwt.return_unit
-            | Unix.Unix_error (ENOENT, _, _) ->
-                let* () = made (Filename.dirname directory) in
-                Lwt_unix.mkdir directory 0o755
-            | problem -> Lwt.fail problem)
-      in
-      Lwt.catch
-        (fun () ->
-          let* () = made (Filename.dirname file) in
-          let* () =
-            Lwt_io.with_file ~mode:Lwt_io.Output staging (fun channel ->
-                Lwt_io.write channel content)
-          in
-          let* () = Lwt_unix.rename staging file in
-          Lwt.return (Ok ()))
-        (fun problem -> Lwt.return (Error (failed path problem)))
+  | Ok file -> stored (path :> string) file content
+
+let keep workspace ~name content =
+  match
+    List.fold_right
+      (fun piece pieces ->
+        Option.bind pieces (fun pieces ->
+            match String.to_seq piece () with
+            | Seq.Cons ('A' .. 'Z', rest)
+              when Seq.for_all
+                     (function 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' -> true | _ -> false)
+                     rest ->
+                Some (piece :: pieces)
+            | Seq.Cons _ | Seq.Nil -> None))
+      (String.split_on_char '.' name) (Some [])
+  with
+  | None -> Lwt.return (Error (`Tools (Denied name)))
+  | Some pieces ->
+      let shown = String.concat "/" [ ".teagent"; "saved"; String.concat "." pieces ^ ".elm" ] in
+      stored shown (Filename.concat workspace.root shown) content
 
 let placed workspace change =
   match change.after with

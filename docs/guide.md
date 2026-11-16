@@ -214,8 +214,9 @@ practice the first program may fetch freely; once the model has seen a file, a f
 
 A shell command under `--net` cannot be followed that way: it can read the project and reach the
 network by itself. A program that runs one and also reads the project asks you once, up front.
-Without `--ask`, with `--dry-run` and over MCP every such question is answered no, and the model
-is told. With `--net`, run teagent with `--ask`. After you say no three times in a row, or twenty
+Without `--ask` and with `--dry-run` every such question is answered no, and the model is
+told. Over MCP it goes to you through the client's elicitation prompt, which the agent cannot
+answer; a client without elicitation gets no. With `--net`, run teagent with `--ask`. After you say no three times in a row, or twenty
 times in a session, teagent stops asking and answers no by itself, so a program cannot wear you
 down with questions.
 
@@ -223,8 +224,9 @@ Files that other programs run or obey after the session are shown apart, under "
 outside the sandbox": git hooks and attributes, CI workflows, the `scripts` of `package.json`
 and npm or yarn settings, editor containers, and instructions for other agents such as `AGENTS.md` or
 `CLAUDE.md` ([`abi.md`](abi.md) has the full list). Only you can allow them, at teagent's own
-prompt with `--ask`. Without `--ask`, with `--dry-run` and over MCP they are never written; the
-rest of the changes still are, and the model is told which files were left out.
+prompt with `--ask`, or over MCP at the client's elicitation prompt. Without `--ask`, with
+`--dry-run` and over a client without elicitation they are never written; the rest of the
+changes still are, and the model is told which files were left out.
 
 If teagent crashes in the middle of a commit, some files may be written and others not. Run
 `--resume` on the session log: files that already hold the new text count as done, and the
@@ -337,6 +339,18 @@ compiled only with the skills it imports, so a broken skill breaks only the prog
 it. Only the import list decides whether a skill is installed. A skill that writes `Agent.write`
 without listing `write` is installed in an OS without `write` too, and the programs that import
 it then fail to compile, still before anything runs.
+
+### Saved modules
+
+Over MCP an agent can keep a module that worked with `save`: it sends the whole module, and
+teagent writes it to `.teagent/saved/Name.elm` only if it typechecks against the calls the
+session offers. Programs import it by name from then on, in that session and in later ones.
+A saved module is a skill the agent wrote: it needs what it imports, it can do no more than the
+OS lets every program do, and it cannot take the name of one of your skills. It is typechecked
+again in every program that imports it, so a module the project outgrew fails before anything
+runs; at startup such a module is left out, with the compiler's report on stderr. Review
+`.teagent/saved` like any other code: it shows in `git status`, and deleting a file removes the
+module.
 
 ## Rules
 
@@ -492,6 +506,9 @@ close those doors in Claude Code.
 - **What a granted host does with what it gets.** With `--net` and `--ask`, a yes sends the data.
 - **Skills from a cloned repository.** They are installed without a review; trusting them by
   hash is the next step of the plan.
+- **What an agent saves.** A module saved over MCP is installed in later sessions without a
+  review. It cannot do more than the OS allows, but it can do the wrong thing well; read
+  `.teagent/saved` before you trust it.
 - **launchd's list of services.** A contained command can read it, though it cannot start or
   change a service.
 - **Other systems.** The contained shell needs macOS or Linux with bubblewrap. Elsewhere, use

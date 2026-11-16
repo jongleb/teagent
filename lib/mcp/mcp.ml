@@ -1,24 +1,63 @@
 open Lwt.Syntax
 
+(** Whether the client can put a question to its user. *)
+type client =
+  | Mute  (** It cannot: every question is answered no. *)
+  | Elicits  (** It takes [elicitation/create] and shows the question to the person. *)
+
 type t = {
   workspace : Tools.t;
   handler : Handler.Overlay.t Handler.t;
   serves : Os.call list;
-  os : Os.t;
+  mutable os : Os.t;  (** Replaced when the agent saves a module. *)
   on : Driver.event -> unit Lwt.t;
   waiting : (string, Run.hole) Hashtbl.t;  (** Runs stopped at a hole, by the name given out. *)
   mutable started : int;  (** How many runs this connection has begun. *)
   performed : Value.tool list ref;  (** The calls of this connection so far, newest first. *)
+  client : client ref;
+  asking : (int, Device.consent Lwt.u) Hashtbl.t;  (** Questions sent to the client, by request id. *)
+  person : string -> Device.consent Lwt.t;
 }
 
-let start os tools ~on =
+let start os tools ~send ~on =
   let performed = ref [] in
+  let client = ref Mute in
+  let asking = Hashtbl.create 4 in
+  let asked = ref 0 in
+  let person question =
+    match !client with
+    | Mute -> Lwt.return Device.Declines
+    | Elicits ->
+        incr asked;
+        let id = !asked in
+        let answer, answered = Lwt.wait () in
+        Hashtbl.replace asking id answered;
+        let* () =
+          send
+            (`Assoc
+              [
+                ("jsonrpc", `String "2.0");
+                ("id", `Int id);
+                ("method", `String "elicitation/create");
+                ( "params",
+                  `Assoc
+                    [
+                      ( "message",
+                        `String
+                          ("teagent asks you, not the agent. Allow it to " ^ question
+                          ^ "?\n\nAccept lets it go ahead; decline or cancel stops it.") );
+                      ("requestedSchema", `Assoc [ ("type", `String "object"); ("properties", `Assoc []) ]);
+                    ] );
+              ])
+        in
+        answer
+  in
   {
     workspace = Os.workspace os;
     handler =
       Handler.booted (Os.view os).boot ~class_of:(Os.class_of os)
         ~rules:(fun tool sources -> Os.decided os !performed tool sources)
-        ~person:(fun _ -> Lwt.return Device.Declines)
+        ~person
         ~journal:(fun (inner : Handler.Overlay.t Handler.t) ->
           {
             perform =
@@ -41,6 +80,9 @@ let start os tools ~on =
     waiting = Hashtbl.create 4;
     started = 0;
     performed;
+    client;
+    asking;
+    person;
   }
 
 let handled program json =
@@ -107,8 +149,9 @@ let handled program json =
             `program`. teagent typechecks it, runs it against the project, and writes its \
             changes together if main succeeds; the reply holds every compiler report, or the \
             value of main and the files written. A `hole` stops the run and returns the values \
-            in scope; send the code for it with `fill`. Over MCP there is no person to ask, so \
-            everything under \"What a person has to allow\" is refused.\n\n"
+            in scope; send the code for it with `fill`. What is under \"What a person has to \
+            allow\" is asked of the user through your client, not of you; a client that cannot \
+            ask them gets no.\n\n"
           ^ Manual.text
           ^ "\n## The modules\n\nAgent, and drivers such as Fetch, which a program imports by \
              name (`import Fetch`):\n\n"
@@ -124,6 +167,16 @@ let handled program json =
                ("code", "The Elm expression that takes the place of the hole.");
              ]
              [ "run"; "code" ]);
+        tool Os.Run "save"
+          "Keep a module that worked, so later programs import it instead of writing it again. \
+           Send the whole module, `module Name exposing (...)` with its imports. It must \
+           typecheck against the calls this session offers, and it is typechecked again in every \
+           program that imports it, so a module the project outgrew fails before anything runs. \
+           Saving a name again replaces that module; the names of the person's skills are \
+           refused. Saved modules are kept in .teagent/saved and installed in later sessions."
+          (schema
+             [ ("name", "The module name, such as Testing."); ("module", "The whole Elm module.") ]
+             [ "name"; "module" ]);
       ]
   in
   let reply id result = `Assoc [ ("jsonrpc", `String "2.0"); ("id", id); ("result", result) ] in
@@ -164,6 +217,9 @@ let handled program json =
           | "fill", Some _ ->
               Result.bind (field "run") (fun run ->
                   Result.map (fun code -> `Fill (run, code)) (field "code"))
+          | "save", Some _ ->
+              Result.bind (field "name") (fun name ->
+                  Result.map (fun source -> `Save (name, source)) (field "module"))
           | _ -> Error ("There is no tool called " ^ name ^ "."))
     in
     let applied staged =
@@ -173,10 +229,29 @@ let handled program json =
           staged
       in
       let paths = List.map (fun (change : Tools.change) -> (change.path :> string)) in
-      let* () =
+      let* held =
         match outside with
-        | [] -> Lwt.return_unit
-        | _ :: _ -> program.on (Held { diff = Handler.Overlay.diff outside; decision = Discard })
+        | [] -> Lwt.return Driver.Apply
+        | _ :: _ ->
+            let diff = Handler.Overlay.diff outside in
+            let* consent =
+              program.person
+                ("write files that run outside the sandbox after this session ("
+                ^ String.concat ", "
+                    (List.filter_map
+                       (fun (change : Tools.change) ->
+                         Option.map
+                           (fun runner -> (change.path :> string) ^ ", run by " ^ runner)
+                           (Tools.runner change))
+                       outside)
+                ^ "):\n\n" ^ diff)
+            in
+            let decision = match consent with Device.Agrees -> Driver.Apply | Declines -> Discard in
+            let+ () = program.on (Held { diff; decision }) in
+            decision
+      in
+      let inside, outside =
+        match held with Driver.Apply -> (inside @ outside, []) | Discard -> (inside, outside)
       in
       match inside with
       | [] -> Lwt.return (Ok ([], paths outside))
@@ -207,32 +282,39 @@ let handled program json =
             match withheld with
             | [] -> ""
             | _ :: _ ->
-                "\n\nNot written, because other programs run them outside the sandbox and only \
-                 a person at teagent's own prompt can allow that: "
+                "\n\nNot written, because other programs run them outside the sandbox and the \
+                 person did not allow it (a client without elicitation cannot ask them): "
                 ^ String.concat ", " withheld)
             (match withheld with [] -> false | _ :: _ -> true)
       | Error reason -> text (body ^ "\n\nNot applied, nothing was written: " ^ reason) true
     in
+    let dropped body =
+      let* () = program.on (Decided Discard) in
+      Lwt.return (text (body ^ "\n\nThe changes of this run were dropped.") true)
+    in
     let rec went run =
-      let dropped body =
-        let* () = program.on (Decided Discard) in
-        Lwt.return (text (body ^ "\n\nThe changes of this run were dropped.") true)
-      in
       match Os.exposure program.os (Run.calls run) with
-      | Some { reads; inward; outward } ->
+      | Some { reads; inward; outward } -> (
           let summary =
             Printf.sprintf
               "read the project (%s), take in text from outside (%s) and send data out (%s)"
               (String.concat ", " reads) (String.concat ", " inward) (String.concat ", " outward)
           in
-          let* () = program.on (Exposed { summary; decision = Discard }) in
-          Lwt.return
-            (text
-               ("Refused: this program would " ^ summary
-              ^ ". A program that does all three can leak the project, and over MCP there is \
-                 no person to say yes. Split the work so no program does all three.")
-               true)
-      | None ->
+          let* consent = program.person summary in
+          let decision = match consent with Device.Agrees -> Driver.Apply | Declines -> Discard in
+          let* () = program.on (Exposed { summary; decision }) in
+          match decision with
+          | Driver.Apply -> performed run
+          | Discard ->
+              Lwt.return
+                (text
+                   ("Refused: this program would " ^ summary
+                  ^ ". A program that does all three can leak the project, and the person did \
+                     not allow it (a client without elicitation cannot ask them). Split the work \
+                     so no program does all three.")
+                   true))
+      | None -> performed run
+    and performed run =
         let* outcome =
           Run.run run ~seen:(List.concat_map Value.sources !(program.performed)) program.handler ~settle:(fun overlay ->
               Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
@@ -286,6 +368,24 @@ let handled program json =
             Lwt.return (text report true)
         | Ok run -> went run)
     | Ok (`Fill (name, code)) -> resumed name code
+    | Ok (`Save (name, source)) -> (
+        match Result.bind (Lang.Skill.of_source ~name source) (fun skill -> Os.learned skill program.os) with
+        | Error report -> Lwt.return (text ("Not saved:\n\n" ^ report) true)
+        | Ok os -> (
+            let* kept = Tools.keep program.workspace ~name source in
+            match kept with
+            | Error (`Tools (Tools.Denied reason | Not_found reason | Conflict reason)) ->
+                Lwt.return (text ("Not saved: " ^ reason) true)
+            | Ok () ->
+                program.os <- os;
+                let* () = program.on (Saved { name; source }) in
+                Lwt.return
+                  (text
+                     (Printf.sprintf
+                        "Saved as .teagent/saved/%s.elm. Programs import it with `import %s`, in \
+                         this session and later ones."
+                        name name)
+                     false)))
     | Ok (`Tool tool) -> (
         let* step = program.handler.perform tool [] Handler.Overlay.empty in
         match step with
@@ -322,6 +422,14 @@ let handled program json =
   | `Assoc fields -> (
       match (List.assoc_opt "method" fields, List.assoc_opt "id" fields) with
       | Some (`String "initialize"), Some id ->
+          program.client :=
+            (match List.assoc_opt "params" fields with
+            | Some (`Assoc params) -> (
+                match List.assoc_opt "capabilities" params with
+                | Some (`Assoc capabilities) ->
+                    Option.fold ~none:Mute ~some:(fun _ -> Elicits) (List.assoc_opt "elicitation" capabilities)
+                | Some _ | None -> Mute)
+            | Some _ | None -> Mute);
           let protocol =
             match List.assoc_opt "params" fields with
             | Some (`Assoc params) -> (
@@ -371,7 +479,23 @@ let handled program json =
                      `Assoc [ ("code", `Int (-32601)); ("message", `String "Method not found") ] );
                  ]))
       | _, None -> Lwt.return None
-      | None, Some id ->
+      | None, Some id -> (
+          match
+            Option.bind
+              (match id with `Int id -> Some id | _ -> None)
+              (fun id -> Option.map (fun answered -> (id, answered)) (Hashtbl.find_opt program.asking id))
+          with
+          | Some (id, answered) ->
+              Hashtbl.remove program.asking id;
+              Lwt.wakeup_later answered
+                (match List.assoc_opt "result" fields with
+                | Some (`Assoc result) -> (
+                    match List.assoc_opt "action" result with
+                    | Some (`String "accept") -> Device.Agrees
+                    | Some _ | None -> Declines)
+                | Some _ | None -> Declines);
+              Lwt.return None
+          | None ->
           Lwt.return
             (Some
                (`Assoc
@@ -379,5 +503,5 @@ let handled program json =
                    ("jsonrpc", `String "2.0");
                    ("id", id);
                    ("error", `Assoc [ ("code", `Int (-32600)); ("message", `String "Invalid request") ]);
-                 ])))
+                 ]))))
   | _ -> Lwt.return None

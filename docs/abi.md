@@ -83,6 +83,7 @@ Each later line is one event, an object with a single key:
 | A reply without a program before any program ran | `{"guessed": reply}` |
 | The final reply | `{"answered": reply}` |
 | The code for a hole | `{"filled": {"hole": description, "reply": reply}}` |
+| A module an agent saved over MCP | `{"saved": {"name": name, "source": source}}` |
 
 When changes settle, those to files that other programs run or obey outside the sandbox are
 shown apart (`held`), and only the person can allow them; the rest are approved as before

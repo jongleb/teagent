@@ -25,6 +25,7 @@ type t = {
   root : string;
   allows : view;
   skills : Lang.Skill.t list;
+  saved : Lang.Skill.t list;
   rules : (Lang.Skill.t * Lang.t list) list;
 }
 
@@ -41,6 +42,7 @@ let granted root ~net =
         seconds = 1800;
       };
     skills = [];
+    saved = [];
     rules = [];
   }
 
@@ -348,7 +350,20 @@ let table os =
             | Run | Fetch | Model -> None)
           missing)
   |> Lang.Calls.unplugged (List.filter_map device missing)
-  |> Lang.Calls.taught os.skills
+  |> Lang.Calls.taught (os.skills @ os.saved)
+
+let learned skill os =
+  let name = Lang.Skill.name skill in
+  let named other = String.equal (Lang.Skill.name other) name in
+  match List.find_opt named os.skills with
+  | Some _ -> Error (name ^ " is a skill the person wrote; save the module under another name")
+  | None ->
+      let kept = { os with saved = List.filter (fun other -> not (named other)) os.saved @ [ skill ] } in
+      Result.map
+        (fun _ -> kept)
+        (Lang.compile (table kept)
+           ("module Main exposing (main)\n\nimport Agent exposing (Task, succeed)\nimport " ^ name
+          ^ "\n\n\nmain : Task Never ()\nmain =\n    succeed ()\n"))
 
 let class_of os (tool : Value.tool) =
   match (tool, os.allows.net) with
@@ -442,7 +457,7 @@ let image os =
                         | Journal -> `String "journal")
                       (os.allows.boot :> Handler.Boot.layer list)) );
                ("drivers", texts (List.map Device.source (List.filter_map device os.allows.offers)));
-               ("skills", texts (List.sort String.compare (List.map Lang.Skill.source os.skills)));
+               ("skills", texts (List.sort String.compare (List.map Lang.Skill.source (os.skills @ os.saved))));
                ("seconds", `Int os.allows.seconds);
                ("rules", texts (List.map (fun (rules, _) -> Lang.Skill.source rules) os.rules));
              ])))

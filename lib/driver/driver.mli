@@ -24,6 +24,7 @@ type event =
   | Guessed of string  (** A reply without a program before any program ran; sent back once. *)
   | Answered of string  (** The model's final reply, without a program. *)
   | Filled of { hole : string; reply : string }  (** A reply with the code for a reached hole. *)
+  | Saved of { name : string; source : string }  (** A module an agent kept for later programs. *)
 
 (** Why a session ended without an answer. *)
 type stop =

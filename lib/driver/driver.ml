@@ -21,6 +21,7 @@ type event =
   | Guessed of string
   | Answered of string
   | Filled of { hole : string; reply : string }
+  | Saved of { name : string; source : string }
 
 type stop =
   | Llm_failed of Llm.error
@@ -485,7 +486,7 @@ let undone events =
         | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
         | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Held _
         | Exposed _ | Ran _ | Guessed _
-        | Answered _ | Filled _ ->
+        | Answered _ | Filled _ | Saved _ ->
             (committed, overlay))
       ([], Handler.Overlay.empty) events
   in
@@ -516,6 +517,8 @@ let event_to_json event : Yojson.Safe.t =
   | Answered reply -> text "answered" reply
   | Filled { hole; reply } ->
       `Assoc [ ("filled", `Assoc [ ("hole", `String hole); ("reply", `String reply) ]) ]
+  | Saved { name; source } ->
+      `Assoc [ ("saved", `Assoc [ ("name", `String name); ("source", `String source) ]) ]
   | Decided Apply -> text "decided" "apply"
   | Decided Discard -> text "decided" "discard"
   | Held { diff; decision } ->
@@ -580,6 +583,8 @@ let event_of_json (json : Yojson.Safe.t) =
   | `Assoc [ ("answered", `String reply) ] -> Ok (Answered reply)
   | `Assoc [ ("filled", `Assoc [ ("hole", `String hole); ("reply", `String reply) ]) ] ->
       Ok (Filled { hole; reply })
+  | `Assoc [ ("saved", `Assoc [ ("name", `String name); ("source", `String source) ]) ] ->
+      Ok (Saved { name; source })
   | `Assoc [ ("decided", `String "apply") ] -> Ok (Decided Apply)
   | `Assoc [ ("decided", `String "discard") ] -> Ok (Decided Discard)
   | `Assoc [ ("held", `Assoc [ ("diff", `String diff); ("decision", `String "apply") ]) ] ->

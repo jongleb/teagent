@@ -109,7 +109,7 @@ whole history of the session in view.
 | Person | you | the task; yes or no; `rules.elm`, the profile, `--net`, `--ask` |
 | Model | `lib/llm` | nothing on its own: it only writes programs |
 | Session loop | `lib/driver` | when to ask the model, compile, run and settle; writes the log |
-| MCP server | `lib/mcp` | the same for another agent, with no person to ask |
+| MCP server | `lib/mcp` | the same for another agent; questions reach the person through the client |
 | OS value | `lib/os` | what exists: calls, paths, hosts, limits, boot layers, rules; the image hash |
 | Compiler | `lib/lang` | whether a program is well formed, and which calls it can reach |
 | Interpreter | `lib/interp` | what `main` describes, and where each value came from |
@@ -393,7 +393,7 @@ $ teagent --undo ~/.teagent/sessions/0001.jsonl                                 
 | `--dry-run` | show the changes, write nothing |
 | `--undo FILE` | put back every file a session changed, unless you changed it since |
 | `--exec FILE` | run a program you wrote, with no model inside |
-| `--mcp` | serve bash, read, write, edit, grep, run and fill to another agent over MCP |
+| `--mcp` | serve bash, read, write, edit, grep, run, fill and save to another agent over MCP |
 | `--net HOST` | let commands and `Fetch` reach `HOST` (or `*.HOST`) through teagent's proxy; repeat it, and pair it with `--ask` |
 
 ### With Claude Code, over MCP
@@ -409,9 +409,15 @@ When it reaches a `hole`, the run stops and returns the values in scope; the age
 code for that place with `fill`, and the run goes on without repeating the tools that already
 ran. A program sees only the calls the profile offers: without `bash`, `Agent` has no `shell`,
 and a program that calls it does not compile. The same holds for skills, Elm modules in `.teagent/skills`
-that programs import: one that imports `shell` is not installed without `bash`. Over MCP there
-is no person to ask, so every question is answered no: nothing irreversible goes out, project
-content never leaves, and files other programs run are not written.
+that programs import: one that imports `shell` is not installed without `bash`. A module that
+worked can be kept with `save`: it lands in `.teagent/saved` if it typechecks, later programs
+import it by name, and it is typechecked again every time, so it never breaks at run time.
+
+What needs a person (a request that cannot be taken back, a program that could leak the
+project, files other programs run) is asked of you, not the agent: teagent sends the question
+through MCP elicitation and the client shows it to you. A client without elicitation cannot ask,
+so there every question is answered no: nothing irreversible goes out, project content never
+leaves, and files other programs run are not written.
 
 Add it to a project and switch off Claude Code's own shell and editing, so every change goes
 through teagent:

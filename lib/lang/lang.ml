@@ -110,6 +110,7 @@ module Skill = struct
                          imports;
                    }))
 
+  let name skill = skill.name
   let source skill = skill.source
 end
 

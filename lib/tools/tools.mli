@@ -55,6 +55,7 @@ type change = {
 
 val read : t -> Path.t -> (string, [> `Tools of error ]) result Lwt.t
 val write : t -> Path.t -> string -> (unit, [> `Tools of error ]) result Lwt.t
+val keep : t -> name:string -> string -> (unit, [> `Tools of error ]) result Lwt.t
 
 val edit :
   t -> Path.t -> old:string -> new_:string -> (unit, [> `Tools of error ]) result Lwt.t

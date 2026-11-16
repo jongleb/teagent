@@ -436,8 +436,12 @@ let guarded workspace command =
       "ulimit -t %d 2>/dev/null\n\
        ulimit -f 8388608 2>/dev/null\n\
        %s\
+       if command -v setsid >/dev/null 2>&1; then\n\
+       setsid /bin/sh -c \"$1\" </dev/null 2>&1 &\n\
+       else\n\
        set -m\n\
        /bin/sh -c \"$1\" </dev/null 2>&1 &\n\
+       fi\n\
        job=$!\n\
        exec 2>/dev/null\n\
        ( sleep %d; kill -9 -$job ) >/dev/null 2>&1 &\n\
@@ -450,12 +454,14 @@ let guarded workspace command =
       seconds
       (match counted.code with
       | 0 ->
-          Printf.sprintf "ulimit -u %d 2>/dev/null\n"
-            (1024
+          let processes =
+            1024
             + List.length
                 (List.filter
                    (fun line -> not (String.equal (String.trim line) ""))
-                   (String.split_on_char '\n' counted.out)))
+                   (String.split_on_char '\n' counted.out))
+          in
+          Printf.sprintf "ulimit -u %d 2>/dev/null || ulimit -p %d 2>/dev/null\n" processes processes
       | _ -> "")
       seconds seconds;
     "teagent";
@@ -652,6 +658,12 @@ let contained workspace staged command =
                     ~some:(List.concat_map (fun (path, real) -> [ "--ro-bind"; real; path ]))
                     (readable [ "/usr"; "/bin"; "/sbin"; "/lib"; "/lib64"; "/lib32"; "/etc"; "/opt" ])
                 @ [ "--dev"; "/dev"; "--proc"; "/proc"; "--tmpfs"; "/tmp" ]
+                @ List.concat_map
+                    (fun directory ->
+                      match Unix.lstat directory with
+                      | { st_kind = S_DIR; _ } -> [ "--tmpfs"; directory ]
+                      | _ | (exception Unix.Unix_error _) -> [])
+                    [ "/run"; "/var/run" ]
                 @ List.concat_map
                     (fun (_, real) ->
                       match Sys.is_directory real with

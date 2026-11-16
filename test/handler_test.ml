@@ -595,7 +595,7 @@ let () =
          let started_at = Unix.gettimeofday () in
          let contained, _ =
            Lwt_main.run
-             (Tools.contained quick [] "ulimit -t; ulimit -f; ulimit -u; sleep 20; echo late")
+             (Tools.contained quick [] "ulimit -t; ulimit -f; ulimit -u 2>/dev/null || ulimit -p; sleep 20; echo late")
          in
          let opened = Lwt_main.run (Tools.shell quick "sleep 20; echo late") in
          let took = Unix.gettimeofday () -. started_at in
@@ -761,6 +761,7 @@ let () =
              | Finished (Ok value), _ -> Some ("dotenv: a .env file reached the program: " ^ Value.to_elm value)
              | _ -> Some "dotenv: the program did not finish"));
         (let workspace = fresh () in
+         Unix.putenv "TEAGENT_PROBE_SECRET" "kept-outside";
          let attempts =
            [
              ("clipboard", "pbpaste");
@@ -771,7 +772,7 @@ let () =
                ^ Option.value ~default:"/nonexistent" (Sys.getenv_opt "SSH_AUTH_SOCK")
                ^ " </dev/null" );
              ("docker", "nc -U /var/run/docker.sock </dev/null");
-             ("parent", "ps eww -p $PPID | grep -q PATH=");
+             ("parent", "ps eww -p $PPID | grep -q TEAGENT_PROBE_SECRET");
              ("dns", "nslookup example.com | grep -q '^Address' && nslookup example.com | tail -2 | grep -q Address");
            ]
          in

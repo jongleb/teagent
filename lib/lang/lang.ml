@@ -249,8 +249,8 @@ module Calls = struct
           | Device.Api api when List.length (Api.operations api) > 20 ->
               Either.Right
                 (Printf.sprintf
-                   "module %s: %d calls of %s, with their types; the `search` tool finds their \
-                    signatures"
+                   "module %s: %d calls of %s, with their types; `Catalog.search \"words\"` returns \
+                    the signatures of the calls that match, and so does the `search` tool"
                    (Api.name api) (List.length (Api.operations api)) (Api.base api))
           | device -> Either.Left device)
         calls.plugged
@@ -259,6 +259,12 @@ module Calls = struct
       (List.map (fun (_, text) -> signed text) (modules { calls with plugged = listed } (fst (settled calls)))
       @ searched)
 end
+
+let module_name source =
+  Option.bind (Result.to_option (parsed source))
+    (List.find_map (function
+      | Frontend.Impl.ModuleName name -> Some (Data.Located.unwrap name)
+      | _ -> None))
 
 let compile calls source =
   match found "Elm.Kernel" source with

@@ -353,7 +353,10 @@ let table os =
             | Run | Fetch | Model -> None)
           missing)
   |> Lang.Calls.unplugged (List.filter_map device missing)
-  |> Lang.Calls.plugging (List.map (fun api -> Device.Api api) os.allows.apis)
+  |> Lang.Calls.plugging
+       (match os.allows.apis with
+       | [] -> []
+       | apis -> Device.Catalog :: List.map (fun api -> Device.Api api) apis)
   |> Lang.Calls.taught (os.skills @ os.saved)
 
 let learned skill os =

@@ -342,7 +342,8 @@ it then fail to compile, still before anything runs.
 
 ### Saved modules
 
-Over MCP an agent can keep a module that worked with `save`: it sends the whole module, and
+An agent can keep a module that worked: over MCP with `save`, and in teagent's own loop by
+replying with a module other than `Main`. It sends the whole module, and
 teagent writes it to `.teagent/saved/Name.elm` only if it typechecks against the calls the
 session offers. Programs import it by name from then on, in that session and in later ones.
 A saved module is a skill the agent wrote: it needs what it imports, it can do no more than the
@@ -390,8 +391,9 @@ fails the call with `Unexpected` and says which. `Failed status body` is an answ
 `Unreachable` a network failure or an unset token. A GET or HEAD is a request out, asked about
 when it carries content of the project; every other method is irreversible and asked about
 first. A value the document does not type, such as a `oneOf`, reaches the program as its JSON
-text. An API with more than twenty calls is shown to the model as one line; over MCP the
-`search` tool finds the calls by words and returns their signatures and types.
+text. An API with more than twenty calls is shown to the model as one line. `Catalog.search
+"create pull request"` returns the signatures and types of the calls that match, so a program
+can look them up; over MCP the `search` tool does the same.
 
 ## Rules
 

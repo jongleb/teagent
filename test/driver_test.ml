@@ -58,12 +58,45 @@ let () =
           approve = (fun _ -> Lwt.return decision);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
+          keep = Tools.keep (Tools.at workspace);
           os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
           recorded = [];
         }
     in
     (workspace, report, events, List.rev !asked)
+  in
+  let saving =
+    let workspace = fresh () in
+    let replies =
+      ref
+        [
+          fenced "module Twice exposing (twice)\n\n\ntwice : Int -> Int\ntwice n =\n    n * 2\n";
+          fenced
+            "module Main exposing (main)\n\nimport Agent exposing (..)\nimport Twice\n\n\nmain : Task Never Int\nmain =\n    succeed (Twice.twice 21)\n";
+          "It is 42.";
+        ]
+    in
+    let report, events =
+      collected
+        {
+          ask =
+            (fun ~system:_ _ ->
+              match !replies with
+              | reply :: rest ->
+                  replies := rest;
+                  Lwt.return (Ok reply)
+              | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
+          approve = (fun _ -> Lwt.return Driver.Apply);
+          handler = Handler.staged (Tools.at workspace) Handler.Open;
+          commit = Tools.commit (Tools.at workspace);
+          keep = Tools.keep (Tools.at workspace);
+          os = Os.granted workspace ~net:[];
+          person = (fun _ -> Lwt.return Device.Declines);
+          recorded = [];
+        }
+    in
+    (report.ending, events, Sys.file_exists (Filename.concat workspace ".teagent/saved/Twice.elm"))
   in
   let applied = session ~decision:Driver.Apply in
   let stubborn =
@@ -101,6 +134,7 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
+          keep = Tools.keep (Tools.at workspace);
           os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
           recorded = [];
@@ -143,6 +177,7 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
           commit = Tools.commit (Tools.at workspace);
+          keep = Tools.keep (Tools.at workspace);
           os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
           recorded = [];
@@ -206,6 +241,7 @@ let () =
         approve = (fun _ -> Lwt.return Driver.Apply);
         handler = Handler.staged (Os.workspace (Os.granted workspace ~net)) Handler.Open;
         commit = Tools.commit (Tools.at workspace);
+        keep = Tools.keep (Tools.at workspace);
         os = Os.granted "/project" ~net:[];
         person = (fun _ -> Lwt.return Device.Declines);
         recorded = [];
@@ -267,6 +303,7 @@ let () =
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Contained;
           commit = Tools.commit (Tools.at workspace);
+          keep = Tools.keep (Tools.at workspace);
           os = Os.granted "/project" ~net:[];
           person = (fun _ -> Lwt.return Device.Declines);
           recorded = [];
@@ -307,6 +344,7 @@ let () =
             Handler.Open;
         person;
         commit = Tools.commit (Tools.at workspace);
+        keep = Tools.keep (Tools.at workspace);
         os = Os.granted "/project" ~net:[];
         recorded = [];
       }
@@ -314,6 +352,12 @@ let () =
   let failures =
     List.filter_map Fun.id
       [
+        (match saving with
+        | Ok "It is 42.", events, true
+          when List.exists (function Driver.Saved { name = "Twice"; _ } -> true | _ -> false) events
+               && List.exists (function Driver.Ran "main finished with:\n42" -> true | _ -> false) events ->
+            None
+        | _ -> Some "save: a module the model sent was not kept, or a later program could not import it");
         (requests := [];
          let declined = posting (fun _ -> Lwt.return Device.Declines) in
          let sent_after_decline = !requests in
@@ -492,6 +536,7 @@ let () =
              approve = (fun _ -> Lwt.return Driver.Apply);
              handler = Handler.staged (Tools.at workspace) Handler.Open;
              commit = Tools.commit (Tools.at workspace);
+             keep = Tools.keep (Tools.at workspace);
              os = Os.granted "/project" ~net:[];
              person = (fun _ -> Lwt.return Device.Declines);
              recorded;
@@ -528,10 +573,10 @@ let () =
          in
          match
            ( stopped.ending,
-             recorded,
+             List.filter (function Driver.Ended _ -> false | _ -> true) recorded,
              untouched,
              finished.ending,
-             List.filteri (fun index _ -> index >= List.length recorded) resumed,
+             List.filteri (fun index _ -> index >= List.length recorded - 1) resumed,
              contents workspace "lib/a.ml" )
          with
          | ( Error (Open_hole question),
@@ -544,6 +589,7 @@ let () =
                Decided Apply;
                Committed (Ok [ _ ]);
                Ran "main finished with:\n\"LET X = FOO.BAZ 1\\n\"";
+               Ended _;
              ],
              "let x = Foo.baz 1\n" )
            when String.starts_with ~prefix:"main reached `hole \"shout it\"`" question ->
@@ -612,6 +658,7 @@ let () =
                     approve = (fun _ -> Lwt.return Driver.Apply);
                     handler = Handler.staged (Tools.at workspace) Handler.Open;
                     commit = Tools.commit (Tools.at workspace);
+                    keep = Tools.keep (Tools.at workspace);
                     os = Os.granted "/project" ~net:[];
                     person = (fun _ -> Lwt.return Device.Declines);
                     recorded = cut recorded;
@@ -684,6 +731,7 @@ let () =
                person = (fun _ -> Lwt.return Device.Declines);
                handler = Handler.staged (Tools.at workspace) Handler.Open;
                commit = Tools.commit (Tools.at workspace);
+               keep = Tools.keep (Tools.at workspace);
                os = Os.granted "/project" ~net:[];
                recorded = [];
              }
@@ -733,6 +781,7 @@ let () =
                      Lwt.return person);
                  handler = Handler.staged (Tools.at workspace) Handler.Open;
                  commit = Tools.commit (Tools.at workspace);
+                 keep = Tools.keep (Tools.at workspace);
                  os = Os.granted "/project" ~net:[];
                  recorded = [];
                }
@@ -777,6 +826,7 @@ let () =
                      Lwt.return Device.Declines);
                  handler = Handler.staged (Tools.at workspace) Handler.Open;
                  commit = Tools.commit (Tools.at workspace);
+                 keep = Tools.keep (Tools.at workspace);
                  os = Os.granted "/project" ~net:[];
                  recorded = [];
                }
@@ -867,6 +917,7 @@ let () =
                    Lwt.return Device.Declines);
                handler = Handler.staged (Tools.at workspace) Handler.Open;
                commit = Tools.commit (Tools.at workspace);
+               keep = Tools.keep (Tools.at workspace);
                os = Os.granted "/project" ~net:[];
                recorded = [];
              }
@@ -940,6 +991,7 @@ readsSecrets call =\n\
                    Lwt.return Device.Declines);
                handler = Handler.staged (Tools.at workspace) Handler.Open;
                commit = Tools.commit (Tools.at workspace);
+               keep = Tools.keep (Tools.at workspace);
                os;
                recorded = [];
              }
@@ -984,6 +1036,7 @@ readsSecrets call =\n\
                person = (fun _ -> Lwt.return Device.Declines);
                handler = Handler.staged (Tools.at workspace) Handler.Open;
                commit = Tools.commit (Tools.at workspace);
+               keep = Tools.keep (Tools.at workspace);
                os = Os.granted "/project" ~net:[];
                recorded = [];
              }
@@ -1026,6 +1079,7 @@ readsSecrets call =\n\
                  person = (fun _ -> Lwt.return person);
                  handler = Handler.staged (Tools.at workspace) Handler.Open;
                  commit = Tools.commit (Tools.at workspace);
+                 keep = Tools.keep (Tools.at workspace);
                  os = Os.granted "/project" ~net:[];
                  recorded = [];
                }
@@ -1124,6 +1178,7 @@ readsSecrets call =\n\
                            | false -> Device.Declines));
                      handler = Handler.staged (Tools.at workspace) Handler.Open;
                      commit = Tools.commit (Tools.at workspace);
+                     keep = Tools.keep (Tools.at workspace);
                      os;
                      recorded = [];
                    }

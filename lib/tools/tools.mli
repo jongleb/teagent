@@ -83,6 +83,7 @@ type request =
   | Get
   | Post of string  (** The body sent. *)
 
+val apis : t -> Api.t list
 val api : t -> string -> Api.t option
 
 val requested :

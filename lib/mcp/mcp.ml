@@ -161,7 +161,12 @@ let handled program json =
           ^ "\n## The modules\n\nAgent, and drivers such as Fetch, which a program imports by \
              name (`import Fetch`):\n\n"
           ^ Lang.Calls.source (Os.table program.os))
-          (schema [ ("program", "The whole Main module.") ] [ "program" ]);
+          (schema
+             [
+               ("program", "The whole Main module.");
+               ("goal", "What the program is for, in a sentence; it goes into the session log.");
+             ]
+             [ "program" ]);
         tool Os.Run "fill"
           "Give the code for the hole a run stopped at: one Elm expression of the hole's type, \
            which may use the values in scope there. The run starts again with it; the tools \
@@ -220,7 +225,7 @@ let handled program json =
             (fun pattern ->
               `Tool (Value.Grep { pattern; glob = Result.value ~default:"**" (field "glob") }))
             (field "pattern")
-      | Some Run -> Result.map (fun source -> `Run source) (field "program")
+      | Some Run -> Result.map (fun source -> `Run (source, Result.to_option (field "goal"))) (field "program")
       | Some Fetch -> Error "fetch is not a tool of its own: a program sent to run reaches it as Fetch.get."
       | Some Model -> Error "model is not a tool of its own: a program sent to run reaches it as Model.judge."
       | None -> (
@@ -387,7 +392,8 @@ let handled program json =
     in
     match requested with
     | Error reason -> Lwt.return (text reason true)
-    | Ok (`Run source) -> (
+    | Ok (`Run (source, goal)) -> (
+        let* () = Option.fold ~none:Lwt.return_unit ~some:(fun goal -> program.on (Aimed goal)) goal in
         let* () = program.on (Wrote source) in
         match Run.compiled (Os.table program.os) source with
         | Error report ->
@@ -395,75 +401,7 @@ let handled program json =
             Lwt.return (text report true)
         | Ok run -> went run)
     | Ok (`Fill (name, code)) -> resumed name code
-    | Ok (`Search query) ->
-        let contains text piece =
-          let rec at index =
-            index + String.length piece <= String.length text
-            && (String.equal (String.sub text index (String.length piece)) piece || at (index + 1))
-          in
-          at 0
-        in
-        let words =
-          List.filter
-            (fun word -> String.length word > 0)
-            (String.split_on_char ' ' (String.lowercase_ascii query))
-        in
-        let apis = (Os.view program.os).apis in
-        let found =
-          List.filteri
-            (fun index _ -> index < 8)
-            (List.stable_sort
-               (fun (one, _, _) (other, _, _) -> compare other one)
-               (List.concat_map
-                  (fun api ->
-                    List.filter_map
-                      (fun (operation : Api.operation) ->
-                        let haystack =
-                          String.lowercase_ascii
-                            (String.concat " " [ operation.key; operation.summary; operation.path ])
-                        in
-                        match List.length (List.filter (contains haystack) words) with
-                        | 0 -> None
-                        | score -> Some (score, api, operation))
-                      (Api.operations api))
-                  apis))
-        in
-        let types =
-          List.sort_uniq compare
-            (List.concat_map
-               (fun api ->
-                 List.filter_map
-                   (fun name -> Option.map (fun declaration -> (Api.name api, declaration)) (Api.declaration api name))
-                   (String.split_on_char ' ' query
-                   @ List.concat_map
-                       (fun (_, (other : Api.t), operation) ->
-                         match String.equal (Api.name other) (Api.name api) with
-                         | false -> []
-                         | true ->
-                             String.split_on_char ' '
-                               (String.map
-                                  (function ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_') as kept -> kept | _ -> ' ')
-                                  (Api.signature operation)))
-                       (List.filteri (fun index _ -> index < 2) found)))
-               apis)
-        in
-        Lwt.return
-          (match (found, types) with
-          | [], [] -> text ("Nothing matches " ^ query ^ ".") true
-          | _, _ ->
-              text
-                (String.concat "\n\n"
-                   (List.map
-                      (fun (_, api, (operation : Api.operation)) ->
-                        "-- " ^ Api.method_name operation.meth ^ " " ^ operation.path
-                        ^ (match operation.summary with "" -> "" | summary -> ": " ^ summary)
-                        ^ "\n" ^ Api.name api ^ "." ^ Api.signature operation)
-                      found
-                   @ List.map (fun (module_name, declaration) -> "-- in " ^ module_name ^ "\n" ^ declaration) types)
-                ^ "\n\nA call with options takes a record of them as its last argument; start from \
-                   the value named after the call with Options at the end, which sets every option \
-                   to Nothing.")
-                false)
+    | Ok (`Search query) -> Lwt.return (text (Device.searched (Os.view program.os).apis query) false)
     | Ok (`Save (name, source)) -> (
         match Result.bind (Lang.Skill.of_source ~name source) (fun skill -> Os.learned skill program.os) with
         | Error report -> Lwt.return (text ("Not saved:\n\n" ^ report) true)

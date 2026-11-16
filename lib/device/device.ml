@@ -1,8 +1,12 @@
-type t = Fetch | Model | Api of Api.t
+type t = Fetch | Model | Catalog | Api of Api.t
 type consent = Agrees | Declines
 
 let all = [ Fetch; Model ]
-let source = function Fetch -> Fetch_elm.source | Model -> Model_elm.source | Api api -> Api.source api
+let source = function
+  | Fetch -> Fetch_elm.source
+  | Model -> Model_elm.source
+  | Catalog -> Catalog_elm.source
+  | Api api -> Api.source api
 
 let failed module_name constructor detail =
   Value.V_constr { constructor = { module_name; name = constructor }; arguments = [ V_string detail ] }
@@ -42,6 +46,73 @@ let refused ~name reason =
   | [ "api"; module_name; _ ] -> failed module_name "Declined" reason
   | _ -> Value.V_string reason
 
+let searched apis query =
+  let contains text piece =
+    let rec at index =
+      index + String.length piece <= String.length text
+      && (String.equal (String.sub text index (String.length piece)) piece || at (index + 1))
+    in
+    at 0
+  in
+  let words =
+    List.filter
+      (fun word -> String.length word > 2)
+      (String.split_on_char ' ' (String.lowercase_ascii query))
+  in
+  let found =
+    List.filteri
+      (fun index _ -> index < 8)
+      (List.stable_sort
+         (fun (one, _, (first : Api.operation)) (other, _, (second : Api.operation)) ->
+           compare (other, String.length first.key) (one, String.length second.key))
+         (List.concat_map
+            (fun api ->
+              List.filter_map
+                (fun (operation : Api.operation) ->
+                  let haystack =
+                    String.lowercase_ascii
+                      (String.concat " " [ operation.key; operation.summary; operation.path ])
+                  in
+                  match List.length (List.filter (contains haystack) words) with
+                  | 0 -> None
+                  | score -> Some (score, api, operation))
+                (Api.operations api))
+            apis))
+  in
+  let types =
+    List.sort_uniq compare
+      (List.concat_map
+         (fun api ->
+           List.filter_map
+             (fun name -> Option.map (fun declaration -> (Api.name api, declaration)) (Api.declaration api name))
+             (String.split_on_char ' ' query
+             @ List.concat_map
+                 (fun (_, (other : Api.t), operation) ->
+                   match String.equal (Api.name other) (Api.name api) with
+                   | false -> []
+                   | true ->
+                       String.split_on_char ' '
+                         (String.map
+                            (function ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_') as kept -> kept | _ -> ' ')
+                            (Api.signature operation)))
+                 (List.filteri (fun index _ -> index < 2) found)))
+         apis)
+  in
+  match (found, types) with
+    | [], [] -> "Nothing matches " ^ query ^ "."
+    | _, _ ->
+          (String.concat "\n\n"
+             (List.map
+                (fun (_, api, (operation : Api.operation)) ->
+                  "-- " ^ Api.method_name operation.meth ^ " " ^ operation.path
+                  ^ (match operation.summary with "" -> "" | summary -> ": " ^ summary)
+                  ^ "\n" ^ Api.name api ^ "." ^ Api.signature operation)
+                found
+             @ List.map (fun (module_name, declaration) -> "-- in " ^ module_name ^ "\n" ^ declaration) types)
+          ^ "\n\nA call with options takes a record of them as its last argument; start from \
+             the value named after the call with Options at the end, which sets every option \
+             to Nothing.")
+
 let perform workspace ~name argument =
   let fetched request url =
     Lwt.map
@@ -54,6 +125,7 @@ let perform workspace ~name argument =
       (Tools.fetch workspace request url)
   in
   match (name, argument) with
+  | "catalog.search", Value.V_string words -> Lwt.return (Ok (Value.V_string (searched (Tools.apis workspace) words)))
   | "fetch.get", Value.V_string url -> fetched Tools.Get url
   | "fetch.post", Value.V_record [ ("body", V_string body); ("url", V_string url) ] ->
       fetched (Tools.Post body) url

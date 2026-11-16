@@ -22,6 +22,8 @@ type event =
   | Answered of string
   | Filled of { hole : string; reply : string }
   | Saved of { name : string; source : string }
+  | Aimed of string
+  | Ended of string
 
 type stop =
   | Llm_failed of Llm.error
@@ -38,11 +40,21 @@ type world = {
   person : string -> Device.consent Lwt.t;
   handler : Handler.Overlay.t Handler.t;
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
+  keep : name:string -> string -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
   os : Os.t;
   recorded : event list;
 }
 
+let explained = function
+  | Llm_failed problem -> Llm.explained problem
+  | Never_compiled _ -> "The program still did not compile after 4 rounds."
+  | Discarded -> "Stopped: the changes were not applied."
+  | Too_many_programs -> "Stopped after 8 programs without an answer."
+  | Unanswered -> "Stopped: no reply came after the last run."
+  | Open_hole question -> question
+
 let solve world ~on task =
+  let os = ref world.os in
   let queued pick = ref (List.filter_map pick world.recorded) in
   let next queue =
     match !queue with
@@ -94,7 +106,10 @@ let solve world ~on task =
           - Look before you answer: write a program that reads or searches first.\n\
           - When the compiler reports an error, change the program and send all of it again.\n\
           - When the task is done, reply in plain text without a code block, and state the \
-          facts you found: names, paths, numbers.";
+          facts you found: names, paths, numbers.\n\
+          - To keep a module that worked for later tasks, reply with one ```elm block holding \
+          that module, `module Name exposing (...)` with its imports; teagent typechecks it, \
+          saves it, and later programs import it by name.";
          Manual.text;
          "## The modules\n\nAgent, and drivers such as Fetch, which a program imports by name \
           (`import Fetch`):\n\n```elm\n"
@@ -389,7 +404,9 @@ let solve world ~on task =
         | Some source, _, _ -> (
             let* () = on (Wrote text) in
             let history = history @ [ { Llm.role = Assistant; text } ] in
-            match Run.compiled (Os.table world.os) source with
+            match Lang.module_name source with
+            | Some "Main" | None -> (
+            match Run.compiled (Os.table !os) source with
             | Error report when round >= 4 ->
                 let* () = on (Refused report) in
                 Lwt.return { ending = Error (Never_compiled report); rounds = List.rev rounds }
@@ -443,17 +460,27 @@ let solve world ~on task =
                                   (List.find_opt (fun run -> run = (source, result)) runs);
                           };
                         ])
-                      (round :: rounds) ((source, result) :: runs) nudged)))
+                      (round :: rounds) ((source, result) :: runs) nudged))
+            | Some name ->
+                let* note =
+                  match Result.bind (Lang.Skill.of_source ~name source) (fun skill -> Os.learned skill !os) with
+                  | Error report -> Lwt.return ("Not saved:\n\n" ^ report)
+                  | Ok learned -> (
+                      let* kept = world.keep ~name source in
+                      match kept with
+                      | Error (`Tools (Tools.Denied reason | Not_found reason | Conflict reason)) ->
+                          Lwt.return ("Not saved: " ^ reason)
+                      | Ok () ->
+                          os := learned;
+                          let+ () = on (Saved { name; source }) in
+                          "Saved " ^ name ^ ". Programs import it with `import " ^ name
+                          ^ "`, in this session and later ones.")
+                in
+                conversation (history @ [ { Llm.role = User; text = note } ]) (round :: rounds) runs nudged))
   in
-  conversation [ { Llm.role = User; text = task } ] [] [] `Not_nudged
-
-let explained = function
-  | Llm_failed problem -> Llm.explained problem
-  | Never_compiled _ -> "The program still did not compile after 4 rounds."
-  | Discarded -> "Stopped: the changes were not applied."
-  | Too_many_programs -> "Stopped after 8 programs without an answer."
-  | Unanswered -> "Stopped: no reply came after the last run."
-  | Open_hole question -> question
+  let* report = conversation [ { Llm.role = User; text = task } ] [] [] `Not_nudged in
+  let+ () = match report.ending with Error stop -> on (Ended (explained stop)) | Ok _ -> Lwt.return_unit in
+  report
 
 let replayed os recorded =
   {
@@ -469,6 +496,7 @@ let replayed os recorded =
             Lwt.return (Handler.Performed (Error (Value.V_string "the log has no such tool here"), overlay)));
       };
     commit = (fun _ -> Lwt.return (Error (`Tools (Tools.Conflict "the log has no commit here"))));
+    keep = (fun ~name:_ _ -> Lwt.return (Ok ()));
   }
 
 let undone events =
@@ -486,7 +514,7 @@ let undone events =
         | Committed (Error _) | Decided Discard -> (committed, Handler.Overlay.empty)
         | Wrote _ | Refused _ | Deferred _ | Exhausted _ | Staged _ | Decided Apply | Held _
         | Exposed _ | Ran _ | Guessed _
-        | Answered _ | Filled _ | Saved _ ->
+        | Answered _ | Filled _ | Saved _ | Aimed _ | Ended _ ->
             (committed, overlay))
       ([], Handler.Overlay.empty) events
   in
@@ -519,6 +547,8 @@ let event_to_json event : Yojson.Safe.t =
       `Assoc [ ("filled", `Assoc [ ("hole", `String hole); ("reply", `String reply) ]) ]
   | Saved { name; source } ->
       `Assoc [ ("saved", `Assoc [ ("name", `String name); ("source", `String source) ]) ]
+  | Aimed goal -> text "aimed" goal
+  | Ended reason -> text "ended" reason
   | Decided Apply -> text "decided" "apply"
   | Decided Discard -> text "decided" "discard"
   | Held { diff; decision } ->
@@ -585,6 +615,8 @@ let event_of_json (json : Yojson.Safe.t) =
       Ok (Filled { hole; reply })
   | `Assoc [ ("saved", `Assoc [ ("name", `String name); ("source", `String source) ]) ] ->
       Ok (Saved { name; source })
+  | `Assoc [ ("aimed", `String goal) ] -> Ok (Aimed goal)
+  | `Assoc [ ("ended", `String reason) ] -> Ok (Ended reason)
   | `Assoc [ ("decided", `String "apply") ] -> Ok (Decided Apply)
   | `Assoc [ ("decided", `String "discard") ] -> Ok (Decided Discard)
   | `Assoc [ ("held", `Assoc [ ("diff", `String diff); ("decision", `String "apply") ]) ] ->

@@ -20,6 +20,17 @@
     (cat Model.elm)
     (echo "|elm}\n")))))
 
+(rule
+ (target catalog_elm.ml)
+ (deps Catalog.elm)
+ (action
+  (with-stdout-to
+   catalog_elm.ml
+   (progn
+    (echo "let source = {elm|")
+    (cat Catalog.elm)
+    (echo "|elm}\n")))))
+
 (library
  (name device)
  (libraries api llm lwt str tools value yojson))

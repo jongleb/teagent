@@ -25,6 +25,8 @@ type event =
   | Answered of string  (** The model's final reply, without a program. *)
   | Filled of { hole : string; reply : string }  (** A reply with the code for a reached hole. *)
   | Saved of { name : string; source : string }  (** A module an agent kept for later programs. *)
+  | Aimed of string  (** The goal an agent named for the program it sent next. *)
+  | Ended of string  (** Why the session ended without an answer. *)
 
 (** Why a session ended without an answer. *)
 type stop =
@@ -46,6 +48,7 @@ type world = {
   person : string -> Device.consent Lwt.t;  (** Asked before an irreversible call. *)
   handler : Handler.Overlay.t Handler.t;  (** The tools; the OS boots its layers around them. *)
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
+  keep : name:string -> string -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
   os : Os.t;  (** What the programs of this session may call, and how the tools are booted. *)
   recorded : event list;  (** An earlier run of the session: it answers first, until this one strays. *)
 }

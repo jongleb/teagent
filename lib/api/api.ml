@@ -329,7 +329,7 @@ let parsed ~name ~base ~token ~only document =
   in
   match (operations, Option.fold ~none:server ~some:Option.some base) with
   | _, _
-    when Option.is_some (List.find_opt (String.equal name) [ "Main"; "Agent"; "Policy"; "Fetch"; "Model" ])
+    when Option.is_some (List.find_opt (String.equal name) [ "Main"; "Agent"; "Policy"; "Fetch"; "Model"; "Catalog" ])
          || not (String.equal (named `Upper name) name) ->
       Error ("an API is named like an Elm module of its own, such as Github; " ^ name ^ " cannot be one")
   | [], _ -> Error "it has no operation teagent can call (or none of those listed in operations)"

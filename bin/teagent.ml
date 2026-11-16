@@ -180,7 +180,7 @@ let () =
   let printed os (event : Driver.event) =
     match (event, !mode, !trace, !approval) with
     | Staged _, (`Exec _ | `Fill _), `Brief, (`Auto | `Ask)
-    | ( ( Wrote _ | Performed _ | Deferred _ | Decided _ | Guessed _ | Answered _ | Filled _ ),
+    | ( ( Wrote _ | Performed _ | Deferred _ | Decided _ | Guessed _ | Answered _ | Filled _ | Ended _ ),
         (`Exec _ | `Fill _),
         `Brief,
         _ ) ->
@@ -226,7 +226,9 @@ let () =
     | Guessed reply -> section "guess, sent back" reply
     | Answered reply -> section "answer" reply
     | Filled { hole; reply } -> section ("hole " ^ Value.to_elm (V_string hole)) reply
-    | Saved { name; source } -> section ("saved " ^ name) source)
+    | Saved { name; source } -> section ("saved " ^ name) source
+    | Aimed goal -> section "goal" goal
+    | Ended reason -> section "stopped" reason)
   in
   let loaded file =
     match In_channel.with_open_text file In_channel.input_lines with
@@ -322,6 +324,7 @@ let () =
           person;
           handler = Handler.judging provider (Handler.staged (Os.workspace os) !shell);
           commit = Tools.commit (Os.workspace os);
+          keep = Tools.keep (Os.workspace os);
           os;
           recorded = [];
         }
@@ -421,6 +424,7 @@ let () =
           person;
           handler = tooled os;
           commit = Tools.commit (Os.workspace os);
+          keep = Tools.keep (Os.workspace os);
           os;
           recorded;
         }

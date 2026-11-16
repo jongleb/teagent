@@ -134,6 +134,7 @@ let () =
                            person = (fun _ -> Lwt.return Device.Declines);
                            handler = Handler.staged (Tools.at workspace) !shell;
                            commit = Tools.commit (Tools.at workspace);
+                           keep = Tools.keep (Tools.at workspace);
                            os = Os.granted "/project" ~net:[];
                            recorded = [];
                          }
@@ -144,7 +145,7 @@ let () =
                                      | Filled { reply = text; _ })
                              ->
                                Lwt.return (Printf.printf "%s\n%s\n\n%!" name text)
-                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Held _ | Exposed _ | Committed _ | Saved _) ->
+                           | `Loud, (Performed _ | Deferred _ | Exhausted _ | Decided _ | Held _ | Exposed _ | Committed _ | Saved _ | Aimed _ | Ended _) ->
                                Lwt.return_unit)
                          (read (Filename.concat task "task.md")))
                   in

@@ -34,5 +34,6 @@ type call =
   | Driver of string  (** A driver call by its name, such as [fetch.get]. *)
   | Computed  (** A driver call whose name is not written out. *)
 
+val module_name : string -> string option
 val compile : Calls.t -> string -> (t list, string) result
 val calls : t list -> call list

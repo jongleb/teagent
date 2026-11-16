@@ -106,6 +106,7 @@ let granted workspace host =
          && String.ends_with ~suffix:(String.sub entry 1 (String.length entry - 1)) host)
     workspace.limits.net
 let limited limits workspace = { workspace with limits }
+let apis workspace = workspace.limits.apis
 let api workspace name = List.find_opt (fun api -> String.equal (Api.name api) name) workspace.limits.apis
 
 let mounting mounts workspace =

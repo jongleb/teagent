@@ -405,6 +405,8 @@ they end. Writes never overwrite a file you changed meanwhile. The whole session
 
 It also serves `run`, which takes a whole Dartea program instead of one call. The program is
 typechecked before anything runs, and its changes are applied together only if `main` succeeds.
+Only what `main` returns reaches the agent; when the calls returned more, the reply says how much
+stayed out of its context (a program that lists 20 GitHub issues by title keeps 79.9 of 81.2 KB).
 When it reaches a `hole`, the run stops and returns the values in scope; the agent sends the
 code for that place with `fill`, and the run goes on without repeating the tools that already
 ran. A program sees only the calls the profile offers: without `bash`, `Agent` has no `shell`,

@@ -14,6 +14,7 @@ type t = {
   waiting : (string, Run.hole) Hashtbl.t;  (** Runs stopped at a hole, by the name given out. *)
   mutable started : int;  (** How many runs this connection has begun. *)
   performed : Value.tool list ref;  (** The calls of this connection so far, newest first. *)
+  carried : int ref;  (** Bytes the calls of this connection returned, written as Elm. *)
   client : client ref;
   asking : (int, Device.consent Lwt.u) Hashtbl.t;  (** Questions sent to the client, by request id. *)
   person : string -> Device.consent Lwt.t;
@@ -21,6 +22,7 @@ type t = {
 
 let start os tools ~send ~on =
   let performed = ref [] in
+  let carried = ref 0 in
   let client = ref Mute in
   let asking = Hashtbl.create 4 in
   let asked = ref 0 in
@@ -67,6 +69,8 @@ let start os tools ~send ~on =
                   match step with
                   | Handler.Performed (result, after) ->
                       performed := tool :: !performed;
+                      carried :=
+                        !carried + String.length (Value.to_elm (Result.fold ~ok:Fun.id ~error:Fun.id result));
                       on (Driver.Performed { tool; result; staged = Handler.Overlay.since overlay after })
                   | Handler.Blocked -> Lwt.return_unit
                   | Handler.Exhausted -> on (Driver.Exhausted tool)
@@ -80,6 +84,7 @@ let start os tools ~send ~on =
     waiting = Hashtbl.create 4;
     started = 0;
     performed;
+    carried;
     client;
     asking;
     person;
@@ -322,6 +327,7 @@ let handled program json =
                    true))
       | None -> performed run
     and performed run =
+        let before = !(program.carried) in
         let* outcome =
           Run.run run ~seen:(List.concat_map Value.sources !(program.performed)) program.handler ~settle:(fun overlay ->
               Lwt.map (Result.map ignore) (applied (Handler.Overlay.changes overlay)))
@@ -329,7 +335,21 @@ let handled program json =
         match outcome with
         | Error reason -> dropped ("The changes could not be applied: " ^ reason)
         | Ok (Finished (Ok value), overlay) ->
-            let body = "main finished with:\n" ^ Value.to_elm value in
+            let returned = Value.to_elm value in
+            let kept = !(program.carried) - before - String.length returned in
+            let sized bytes = Printf.sprintf "%.1f KB" (Float.of_int bytes /. 1024.) in
+            let body =
+              "main finished with:\n" ^ returned
+              ^
+              match max 0 kept / 1024 with
+              | 0 -> ""
+              | _ ->
+                  Printf.sprintf
+                    "\n\nThe calls of this run returned %s; the program kept %s of it out of your \
+                     context."
+                    (sized (kept + String.length returned))
+                    (sized kept)
+            in
             let* () = program.on (Ran body) in
             Lwt.map (reported body) (applied (Handler.Overlay.changes overlay))
         | Ok (Finished (Error (`Failed value)), _) ->

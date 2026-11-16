@@ -2,6 +2,7 @@
  (name lang)
  (libraries
   agent
+  api
   policy
   tools
   device

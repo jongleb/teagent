@@ -60,6 +60,7 @@ type limits = {
   reads : reads;
   net : string list;
   seconds : int;
+  apis : Api.t list;
 }
 type t = { root : string; limits : limits }
 
@@ -69,7 +70,7 @@ let at root =
       (match Filename.is_relative root with
       | true -> Filename.concat (Sys.getcwd ()) root
       | false -> root);
-    limits = { mounts = []; reads = Anywhere; net = []; seconds = 1800 };
+    limits = { mounts = []; reads = Anywhere; net = []; seconds = 1800; apis = [] };
   }
 
 let dotenv name =
@@ -105,6 +106,7 @@ let granted workspace host =
          && String.ends_with ~suffix:(String.sub entry 1 (String.length entry - 1)) host)
     workspace.limits.net
 let limited limits workspace = { workspace with limits }
+let api workspace name = List.find_opt (fun api -> String.equal (Api.name api) name) workspace.limits.apis
 
 let mounting mounts workspace =
   { workspace with limits = { workspace.limits with mounts = workspace.limits.mounts @ mounts } }
@@ -1074,6 +1076,35 @@ let commit workspace changes =
 type fetched = { status : int; body : string }
 type request = Get | Post of string
 
+let transferred url headers configured =
+  Lwt_preemptive.detach
+    (fun () ->
+      let handle = Curl.init () in
+      let received = Buffer.create 4096 and limit = 10_000_000 in
+      Fun.protect
+        ~finally:(fun () -> Curl.cleanup handle)
+        (fun () ->
+          match
+            Curl.set_url handle url;
+            configured handle;
+            Curl.set_httpheader handle headers;
+            Curl.set_proxy handle "";
+            Curl.set_followlocation handle false;
+            Curl.set_protocols handle [ Curl.CURLPROTO_HTTP; Curl.CURLPROTO_HTTPS ];
+            Curl.set_connecttimeout handle 30;
+            Curl.set_timeout handle 120;
+            Curl.set_writefunction handle (fun chunk ->
+                match Buffer.length received + String.length chunk > limit with
+                | true -> 0
+                | false ->
+                    Buffer.add_string received chunk;
+                    String.length chunk);
+            Curl.perform handle
+          with
+          | () -> Ok { status = Curl.get_responsecode handle; body = Buffer.contents received }
+          | exception Curl.CurlException (_, _, reason) -> Error (`Unreachable reason)))
+    ()
+
 let fetch workspace request url =
   let authority =
     List.find_map
@@ -1105,37 +1136,39 @@ let fetch workspace request url =
       match granted workspace host with
       | None -> Lwt.return (Error (`Not_granted host))
       | Some _ ->
-          Lwt_preemptive.detach
-            (fun () ->
-              let handle = Curl.init () in
-              let received = Buffer.create 4096 and limit = 10_000_000 in
-              Fun.protect
-                ~finally:(fun () -> Curl.cleanup handle)
-                (fun () ->
-                  match
-                    Curl.set_url handle url;
-                    (match request with
-                    | Get -> ()
-                    | Post body ->
-                        Curl.set_post handle true;
-                        Curl.set_postfields handle body;
-                        Curl.set_postfieldsize handle (String.length body));
-                    Curl.set_proxy handle "";
-                    Curl.set_followlocation handle false;
-                    Curl.set_protocols handle [ Curl.CURLPROTO_HTTP; Curl.CURLPROTO_HTTPS ];
-                    Curl.set_connecttimeout handle 30;
-                    Curl.set_timeout handle 120;
-                    Curl.set_writefunction handle (fun chunk ->
-                        match Buffer.length received + String.length chunk > limit with
-                        | true -> 0
-                        | false ->
-                            Buffer.add_string received chunk;
-                            String.length chunk);
-                    Curl.perform handle
-                  with
-                  | () -> Ok { status = Curl.get_responsecode handle; body = Buffer.contents received }
-                  | exception Curl.CurlException (_, _, reason) -> Error (`Unreachable reason)))
-            ())
+          transferred url [] (fun handle ->
+              match request with
+              | Get -> ()
+              | Post body ->
+                  Curl.set_post handle true;
+                  Curl.set_postfields handle body;
+                  Curl.set_postfieldsize handle (String.length body)))
+
+let requested api meth ~target ~body =
+  let secret variable header =
+    match Sys.getenv_opt variable with
+    | Some "" | None -> Error (`Unset variable)
+    | Some value -> Ok [ header ^ value ]
+  in
+  match
+    match Api.credential api with
+    | Anonymous -> Ok []
+    | Bearer variable -> secret variable "Authorization: Bearer "
+    | Keyed { header; variable } -> secret variable (header ^ ": ")
+  with
+  | Error _ as unset -> Lwt.return unset
+  | Ok credential ->
+      transferred (Api.base api ^ target)
+        ([ "Accept: application/json"; "User-Agent: teagent" ]
+        @ Option.fold ~none:[] ~some:(fun _ -> [ "Content-Type: application/json" ]) body
+        @ credential)
+        (fun handle ->
+          Curl.set_customrequest handle (Api.method_name meth);
+          Option.iter
+            (fun body ->
+              Curl.set_postfields handle body;
+              Curl.set_postfieldsize handle (String.length body))
+            body)
 
 let redacted text =
   let hidden = "[redacted secret]" in

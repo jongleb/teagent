@@ -3,6 +3,7 @@
 type t =
   | Fetch  (** [Fetch.get] and [Fetch.post] over the hosts granted with [--net]. *)
   | Model  (** [Model.judge]: the model teagent runs with picks one of the answers a program gives. *)
+  | Api of Api.t  (** A module of typed calls to an HTTP API the person described. *)
 
 (** Whether the person lets an irreversible call go ahead. *)
 type consent = Agrees | Declines

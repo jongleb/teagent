@@ -98,7 +98,43 @@ let () =
                          (In_channel.with_open_text file In_channel.input_all)))
                   (Filename.chop_suffix_opt ~suffix:".elm" name))
               (List.sort String.compare (Array.to_list names)))
-        (Os.granted !directory ~net:(List.rev !net))
+        (Os.granted !directory ~net:(List.rev !net)
+           ~apis:
+             (let file = List.fold_left Filename.concat !directory [ ".teagent"; "apis.json" ] in
+              match Yojson.Safe.from_file file with
+              | exception Sys_error _ -> []
+              | exception Yojson.Json_error reason -> failed (file ^ ": " ^ reason)
+              | `Assoc entries ->
+                  List.map
+                    (fun (name, entry) ->
+                      let field key =
+                        match entry with
+                        | `Assoc fields -> (
+                            match List.assoc_opt key fields with Some (`String value) -> Some value | _ -> None)
+                        | _ -> None
+                      in
+                      let spec =
+                        List.fold_left Filename.concat !directory
+                          [ ".teagent"; "apis"; Option.value ~default:(name ^ ".json") (field "spec") ]
+                      in
+                      Result.fold ~ok:Fun.id
+                        ~error:(fun reason -> failed (file ^ ": " ^ name ^ ": " ^ reason))
+                        (match Yojson.Safe.from_file spec with
+                        | exception Sys_error reason -> Error reason
+                        | exception Yojson.Json_error reason -> Error (spec ^ ": " ^ reason)
+                        | document ->
+                            Api.parsed ~name ~base:(field "base") ~token:(field "token")
+                              ~only:
+                                (match entry with
+                                | `Assoc fields -> (
+                                    match List.assoc_opt "operations" fields with
+                                    | Some (`List keys) ->
+                                        List.filter_map (function `String key -> Some key | _ -> None) keys
+                                    | _ -> [])
+                                | _ -> [])
+                              document))
+                    entries
+              | _ -> failed (file ^ ": it is not a JSON object of APIs by name")))
     in
     let granted =
       let file = List.fold_left Filename.concat !directory [ ".teagent"; "rules.elm" ] in

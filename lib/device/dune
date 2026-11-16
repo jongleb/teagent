@@ -22,4 +22,4 @@
 
 (library
  (name device)
- (libraries llm lwt tools value))
+ (libraries api llm lwt str tools value yojson))

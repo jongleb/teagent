@@ -23,6 +23,7 @@ module Calls : sig
   val all : t
   val taught : Skill.t list -> t -> t
   val without : Data.Kernel.agent list -> t -> t
+  val plugging : Device.t list -> t -> t
   val unplugged : Device.t list -> t -> t
   val source : t -> string
 end

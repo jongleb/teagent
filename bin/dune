@@ -2,4 +2,4 @@
  (name teagent)
  (public_name teagent)
  (package teagent)
- (libraries version driver handler lang llm mcp tools value lwt lwt.unix yojson))
+ (libraries api version driver handler lang llm mcp tools value lwt lwt.unix yojson))

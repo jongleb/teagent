@@ -413,6 +413,12 @@ that programs import: one that imports `shell` is not installed without `bash`. 
 worked can be kept with `save`: it lands in `.teagent/saved` if it typechecks, later programs
 import it by name, and it is typechecked again every time, so it never breaks at run time.
 
+HTTP APIs come in typed: list an OpenAPI document in `.teagent/apis.json`, and programs import
+a module with a record type per schema and a function per call. Arguments are typechecked,
+answers are checked against the schema before the program sees them, the token stays with
+teagent, and every call but a GET asks first. `search` finds calls in big APIs, such as
+GitHub's 1281.
+
 What needs a person (a request that cannot be taken back, a program that could leak the
 project, files other programs run) is asked of you, not the agent: teagent sends the question
 through MCP elicitation and the client shows it to you. A client without elicitation cannot ask,

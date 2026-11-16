@@ -352,6 +352,47 @@ runs; at startup such a module is left out, with the compiler's report on stderr
 `.teagent/saved` like any other code: it shows in `git status`, and deleting a file removes the
 module.
 
+## APIs
+
+`.teagent/apis.json` gives programs typed calls to HTTP APIs described by OpenAPI 3 documents:
+
+```json
+{
+  "Github": {
+    "spec": "github.json",
+    "token": "GITHUB_TOKEN",
+    "operations": ["issues/list-for-repo", "pulls/create"]
+  }
+}
+```
+
+Each entry is a module programs import by name, generated from `.teagent/apis/<spec>`: a record
+type for every schema it uses and a function for every operation, or only for those listed under
+`operations`. `base` overrides the document's first server. `token` names an environment
+variable; teagent sends its value as a bearer token, or in the header an `apiKey` scheme names,
+and a program never sees it. Like the profile, the file is off limits to the agent: an API
+listed there is your grant, apart from `--net`, and a contained shell still cannot reach it.
+
+A call takes a record of its required arguments and, when it has options, a record of them;
+`listItemsOptions` holds every option of `listItems` as `Nothing`:
+
+```elm
+let
+    options =
+        Github.issuesListForRepoOptions
+in
+Github.issuesListForRepo { owner = "ocaml", repo = "dune" } { options | perPage = Just 3 }
+```
+
+Arguments are typechecked like any other code. The answer is checked against the document's
+schema before the program sees it: a field of the wrong type, or a required one that is missing,
+fails the call with `Unexpected` and says which. `Failed status body` is an answer outside 2xx,
+`Unreachable` a network failure or an unset token. A GET or HEAD is a request out, asked about
+when it carries content of the project; every other method is irreversible and asked about
+first. A value the document does not type, such as a `oneOf`, reaches the program as its JSON
+text. An API with more than twenty calls is shown to the model as one line; over MCP the
+`search` tool finds the calls by words and returns their signatures and types.
+
 ## Rules
 
 `.teagent/rules.elm` holds your own rules, in Dartea. teagent asks them before every `read`,

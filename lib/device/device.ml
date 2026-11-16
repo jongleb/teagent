@@ -1,8 +1,8 @@
-type t = Fetch | Model
+type t = Fetch | Model | Api of Api.t
 type consent = Agrees | Declines
 
 let all = [ Fetch; Model ]
-let source = function Fetch -> Fetch_elm.source | Model -> Model_elm.source
+let source = function Fetch -> Fetch_elm.source | Model -> Model_elm.source | Api api -> Api.source api
 
 let failed module_name constructor detail =
   Value.V_constr { constructor = { module_name; name = constructor }; arguments = [ V_string detail ] }
@@ -25,12 +25,21 @@ let class_of ~name argument =
               (failed "Fetch" "Declined"
                  "the person did not let this request carry content of the project; ask them first");
         }
-  | _ -> Value.Pure
+  | _ -> (
+      match String.split_on_char '.' name with
+      | [ "api"; module_name; _ ] ->
+          Value.Irreversible
+            {
+              question = "make the call " ^ name ^ " of an API, which may not be taken back";
+              declined = failed module_name "Declined" "the person did not let this call go out; ask them first";
+            }
+      | _ -> Value.Pure)
 
 let refused ~name reason =
   match String.split_on_char '.' name with
   | "fetch" :: _ -> failed "Fetch" "Declined" reason
   | "model" :: _ -> failed "Model" "Declined" reason
+  | [ "api"; module_name; _ ] -> failed module_name "Declined" reason
   | _ -> Value.V_string reason
 
 let perform workspace ~name argument =
@@ -53,7 +62,180 @@ let perform workspace ~name argument =
         (Error
            (failed "Model" "Unreachable"
               "this run has no model to judge with: set ANTHROPIC_API_KEY or pass --openai"))
-  | _ -> Lwt.return (Error (Value.V_string ("no driver answers the call " ^ name)))
+  | _ -> (
+      match
+        match String.split_on_char '.' name with
+        | [ "api"; module_name; key ] ->
+            Option.bind (Tools.api workspace module_name) (fun api ->
+                Option.map (fun operation -> (api, operation)) (Api.operation api key))
+        | _ -> None
+      with
+      | None -> Lwt.return (Error (Value.V_string ("no driver answers the call " ^ name)))
+      | Some (api, (operation : Api.operation)) ->
+          let error constructor arguments =
+            Value.V_constr { constructor = { module_name = Api.name api; name = constructor }; arguments }
+          in
+          let maybe = function
+            | Value.V_constr { constructor = { name = "Just"; _ }; arguments = [ value ] } -> Some value
+            | _ -> None
+          in
+          let rec plain = function Value.V_labelled { value; _ } -> plain value | value -> value in
+          let rec encoded (shape : Api.shape) value : Yojson.Safe.t =
+            match (shape, plain value) with
+            | Api.Alias alias, value -> encoded (Api.alias api alias) value
+            | Text, V_string text -> `String text
+            | Raw, V_string text -> (
+                match Yojson.Safe.from_string text with json -> json | exception Yojson.Json_error _ -> `String text)
+            | Whole, V_number number -> `Int (Float.to_int number)
+            | Fraction, V_number number -> `Float number
+            | Truth, V_bool truth -> `Bool truth
+            | Listed inner, V_list values -> `List (List.map (encoded inner) values)
+            | Record fields, V_record values ->
+                `Assoc
+                  (List.filter_map
+                     (fun (field : Api.field) ->
+                       Option.bind (List.assoc_opt field.elm values) (fun value ->
+                           match field.presence with
+                           | Required -> Some (field.json, encoded field.shape value)
+                           | Optional ->
+                               Option.map (fun value -> (field.json, encoded field.shape value)) (maybe (plain value))))
+                     fields)
+            | _, _ -> `Null
+          in
+          let rec decoded (shape : Api.shape) (json : Yojson.Safe.t) =
+            match (shape, json) with
+            | Api.Alias alias, _ -> decoded (Api.alias api alias) json
+            | Empty, _ -> Ok Value.V_unit
+            | Raw, `String text -> Ok (Value.V_string text)
+            | Raw, _ -> Ok (Value.V_string (Yojson.Safe.to_string json))
+            | Text, `String text -> Ok (V_string text)
+            | Whole, `Int whole -> Ok (V_number (Float.of_int whole))
+            | (Whole | Fraction), `Intlit digits -> Ok (V_number (Float.of_string digits))
+            | Fraction, `Int whole -> Ok (V_number (Float.of_int whole))
+            | Fraction, `Float fraction -> Ok (V_number fraction)
+            | Truth, `Bool truth -> Ok (V_bool truth)
+            | Listed inner, `List items ->
+                Result.map
+                  (fun values -> Value.V_list values)
+                  (List.fold_right
+                     (fun item rest -> Result.bind (decoded inner item) (fun value -> Result.map (List.cons value) rest))
+                     items (Ok []))
+            | Record fields, `Assoc pairs ->
+                Result.map
+                  (fun values ->
+                    Value.V_record (List.sort (fun (one, _) (other, _) -> String.compare one other) values))
+                  (List.fold_right
+                     (fun (field : Api.field) rest ->
+                       Result.bind rest (fun rest ->
+                           match (field.presence, List.assoc_opt field.json pairs) with
+                           | Required, (None | Some `Null) ->
+                               Error ("the field " ^ field.json ^ " is missing")
+                           | Required, Some json ->
+                               Result.map (fun value -> (field.elm, value) :: rest)
+                                 (Result.map_error (fun reason -> field.json ^ ": " ^ reason) (decoded field.shape json))
+                           | Optional, (None | Some `Null) ->
+                               Ok
+                                 ((field.elm, Value.V_constr { constructor = { module_name = "Maybe"; name = "Nothing" }; arguments = [] })
+                                 :: rest)
+                           | Optional, Some json ->
+                               Result.map
+                                 (fun value ->
+                                   ( field.elm,
+                                     Value.V_constr { constructor = { module_name = "Maybe"; name = "Just" }; arguments = [ value ] } )
+                                   :: rest)
+                                 (Result.map_error (fun reason -> field.json ^ ": " ^ reason) (decoded field.shape json))))
+                     fields (Ok []))
+            | _, _ ->
+                let shown = Yojson.Safe.to_string json in
+                Error
+                  ("the API sent "
+                  ^ (match String.length shown > 200 with
+                    | true -> String.sub shown 0 200 ^ "..."
+                    | false -> shown)
+                  ^ " where its description promised another type")
+          in
+          let values =
+            match plain argument with
+            | Value.V_record [ ("options", options); ("required", required) ] ->
+                List.concat_map
+                  (fun part -> match plain part with Value.V_record values -> values | _ -> [])
+                  [ options; required ]
+            | _ -> []
+          in
+          let given (field : Api.field) =
+            Option.bind (List.assoc_opt field.elm values) (fun value ->
+                match field.presence with Required -> Some (plain value) | Optional -> Option.map plain (maybe (plain value)))
+          in
+          let escaped word =
+            String.concat ""
+              (List.map
+                 (function
+                   | ('A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '_' | '.' | '~') as kept -> String.make 1 kept
+                   | other -> Printf.sprintf "%%%02X" (Char.code other))
+                 (List.of_seq (String.to_seq word)))
+          in
+          let rendered (shape : Api.shape) value =
+            let rec words (shape : Api.shape) value =
+              match (shape, value) with
+              | Listed inner, Value.V_list items -> List.concat_map (fun item -> words inner (plain item)) items
+              | _, _ -> (
+                  match encoded shape value with
+                  | `String text -> [ text ]
+                  | `Int whole -> [ string_of_int whole ]
+                  | `Float fraction -> [ Printf.sprintf "%g" fraction ]
+                  | `Bool truth -> [ string_of_bool truth ]
+                  | json -> [ Yojson.Safe.to_string json ])
+            in
+            List.map escaped (words shape value)
+          in
+          let path =
+            List.fold_left
+              (fun path (parameter : Api.parameter) ->
+                match (parameter.place, given parameter.field) with
+                | Path, Some value ->
+                    Str.global_replace
+                      (Str.regexp_string ("{" ^ parameter.field.json ^ "}"))
+                      (String.concat "," (rendered parameter.field.shape value))
+                      path
+                | (Path | Query), _ -> path)
+              operation.path operation.parameters
+          in
+          let query =
+            List.concat_map
+              (fun (parameter : Api.parameter) ->
+                match (parameter.place, given parameter.field) with
+                | Query, Some value ->
+                    List.map (fun word -> escaped parameter.field.json ^ "=" ^ word)
+                      (rendered parameter.field.shape value)
+                | (Path | Query), _ -> [])
+              operation.parameters
+          in
+          Lwt.map
+            (function
+              | Error (`Unset variable) ->
+                  Error
+                    (error "Unreachable"
+                       [ V_string ("the API needs " ^ variable ^ " set in teagent's environment, and it is not") ])
+              | Error (`Unreachable reason) -> Error (error "Unreachable" [ V_string reason ])
+              | Ok ({ status; body } : Tools.fetched) when status < 200 || status > 299 ->
+                  Error (error "Failed" [ V_number (Float.of_int status); V_string body ])
+              | Ok { body; _ } -> (
+                  match
+                    match (operation.result, String.trim body) with
+                    | Empty, _ -> Ok Value.V_unit
+                    | Raw, text -> Ok (Value.V_string text)
+                    | shape, text -> (
+                        match Yojson.Safe.from_string text with
+                        | json -> decoded shape json
+                        | exception Yojson.Json_error reason -> Error ("the answer is not JSON: " ^ reason))
+                  with
+                  | Ok value -> Ok value
+                  | Error reason -> Error (error "Unexpected" [ V_string reason ])))
+            (Tools.requested api operation.meth
+               ~target:(path ^ match query with [] -> "" | _ :: _ -> "?" ^ String.concat "&" query)
+               ~body:
+                 (Option.bind operation.body (fun field ->
+                      Option.map (fun value -> Yojson.Safe.to_string (encoded field.shape value)) (given field)))))
 
 let judged model argument =
   match argument with

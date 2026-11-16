@@ -248,7 +248,7 @@ let () =
               ("save: the module was not checked, kept or imported\n"
               ^ Option.fold ~none:"" ~some:fst reused));
         (match listed with
-        | Some (`Assoc [ _; _; ("result", `Assoc [ ("tools", `List tools) ]) ]) when List.length tools = 8 ->
+        | Some (`Assoc [ _; _; ("result", `Assoc [ ("tools", `List tools) ]) ]) when List.length tools = 9 ->
             None
         | _ -> Some "tools/list: wrong tools");
         (match after_session with

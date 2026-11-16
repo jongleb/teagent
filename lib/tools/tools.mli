@@ -33,6 +33,7 @@ type limits = {
   reads : reads;
   net : string list;  (** Hosts a contained command may reach through the proxy, such as [*.npmjs.org]. *)
   seconds : int;  (** How long a command may run, by the clock and in CPU time per process. *)
+  apis : Api.t list;  (** HTTP APIs programs call with types; each is its own grant. *)
 }
 
 val at : string -> t
@@ -81,6 +82,15 @@ type fetched = { status : int; body : string }
 type request =
   | Get
   | Post of string  (** The body sent. *)
+
+val api : t -> string -> Api.t option
+
+val requested :
+  Api.t ->
+  Api.meth ->
+  target:string ->
+  body:string option ->
+  (fetched, [> `Unset of string | `Unreachable of string ]) result Lwt.t
 
 val fetch :
   t ->

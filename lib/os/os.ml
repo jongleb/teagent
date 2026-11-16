@@ -19,6 +19,7 @@ type view = {
   net : string list;
   boot : Handler.Boot.t;
   seconds : int;
+  apis : Api.t list;
 }
 
 type t = {
@@ -29,7 +30,7 @@ type t = {
   rules : (Lang.Skill.t * Lang.t list) list;
 }
 
-let granted root ~net =
+let granted ?(apis = []) root ~net =
   {
     root;
     allows =
@@ -40,6 +41,7 @@ let granted root ~net =
         net;
         boot = Handler.Boot.standard;
         seconds = 1800;
+        apis;
       };
     skills = [];
     saved = [];
@@ -331,6 +333,7 @@ let workspace os =
       reads = os.allows.reads;
       net = os.allows.net;
       seconds = os.allows.seconds;
+      apis = os.allows.apis;
     }
     (Tools.at os.root)
 
@@ -350,6 +353,7 @@ let table os =
             | Run | Fetch | Model -> None)
           missing)
   |> Lang.Calls.unplugged (List.filter_map device missing)
+  |> Lang.Calls.plugging (List.map (fun api -> Device.Api api) os.allows.apis)
   |> Lang.Calls.taught (os.skills @ os.saved)
 
 let learned skill os =
@@ -366,6 +370,43 @@ let learned skill os =
           ^ "\n\n\nmain : Task Never ()\nmain =\n    succeed ()\n"))
 
 let class_of os (tool : Value.tool) =
+  match
+    match tool with
+    | Call { name; argument } -> (
+        match String.split_on_char '.' name with
+        | [ "api"; module_name; key ] ->
+            Option.bind
+              (List.find_opt (fun api -> String.equal (Api.name api) module_name) os.allows.apis)
+              (fun api ->
+                Option.map
+                  (fun (operation : Api.operation) ->
+                    match operation.meth with
+                    | Get | Head ->
+                        Value.Egress
+                          {
+                            declined =
+                              Error
+                                (Device.refused ~name
+                                   "the person did not let this request carry content of the \
+                                    project; ask them first");
+                          }
+                    | Post | Put | Patch | Delete ->
+                        Value.Irreversible
+                          {
+                            question =
+                              Printf.sprintf "%s %s%s (%s), which cannot be taken back, with:\n%s"
+                                (Api.method_name operation.meth) (Api.base api) operation.path
+                                operation.key (Value.to_elm argument);
+                            declined =
+                              Device.refused ~name
+                                "the person did not let this call go out; ask them first";
+                          })
+                  (Api.operation api key))
+        | _ -> None)
+    | Read _ | Write _ | Edit _ | Grep _ | Shell _ | Enter _ | Leave | Merge _ -> None
+  with
+  | Some class_ -> class_
+  | None -> (
   match (tool, os.allows.net) with
   | Shell _, _ :: _ ->
       Value.Egress
@@ -381,7 +422,7 @@ let class_of os (tool : Value.tool) =
                      and can reach the network" );
                ]);
         }
-  | _, _ -> Handler.class_of tool
+  | _, _ -> Handler.class_of tool)
 
 type exposure = { reads : string list; inward : string list; outward : string list }
 
@@ -456,7 +497,11 @@ let image os =
                         | Policy -> `String "policy"
                         | Journal -> `String "journal")
                       (os.allows.boot :> Handler.Boot.layer list)) );
-               ("drivers", texts (List.map Device.source (List.filter_map device os.allows.offers)));
+               ( "drivers",
+                 texts
+                   (List.map Device.source
+                      (List.filter_map device os.allows.offers
+                      @ List.map (fun api -> Device.Api api) os.allows.apis)) );
                ("skills", texts (List.sort String.compare (List.map Lang.Skill.source (os.skills @ os.saved))));
                ("seconds", `Int os.allows.seconds);
                ("rules", texts (List.map (fun (rules, _) -> Lang.Skill.source rules) os.rules));

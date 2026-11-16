@@ -1,0 +1,23 @@
+{"openapi": "3.0.3", "info": {"title": "Shop", "version": "1"},
+ "servers": [{"url": "http://127.0.0.1:18765"}],
+ "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}},
+  "schemas": {
+   "Item": {"type": "object", "required": ["id", "name", "price", "tags"],
+     "properties": {"id": {"type": "integer"}, "name": {"type": "string"}, "price": {"type": "number"},
+                    "tags": {"type": "array", "items": {"type": "string"}}, "note": {"type": "string", "nullable": true}}},
+   "NewItem": {"type": "object", "required": ["name", "price"],
+     "properties": {"name": {"type": "string"}, "price": {"type": "number"}, "tags": {"type": "array", "items": {"type": "string"}}}}}},
+ "paths": {
+  "/items": {
+   "get": {"operationId": "list-items", "summary": "List the items",
+     "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer"}}],
+     "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}}}}}}},
+   "post": {"operationId": "create-item", "summary": "Add an item",
+     "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/NewItem"}}}},
+     "responses": {"201": {"description": "made", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}},
+  "/items/{id}": {
+   "get": {"operationId": "get-item", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+     "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}},
+   "delete": {"operationId": "delete-item", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+     "responses": {"204": {"description": "gone"}}}},
+  "/broken": {"get": {"operationId": "broken", "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}}}}}

@@ -354,6 +354,7 @@ let () =
                reads = Within [];
                seconds = 1800;
                net = [];
+               apis = [];
              }
              (Tools.at workspace)
          in
@@ -435,7 +436,7 @@ let () =
          Lwt.async (fun () -> Lwt.catch served (fun _ -> Lwt.return_unit));
          let limited =
            Tools.limited
-             { mounts = []; reads = Anywhere; net = [ "127.0.0.1" ]; seconds = 1800 }
+             { mounts = []; reads = Anywhere; net = [ "127.0.0.1" ]; seconds = 1800; apis = [] }
              (Tools.at workspace)
          in
          match
@@ -589,7 +590,7 @@ let () =
              | _ -> Some "no shell: the command ran or the program saw another code"));
         (let workspace = fresh () in
          let quick =
-           Tools.limited { mounts = []; reads = Anywhere; net = []; seconds = 2 } (Tools.at workspace)
+           Tools.limited { mounts = []; reads = Anywhere; net = []; seconds = 2; apis = [] } (Tools.at workspace)
          in
          let started_at = Unix.gettimeofday () in
          let contained, _ =

@@ -15,7 +15,7 @@ val calls : (string * call) list
     wider than the one it takes. *)
 type t
 
-val granted : string -> net:string list -> t
+val granted : ?apis:Api.t list -> string -> net:string list -> t
 val taught : Lang.Skill.t list -> t -> t
 val learned : Lang.Skill.t -> t -> (t, string) result
 val ruled : Lang.Skill.t -> t -> (t, string) result
@@ -33,6 +33,7 @@ type view = {
   net : string list;
   boot : Handler.Boot.t;  (** The layers around the tools; a narrower OS only lowers the budget. *)
   seconds : int;  (** How long one command may run; a narrower OS only lowers it. *)
+  apis : Api.t list;  (** HTTP APIs the person described; programs call them with types. *)
 }
 
 val view : t -> view

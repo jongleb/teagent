@@ -133,6 +133,8 @@ module Calls = struct
 
   let without kernels calls = { calls with dropped = List.sort_uniq compare (kernels @ calls.dropped) }
 
+  let plugging devices calls = { calls with plugged = calls.plugged @ devices }
+
   let unplugged devices calls =
     { calls with plugged = List.filter (fun device -> not (List.mem device devices)) calls.plugged }
 
@@ -241,7 +243,21 @@ module Calls = struct
             in
             blocks text))
     in
-    String.concat "\n\n" (List.map (fun (_, text) -> signed text) (modules calls (fst (settled calls))))
+    let listed, searched =
+      List.partition_map
+        (function
+          | Device.Api api when List.length (Api.operations api) > 20 ->
+              Either.Right
+                (Printf.sprintf
+                   "module %s: %d calls of %s, with their types; the `search` tool finds their \
+                    signatures"
+                   (Api.name api) (List.length (Api.operations api)) (Api.base api))
+          | device -> Either.Left device)
+        calls.plugged
+    in
+    String.concat "\n\n"
+      (List.map (fun (_, text) -> signed text) (modules { calls with plugged = listed } (fst (settled calls)))
+      @ searched)
 end
 
 let compile calls source =
@@ -273,15 +289,22 @@ let compile calls source =
              (List.map
                 (fun (name, module_source) ->
                   Project.Elm_file.of_path ~path:(name ^ ".elm") module_source)
-                (Calls.modules calls
-                   (reached
-                      (Result.fold ~error:(fun _ -> [])
-                         ~ok:(fun impls ->
-                           List.map
-                             (fun (import : Frontend.Import_thing.t) ->
-                               Data.Located.unwrap import.name)
-                             (imported impls))
-                         (parsed source))))
+                (let names =
+                   Result.fold ~error:(fun _ -> [])
+                     ~ok:(fun impls ->
+                       List.map
+                         (fun (import : Frontend.Import_thing.t) -> Data.Located.unwrap import.name)
+                         (imported impls))
+                     (parsed source)
+                 in
+                 let skills = reached names in
+                 let wanted = names @ List.concat_map (fun (skill : Skill.t) -> skill.modules) skills in
+                 Calls.modules
+                   {
+                     calls with
+                     plugged = List.filter (fun device -> List.mem (named device) wanted) calls.plugged;
+                   }
+                   skills)
              @ [
                  Project.Elm_file.of_path ~path:"Policy.elm" Policy.source;
                  Project.Elm_file.of_path ~path:"Main.elm" source;

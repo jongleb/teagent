@@ -167,6 +167,12 @@ let handled program json =
                ("code", "The Elm expression that takes the place of the hole.");
              ]
              [ "run"; "code" ]);
+        tool Os.Run "search"
+          "Find the calls of the HTTP APIs this session offers, the modules listed with a number \
+           of calls, by words such as `list issues` or `create pull request`. Returns their Elm \
+           signatures, what each does, and the record types they name; a type's name as the query \
+           returns that type."
+          (schema [ ("query", "Words to look for, or the name of a type.") ] [ "query" ]);
         tool Os.Run "save"
           "Keep a module that worked, so later programs import it instead of writing it again. \
            Send the whole module, `module Name exposing (...)` with its imports. It must \
@@ -217,6 +223,7 @@ let handled program json =
           | "fill", Some _ ->
               Result.bind (field "run") (fun run ->
                   Result.map (fun code -> `Fill (run, code)) (field "code"))
+          | "search", Some _ -> Result.map (fun query -> `Search query) (field "query")
           | "save", Some _ ->
               Result.bind (field "name") (fun name ->
                   Result.map (fun source -> `Save (name, source)) (field "module"))
@@ -368,6 +375,75 @@ let handled program json =
             Lwt.return (text report true)
         | Ok run -> went run)
     | Ok (`Fill (name, code)) -> resumed name code
+    | Ok (`Search query) ->
+        let contains text piece =
+          let rec at index =
+            index + String.length piece <= String.length text
+            && (String.equal (String.sub text index (String.length piece)) piece || at (index + 1))
+          in
+          at 0
+        in
+        let words =
+          List.filter
+            (fun word -> String.length word > 0)
+            (String.split_on_char ' ' (String.lowercase_ascii query))
+        in
+        let apis = (Os.view program.os).apis in
+        let found =
+          List.filteri
+            (fun index _ -> index < 8)
+            (List.stable_sort
+               (fun (one, _, _) (other, _, _) -> compare other one)
+               (List.concat_map
+                  (fun api ->
+                    List.filter_map
+                      (fun (operation : Api.operation) ->
+                        let haystack =
+                          String.lowercase_ascii
+                            (String.concat " " [ operation.key; operation.summary; operation.path ])
+                        in
+                        match List.length (List.filter (contains haystack) words) with
+                        | 0 -> None
+                        | score -> Some (score, api, operation))
+                      (Api.operations api))
+                  apis))
+        in
+        let types =
+          List.sort_uniq compare
+            (List.concat_map
+               (fun api ->
+                 List.filter_map
+                   (fun name -> Option.map (fun declaration -> (Api.name api, declaration)) (Api.declaration api name))
+                   (String.split_on_char ' ' query
+                   @ List.concat_map
+                       (fun (_, (other : Api.t), operation) ->
+                         match String.equal (Api.name other) (Api.name api) with
+                         | false -> []
+                         | true ->
+                             String.split_on_char ' '
+                               (String.map
+                                  (function ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_') as kept -> kept | _ -> ' ')
+                                  (Api.signature operation)))
+                       (List.filteri (fun index _ -> index < 2) found)))
+               apis)
+        in
+        Lwt.return
+          (match (found, types) with
+          | [], [] -> text ("Nothing matches " ^ query ^ ".") true
+          | _, _ ->
+              text
+                (String.concat "\n\n"
+                   (List.map
+                      (fun (_, api, (operation : Api.operation)) ->
+                        "-- " ^ Api.method_name operation.meth ^ " " ^ operation.path
+                        ^ (match operation.summary with "" -> "" | summary -> ": " ^ summary)
+                        ^ "\n" ^ Api.name api ^ "." ^ Api.signature operation)
+                      found
+                   @ List.map (fun (module_name, declaration) -> "-- in " ^ module_name ^ "\n" ^ declaration) types)
+                ^ "\n\nA call with options takes a record of them as its last argument; start from \
+                   the value named after the call with Options at the end, which sets every option \
+                   to Nothing.")
+                false)
     | Ok (`Save (name, source)) -> (
         match Result.bind (Lang.Skill.of_source ~name source) (fun skill -> Os.learned skill program.os) with
         | Error report -> Lwt.return (text ("Not saved:\n\n" ^ report) true)

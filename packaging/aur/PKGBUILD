@@ -1,0 +1,24 @@
+# Maintainer: Gleb <10594395+jongleb@users.noreply.github.com>
+pkgname=teagent-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='A coding agent whose unit of work is a typed program'
+arch=('x86_64' 'aarch64')
+url='https://github.com/jongleb/teagent'
+license=('BSD-3-Clause')
+depends=('glibc' 'curl')
+optdepends=('bubblewrap: the sandboxed shell')
+provides=('teagent')
+conflicts=('teagent')
+options=('!strip' '!debug')
+source_x86_64=("https://github.com/jongleb/teagent/releases/download/v${pkgver}/teagent-${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("https://github.com/jongleb/teagent/releases/download/v${pkgver}/teagent-${pkgver}-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('@SHA256:x86_64-unknown-linux-gnu@')
+sha256sums_aarch64=('@SHA256:aarch64-unknown-linux-gnu@')
+
+package() {
+  cd "teagent-${pkgver}-${CARCH}-unknown-linux-gnu"
+  install -Dm755 teagent "${pkgdir}/usr/bin/teagent"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 LICENSE licenses/* -t "${pkgdir}/usr/share/licenses/${pkgname}/"
+}

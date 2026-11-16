@@ -63,6 +63,12 @@ let () =
       ( "--trace",
         Arg.Unit (fun () -> trace := `Full),
         "  With --exec, print the program, every call and its result, and the diff" );
+      ( "--version",
+        Arg.Unit
+          (fun () ->
+            print_endline Version.number;
+            exit 0),
+        "  Print the version and exit" );
       ( "--mcp",
         Arg.Unit (fun () -> mode := `Mcp),
         "  Serve bash, read, write, edit, grep, run and fill to another agent over MCP (stdio)" );

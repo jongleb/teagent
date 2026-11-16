@@ -1,0 +1,21 @@
+pkgbase = teagent-bin
+	pkgdesc = A coding agent whose unit of work is a typed program
+	pkgver = @VERSION@
+	pkgrel = 1
+	url = https://github.com/jongleb/teagent
+	arch = x86_64
+	arch = aarch64
+	license = BSD-3-Clause
+	depends = glibc
+	depends = curl
+	optdepends = bubblewrap: the sandboxed shell
+	provides = teagent
+	conflicts = teagent
+	options = !strip
+	options = !debug
+	source_x86_64 = https://github.com/jongleb/teagent/releases/download/v@VERSION@/teagent-@VERSION@-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = @SHA256:x86_64-unknown-linux-gnu@
+	source_aarch64 = https://github.com/jongleb/teagent/releases/download/v@VERSION@/teagent-@VERSION@-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = @SHA256:aarch64-unknown-linux-gnu@
+
+pkgname = teagent-bin

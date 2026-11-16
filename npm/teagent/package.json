@@ -1,0 +1,26 @@
+{
+  "name": "teagent",
+  "version": "0.0.0",
+  "description": "A coding agent whose unit of work is a typed program: typechecked, planned, sandboxed, replayable.",
+  "keywords": ["agent", "mcp", "claude-code", "codex", "elm", "sandbox"],
+  "homepage": "https://github.com/jongleb/teagent",
+  "bugs": "https://github.com/jongleb/teagent/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jongleb/teagent.git",
+    "directory": "npm/teagent"
+  },
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "bin": {
+    "teagent": "bin/teagent.js"
+  },
+  "files": ["bin"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {}
+}

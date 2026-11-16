@@ -1,0 +1,303 @@
+name: release
+
+# A tag v<version> (the version in dune-project) builds the binaries and
+# publishes the GitHub release, the npm packages, the apt and dnf repositories,
+# the Homebrew formula and the AUR package. Running it by hand only builds and
+# keeps the artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: read
+        run: |
+          version=$(sed -n 's/^(version \(.*\))$/\1/p' dune-project)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version in dune-project" >&2
+            exit 1
+          fi
+
+  # Built on AlmaLinux 9, so the binary runs on glibc 2.34 and later.
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            arch: amd64
+            opam: x86_64
+            opam_sha256: edfca2630c373b44b7ee1c2f81cd8dcf67468d0db57d6c02158de553ac63dbd4
+            nfpm: x86_64
+            nfpm_sha256: 9170d25ea056d7329def38134b2bcad98d02d221f8331610dcd619e84d28c565
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+            opam: arm64
+            opam_sha256: c4106ece84bcb60c68342573d2d6b4f0d6770ee088015c2216adc83d8854dcf9
+            nfpm: arm64
+            nfpm_sha256: 7871d72bb1035924eab56031f962ae3f004b1f7695151789ef018bdbc507a2fa
+    runs-on: ${{ matrix.runner }}
+    container: almalinux:9
+    env:
+      OPAMROOT: /opt/opam
+      OPAMYES: "1"
+      OPAMCONFIRMLEVEL: unsafe-yes
+    steps:
+      - run: |
+          dnf install -y --setopt=install_weak_deps=False binutils bzip2 diffutils findutils \
+            gcc gcc-c++ git libcurl-devel m4 make patch perl pkgconf-pkg-config rsync tar unzip \
+            which xz
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - run: |
+          curl -fsSLo /usr/local/bin/opam \
+            https://github.com/ocaml/opam/releases/download/2.5.2/opam-2.5.2-${{ matrix.opam }}-linux
+          echo "${{ matrix.opam_sha256 }}  /usr/local/bin/opam" | sha256sum -c -
+          chmod 755 /usr/local/bin/opam
+      - id: opam
+        uses: actions/cache/restore@v4
+        with:
+          path: /opt/opam
+          key: opam-54-${{ matrix.target }}-${{ hashFiles('teagent.opam') }}
+          restore-keys: opam-54-${{ matrix.target }}-
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [ ! -x /opt/opam/54/bin/ocamlopt ]; then
+            rm -rf /opt/opam
+            opam init --bare --disable-sandboxing --no-setup
+            opam switch create 54 ocaml-base-compiler.5.4.0
+          fi
+          opam update
+          opam install --switch=54 . --deps-only
+          opam switch set 54
+      - if: always() && steps.opam.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /opt/opam
+          key: opam-54-${{ matrix.target }}-${{ hashFiles('teagent.opam') }}
+      - run: packaging/package.sh ${{ matrix.target }}
+      - run: |
+          curl -fsSLo /tmp/nfpm.tar.gz \
+            https://github.com/goreleaser/nfpm/releases/download/v2.46.3/nfpm_2.46.3_Linux_${{ matrix.nfpm }}.tar.gz
+          echo "${{ matrix.nfpm_sha256 }}  /tmp/nfpm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
+          export VERSION=${{ needs.version.outputs.version }} ARCH=${{ matrix.arch }}
+          cp -R "dist/teagent-$VERSION-${{ matrix.target }}" dist/package
+          nfpm package --config packaging/nfpm.yaml --packager deb --target dist/
+          nfpm package --config packaging/nfpm.yaml --packager rpm --target dist/
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+
+  macos:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, target: aarch64-apple-darwin }
+          - { runner: macos-15-intel, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.0"
+      - run: opam install . --deps-only
+      - run: packaging/package.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, linux, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          pattern: "*-{unknown-linux-gnu,apple-darwin}"
+          merge-multiple: true
+      - run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* install.sh \
+            --title "teagent ${{ needs.version.outputs.version }}" --generate-notes
+      - uses: actions/upload-artifact@v5
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+
+  # Trusted publishing: each package names this repository and release.yml on npmjs.com.
+  npm:
+    needs: [version, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          pattern: "*-{unknown-linux-gnu,apple-darwin}"
+          merge-multiple: true
+      - run: |
+          version=${{ needs.version.outputs.version }}
+          mkdir -p binaries
+          for pair in darwin-arm64:aarch64-apple-darwin darwin-x64:x86_64-apple-darwin \
+            linux-x64:x86_64-unknown-linux-gnu linux-arm64:aarch64-unknown-linux-gnu; do
+            tar -xzf "dist/teagent-$version-${pair##*:}.tar.gz" -C dist
+            install -m 755 "dist/teagent-$version-${pair##*:}/teagent" "binaries/teagent-${pair%%:*}"
+          done
+      - run: npm install --global npm@latest
+      - run: node npm/stage.mjs "${{ needs.version.outputs.version }}" binaries staged
+      - run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            (cd "staged/$platform" && npm publish --access public --provenance)
+          done
+          (cd staged/teagent && npm publish --access public --provenance)
+
+  # The apt and dnf repositories on GitHub Pages, signed with PACKAGES_SIGNING_KEY
+  # (armored, no passphrase). Without a tag or the key they are only built, with a
+  # throwaway key.
+  repository:
+    needs: [version, linux]
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.key.outputs.publish }}
+    env:
+      KEY: ${{ secrets.PACKAGES_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          pattern: "*-linux-gnu"
+          merge-multiple: true
+      - run: sudo apt-get update && sudo apt-get install -y apt-utils createrepo-c rpm
+      - id: key
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "$KEY" | gpg --batch --import
+            echo "publish=$GITHUB_REF_TYPE" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::PACKAGES_SIGNING_KEY is not set; the repositories are not published"
+            echo "publish=none" >> "$GITHUB_OUTPUT"
+            gpg --batch --passphrase '' --quick-gen-key "teagent test" ed25519 sign never
+          fi
+          echo "id=$(gpg --list-secret-keys --with-colons | awk -F: '$1 == "fpr" { print $10; exit }')" >> "$GITHUB_OUTPUT"
+      - run: packaging/repository.sh dist site ${{ steps.key.outputs.id }}
+      - run: |
+          cp install.sh site/
+          printf '<meta http-equiv="refresh" content="0; url=https://github.com/jongleb/teagent">\n' > site/index.html
+      - if: steps.key.outputs.publish == 'tag'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    needs: [release, repository]
+    if: needs.repository.outputs.publish == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  # Needs a token with write access to jongleb/homebrew-tap in HOMEBREW_TAP_TOKEN.
+  homebrew:
+    needs: [version, release]
+    runs-on: ubuntu-24.04
+    env:
+      TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - if: env.TOKEN == ''
+        run: echo "::warning::HOMEBREW_TAP_TOKEN is not set; the formula is not published"
+      - if: env.TOKEN != ''
+        uses: actions/checkout@v5
+      - if: env.TOKEN != ''
+        uses: actions/download-artifact@v5
+        with:
+          name: SHA256SUMS
+      - if: env.TOKEN != ''
+        run: |
+          version=${{ needs.version.outputs.version }}
+          git clone "https://x-access-token:$TOKEN@github.com/jongleb/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          packaging/render.sh packaging/homebrew/teagent.rb "$version" SHA256SUMS > tap/Formula/teagent.rb
+          cd tap
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add Formula/teagent.rb
+          git commit -m "teagent $version"
+          git push origin HEAD:main
+
+  # Needs the private key of an AUR account that owns teagent-bin in AUR_SSH_KEY.
+  aur:
+    needs: [version, release]
+    runs-on: ubuntu-24.04
+    env:
+      KEY: ${{ secrets.AUR_SSH_KEY }}
+    steps:
+      - if: env.KEY == ''
+        run: echo "::warning::AUR_SSH_KEY is not set; the AUR package is not published"
+      - if: env.KEY != ''
+        uses: actions/checkout@v5
+      - if: env.KEY != ''
+        uses: actions/download-artifact@v5
+        with:
+          name: SHA256SUMS
+      - if: env.KEY != ''
+        run: |
+          version=${{ needs.version.outputs.version }}
+          mkdir -p ~/.ssh
+          echo "$KEY" > ~/.ssh/aur && chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur"
+          git clone ssh://aur@aur.archlinux.org/teagent-bin.git aur
+          packaging/render.sh packaging/aur/PKGBUILD "$version" SHA256SUMS > aur/PKGBUILD
+          packaging/render.sh packaging/aur/.SRCINFO "$version" SHA256SUMS > aur/.SRCINFO
+          cd aur
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "teagent $version"
+          git push origin HEAD:master

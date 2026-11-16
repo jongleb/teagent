@@ -1,0 +1,33 @@
+# deb and rpm from the release directory copied to dist/package; VERSION and
+# ARCH (amd64 or arm64) come from the environment.
+name: teagent
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: Gleb <10594395+jongleb@users.noreply.github.com>
+description: A coding agent whose unit of work is a typed program
+homepage: https://github.com/jongleb/teagent
+license: BSD-3-Clause
+section: devel
+recommends:
+  - bubblewrap
+  - ca-certificates
+overrides:
+  deb:
+    depends:
+      - libcurl4 | libcurl4t64
+  rpm:
+    depends:
+      - libcurl
+contents:
+  - src: dist/package/teagent
+    dst: /usr/bin/teagent
+    file_info:
+      mode: 0755
+  - src: dist/package/README.md
+    dst: /usr/share/doc/teagent/README.md
+  - src: dist/package/LICENSE
+    dst: /usr/share/licenses/teagent/LICENSE
+  - src: dist/package/licenses/
+    dst: /usr/share/licenses/teagent/
+    type: tree

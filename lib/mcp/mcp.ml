@@ -322,11 +322,11 @@ let handled program json =
   | `Assoc fields -> (
       match (List.assoc_opt "method" fields, List.assoc_opt "id" fields) with
       | Some (`String "initialize"), Some id ->
-          let version =
+          let protocol =
             match List.assoc_opt "params" fields with
             | Some (`Assoc params) -> (
                 match List.assoc_opt "protocolVersion" params with
-                | Some (`String version) -> version
+                | Some (`String protocol) -> protocol
                 | Some _ | None -> "2025-06-18")
             | Some _ | None -> "2025-06-18"
           in
@@ -335,9 +335,9 @@ let handled program json =
                (reply id
                   (`Assoc
                     [
-                      ("protocolVersion", `String version);
+                      ("protocolVersion", `String protocol);
                       ("capabilities", `Assoc [ ("tools", `Assoc []) ]);
-                      ("serverInfo", `Assoc [ ("name", `String "teagent"); ("version", `String "0.1.0") ]);
+                      ("serverInfo", `Assoc [ ("name", `String "teagent"); ("version", `String Version.number) ]);
                       ( "instructions",
                         `String
                           "Use these tools for every change to the project and every command. \

@@ -2,3 +2,6 @@ _build/
 _build-linux/
 research_notes/
 reports/
+*.install
+dist/
+_build_dist/

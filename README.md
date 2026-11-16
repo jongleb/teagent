@@ -330,13 +330,40 @@ the question it exists to answer is still open.
 
 ## Install
 
-teagent needs OCaml 5.4 and the libraries Dartea builds with (menhir, ppx_jane, ppx_deriving,
-yojson, lwt, curl, str).
+macOS (Apple silicon or Intel) and Linux (x86_64 or arm64, glibc 2.34 or later):
+
+```console
+$ curl -fsSL https://jongleb.github.io/teagent/install.sh | sh   # any of them, into ~/.local/bin
+$ brew install jongleb/tap/teagent                                 # Homebrew, macOS and Linux
+$ npm install -g teagent                                           # Node 18 or later
+```
+
+| System | Command |
+| --- | --- |
+| Debian, Ubuntu | `curl -fsSL https://jongleb.github.io/teagent/teagent.gpg \| sudo tee /usr/share/keyrings/teagent.gpg >/dev/null`<br>`echo "deb [signed-by=/usr/share/keyrings/teagent.gpg] https://jongleb.github.io/teagent/deb stable main" \| sudo tee /etc/apt/sources.list.d/teagent.list`<br>`sudo apt update && sudo apt install teagent` |
+| Fedora, RHEL, Alma, Rocky | `sudo curl -fsSLo /etc/yum.repos.d/teagent.repo https://jongleb.github.io/teagent/teagent.repo`<br>`sudo dnf install teagent` |
+| Arch | `yay -S teagent-bin` |
+
+Every release also has the `.tar.gz`, `.deb` and `.rpm` files and their `SHA256SUMS` on
+[GitHub](https://github.com/jongleb/teagent/releases). On Linux the sandboxed shell needs
+bubblewrap; the deb and rpm packages pull it in.
+
+Then hand it to Claude Code or Codex from your project folder; with npx there is nothing to
+install first:
+
+```console
+$ claude mcp add --scope project teagent -- npx -y teagent --mcp
+$ codex mcp add teagent -- npx -y teagent --mcp
+```
+
+### From source
+
+teagent needs OCaml 5.4; opam installs the rest.
 
 ```console
 $ git clone --recurse-submodules https://github.com/jongleb/teagent.git
 $ cd teagent
-$ eval $(opam env --switch=<a 5.4 switch with those libraries>)
+$ opam install . --deps-only --with-test
 $ dune build
 $ dune test
 ```
@@ -391,7 +418,7 @@ through teagent:
 
 ```console
 $ cd ~/code/app
-$ claude mcp add --scope project teagent -- /path/to/teagent --mcp
+$ claude mcp add --scope project teagent -- teagent --mcp
 ```
 
 `.claude/settings.json`:

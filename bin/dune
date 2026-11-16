@@ -1,3 +1,5 @@
 (executable
  (name teagent)
- (libraries driver handler lang llm mcp tools value lwt lwt.unix yojson))
+ (public_name teagent)
+ (package teagent)
+ (libraries version driver handler lang llm mcp tools value lwt lwt.unix yojson))

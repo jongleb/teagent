@@ -772,7 +772,7 @@ let () =
                ^ Option.value ~default:"/nonexistent" (Sys.getenv_opt "SSH_AUTH_SOCK")
                ^ " </dev/null" );
              ("docker", "nc -U /var/run/docker.sock </dev/null");
-             ("parent", "ps eww -p $PPID | grep -q \"kept-[o]utside\"");
+             ("parent", "ps eww -p $PPID | grep -q 'kept-[o]utside'");
              ("dns", "nslookup example.com | grep -q '^Address' && nslookup example.com | tail -2 | grep -q Address");
            ]
          in

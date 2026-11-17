@@ -652,7 +652,11 @@ let () =
              flows "if String.length t > 3 then Fetch.get \"x\" else Fetch.get \"y\"",
              flows "shell \"ls\" |> andThen (\\r -> Fetch.get r.out)",
              flows "Fetch.get (String.toInt t |> Maybe.map (\\_ -> \"x\") |> Maybe.withDefault \"y\")",
-             flows "Fetch.get (String.concat (List.filter (\\w -> w == t) [ \"x\", \"y\" ]))" )
+             flows "Fetch.get (String.concat (List.filter (\\w -> w == t) [ \"x\", \"y\" ]))",
+             flows "Fetch.get (String.join \",\" ([ t ] ++ [ \"k\" ]))",
+             flows "Fetch.get (String.fromInt (List.length (String.lines t)))",
+             flows "Fetch.get (String.fromInt (List.length (List.reverse [ t, \"k\" ])))",
+             flows "case ( t == \"a\", 1 ) of\n                                ( True, _ ) -> Fetch.get \"x\"\n                                _ -> Fetch.get \"y\"\n                    " )
          with
         | ( Some [ File "a.txt" ],
             Some [],
@@ -660,9 +664,13 @@ let () =
             Some [ File "a.txt" ],
             Some [ Command ],
             Some [ File "a.txt" ],
+            Some [ File "a.txt" ],
+            Some [ File "a.txt" ],
+            Some [ File "a.txt" ],
+            Some [],
             Some [ File "a.txt" ] ) ->
             None
-        | one, two, three, four, five, six, seven ->
+        | one, two, three, four, five, six, seven, eight, nine, ten, eleven ->
             let shown =
               Option.fold ~none:"none" ~some:(fun sources ->
                   "["
@@ -678,7 +686,7 @@ let () =
                   ^ "]")
             in
             Some
-              ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six; seven ])));
+              ("labels: " ^ String.concat " " (List.map shown [ one; two; three; four; five; six; seven; eight; nine; ten; eleven ])));
         (let workspace = fresh () in
          Out_channel.with_open_text (Filename.concat workspace "mod.py") (fun channel ->
              Out_channel.output_string channel "x = 1\n");

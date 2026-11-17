@@ -55,6 +55,7 @@ Every value is an object with a single key that names its kind.
 | a tuple | `{"tuple": [...]}` |
 | a record | `{"record": {"label": value, ...}}`, labels sorted |
 | a constructor | `{"constr": {"module": "Agent", "name": "Denied", "arguments": [...]}}` |
+| a `Json.Encode.Value` | `{"json": ...}`, the JSON as is |
 | a function or a task | `{"opaque": null}` |
 
 The log needs the kinds to read values back without their types. A host that knows the types,

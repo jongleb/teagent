@@ -12,3 +12,4 @@ type edit =
 val json : Value.t -> Yojson.Safe.t
 val diff : Yojson.Safe.t -> Yojson.Safe.t -> edit list
 val edit_json : edit -> Yojson.Safe.t
+val at : Value.t -> step list -> Value.t option

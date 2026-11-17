@@ -56,15 +56,26 @@ module Json = struct
   let of_name name = Option.map fst (found name)
 end
 
+module Live = struct
+  type t = Perform | Listen
+
+  let of_name (name : Data.Name.t) =
+    match name with
+    | Global { module_name = "Live"; exported_name = "perform" } -> Some Perform
+    | Global { module_name = "Live"; exported_name = "listen" } -> Some Listen
+    | Global _ | Local _ -> None
+end
+
 module Compiler = Dartea.Compiler.Make (struct
   let extension = "ir"
   let runtime_modules _ = []
 
   let platform_kernel name =
-    Option.fold
-      ~none:(Option.map snd (Json.found name))
-      ~some:(fun kernel -> Some (Data.Kernel.agent_arity kernel))
-      (Data.Kernel.agent_of_name name)
+    match (Data.Kernel.agent_of_name name, Json.found name, Live.of_name name) with
+    | Some kernel, _, _ -> Some (Data.Kernel.agent_arity kernel)
+    | None, Some (_, arity), _ -> Some arity
+    | None, None, Some (Perform | Listen) -> Some 2
+    | None, None, None -> None
 
   let through _ = None
 
@@ -134,7 +145,7 @@ module Skill = struct
               (fun name ->
                 match
                   ( String.equal name expected,
-                    List.mem name ("Main" :: "Agent" :: "Policy" :: List.map named Device.all) )
+                    List.mem name ("Main" :: "Agent" :: "Live" :: "Policy" :: List.map named Device.all) )
                 with
                 | true, false -> Ok name
                 | false, _ -> Error ("the module is called " ^ name ^ ", not " ^ expected)
@@ -173,6 +184,14 @@ module Calls = struct
   type t = { dropped : Data.Kernel.agent list; plugged : Device.t list; skills : Skill.t list }
 
   let all = { dropped = []; plugged = Device.all; skills = [] }
+
+  let pure =
+    {
+      dropped =
+        [ Agent_read; Agent_write; Agent_edit; Agent_grep; Agent_shell; Agent_hole; Agent_enter; Agent_leave; Agent_merge ];
+      plugged = [];
+      skills = [];
+    }
 
   let taught skills calls =
     {
@@ -553,19 +572,51 @@ let compile calls source =
               };
             ]
 
-let compile_modules sources ~entries =
-  match List.find_opt (fun (_, source) -> Option.is_some (found "Elm.Kernel" source)) sources with
-  | Some (name, _) ->
+let compile_modules calls sources ~entries =
+  let reserved = "Main" :: "Agent" :: "Live" :: "Policy" :: List.map named Device.all in
+  match
+    ( List.find_opt (fun (_, source) -> Option.is_some (found "Elm.Kernel" source)) sources,
+      List.find_opt (fun (name, _) -> List.mem name reserved) sources )
+  with
+  | Some (name, _), _ ->
       Error
         ("-- KERNEL ACCESS ---------------------------------------------------- " ^ name
        ^ ".elm\n\nA module cannot name `Elm.Kernel` directly.")
-  | None -> (
+  | None, Some (name, _) ->
+      Error
+        ("-- RESERVED NAME ---------------------------------------------------- " ^ name
+       ^ ".elm\n\n" ^ name ^ " is a module of teagent; give this module another name.")
+  | None, None -> (
+      let installed, _ = Calls.settled calls in
+      let imports source =
+        Result.fold ~error:(fun _ -> [])
+          ~ok:(fun impls ->
+            List.map (fun (import : Frontend.Import_thing.t) -> Data.Located.unwrap import.name) (imported impls))
+          (parsed source)
+      in
+      let wanted =
+        let rec grown names =
+          match
+            List.filter
+              (fun (skill : Skill.t) ->
+                List.mem skill.name names
+                && List.exists (fun name -> not (List.mem name names)) skill.modules)
+              installed
+          with
+          | [] -> names
+          | more -> grown (List.sort_uniq String.compare (names @ List.concat_map (fun (skill : Skill.t) -> skill.modules) more))
+        in
+        grown (List.sort_uniq String.compare (List.concat_map (fun (_, source) -> imports source) sources))
+      in
       let outcome =
         Compiler.compile_modules ~entry:None
           (Project.Sources.of_list
              (List.map
                 (fun (name, source) -> Project.Elm_file.of_path ~path:(name ^ ".elm") source)
-                sources))
+                (Calls.modules
+                   { calls with plugged = List.filter (fun device -> List.mem (named device) wanted) calls.plugged }
+                   (List.filter (fun (skill : Skill.t) -> List.mem skill.name wanted) installed)
+                @ (("Live", Agent.live) :: sources))))
       in
       match outcome.errors with
       | _ :: _ as errors ->

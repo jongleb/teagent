@@ -21,6 +21,7 @@ module Calls : sig
   type t
 
   val all : t
+  val pure : t
   val taught : Skill.t list -> t -> t
   val without : Data.Kernel.agent list -> t -> t
   val plugging : Device.t list -> t -> t
@@ -60,9 +61,16 @@ module Json : sig
   val of_name : Data.Name.t -> t option
 end
 
+(** A kernel of [Live]: it builds a [Cmd] or a [Sub] around an Agent task. *)
+module Live : sig
+  type t = Perform | Listen
+
+  val of_name : Data.Name.t -> t option
+end
+
 val module_name : string -> string option
 val compile : Calls.t -> string -> (t list, string) result
 
 val compile_modules :
-  (string * string) list -> entries:Value.global list -> (t list, string) result
+  Calls.t -> (string * string) list -> entries:Value.global list -> (t list, string) result
 val calls : t list -> call list

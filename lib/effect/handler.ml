@@ -199,6 +199,15 @@ let class_of : Value.tool -> Value.class_ = function
   | Shell _ -> Contained
   | Call { name; argument } -> Device.class_of ~name argument
 
+let answering answer =
+  {
+    perform =
+      (fun (tool : Value.tool) _ () ->
+        match tool with
+        | Call { name; argument } -> Lwt.map (fun result -> Performed (result, ())) (answer ~name argument)
+        | Read _ | Write _ | Edit _ | Grep _ | Shell _ | Enter _ | Leave | Merge _ -> Lwt.return Blocked);
+  }
+
 let run workspace =
   let located path within =
     match Tools.Path.of_string path with

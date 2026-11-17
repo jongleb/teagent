@@ -36,6 +36,7 @@ type shell =
 val shells : (string * shell) list
 val class_of : Value.tool -> Value.class_
 
+val answering : (name:string -> Value.t -> (Value.t, Value.t) result Lwt.t) -> unit t
 val run : Tools.t -> unit t
 val staged : Tools.t -> shell -> Overlay.t t
 val judging : Llm.t -> 'state t -> 'state t

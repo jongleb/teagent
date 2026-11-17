@@ -336,6 +336,10 @@ and called program (callee : Value.t) arguments : Value.t =
         | Anonymous -> closure.scope
         | Named name -> Value.Scope.add name callee closure.scope)
         closure.parameters arguments
+  | V_task task, [ callback ] -> (
+      match peeled callback with
+      | more, V_closure callback -> Value.labelled more (V_task (Map { callback; task }))
+      | _ -> stuck "a task called with a value that is not a function")
   | _, _ :: _ -> stuck "a call of a value that is not a function"
 
 and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
@@ -661,6 +665,29 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
           stuck
             ("a kernel with the wrong arguments: "
             ^ Data.Name.to_string (Data.Kernel.origin language)))
+  | B_kernel { kernel = Platform { name; _ }; arguments } when Option.is_some (Lang.Live.of_name name)
+    -> (
+      let found = List.map (fun argument -> peeled (atom program ~home scope argument)) arguments in
+      let around task : Value.t = Value.labelled (List.concat_map fst found) (V_task task) in
+      match (Lang.Live.of_name name, List.map snd found) with
+      | Some Perform, [ V_closure callback; V_task task ] ->
+          V_constr
+            {
+              constructor = { module_name = "Platform.Cmd"; name = "Perform" };
+              arguments = [ around (Map { callback; task }) ];
+            }
+      | Some Listen, [ V_string source; V_closure callback ] ->
+          V_constr
+            {
+              constructor = { module_name = "Platform.Sub"; name = "Listen" };
+              arguments =
+                [
+                  V_string source;
+                  around
+                    (Map { callback; task = Tool (Call { name = "listen." ^ source; argument = V_unit }) });
+                ];
+            }
+      | _ -> stuck ("a Live kernel with the wrong arguments: " ^ Data.Name.to_string name))
   | B_kernel { kernel = Platform { name; _ }; arguments } -> (
       match Lang.Json.of_name name with
       | Some kernel -> (

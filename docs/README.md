@@ -5,6 +5,7 @@
 | [guide.md](guide.md) | the user guide | what happens at every step, every flag and setting, and where you are safe and where you are not |
 | [micro-os.md](micro-os.md) | the design note | why teagent is a small OS whose rights are one value, and the order it was built in |
 | [../lib/manual/Manual.md](../lib/manual/Manual.md) | the reference an agent gets | how to write a program for teagent: every call, how a run goes, errors, what needs a person; it is the `run` tool's description and the model's prompt |
+| [live.md](live.md) | the embedding note | how a host runs a long-lived program, such as a widget: model, view, messages, commands, subscriptions and rights |
 | [abi.md](abi.md) | the specification | the call table, the JSON of values, the session log and the image hash, version 2 |
 | [research/llm-security.md](research/llm-security.md) | a research report | the state of LLM agent security in 2024–2026, where teagent stands, and the plan P0 to P3 |
 | [research/frontier.md](research/frontier.md) | a research report | the research frontier of 2025–2026 around teagent: code as action, typed generation, agent runtimes, evaluation, training, PL foundations; where teagent stands and a roadmap |

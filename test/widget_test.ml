@@ -19,7 +19,7 @@ let () =
     Result.map (Interp.load ~budget:(Total 10_000_000))
       (Result.map_error
          (fun report -> `Lang report)
-         (Lang.compile_modules sources ~entries:[ render; source ]))
+         (Lang.compile_modules Lang.Calls.pure sources ~entries:[ render; source ]))
   in
   let called program name argument =
     Result.bind (Interp.lookup program name) (function
@@ -73,7 +73,7 @@ let () =
             Result.bind
               (Result.map_error
                  (fun report -> `Lang report)
-                 (Lang.compile_modules sources ~entries:[ render; source ]))
+                 (Lang.compile_modules Lang.Calls.pure sources ~entries:[ render; source ]))
               (fun modules ->
                 let drawn budget =
                   let program = Interp.load ~budget modules in
@@ -112,12 +112,12 @@ let () =
                 | Ok _ -> Ok (Some "a declaration no entry reaches was kept")
                 | Error (`Interp _ as error) -> Error error));
         run "missing entry" (fun () ->
-            match Lang.compile_modules sources ~entries:[ { module_name = "Harness"; name = "view" } ] with
+            match Lang.compile_modules Lang.Calls.pure sources ~entries:[ { module_name = "Harness"; name = "view" } ] with
             | Error _ -> Ok None
             | Ok _ -> Ok (Some "an entry the modules do not expose compiled"));
         run "type error" (fun () ->
             match
-              Lang.compile_modules
+              Lang.compile_modules Lang.Calls.pure
                 (List.map
                    (fun (name, text) ->
                      match name with

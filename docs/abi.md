@@ -72,6 +72,14 @@ logged and is not part of this ABI.
 | a record | `{"label": value, ...}`, labels sorted |
 | a constructor | `"Nothing"`, or `["Just", argument, ...]` |
 
+A path walks this JSON: a number indexes an array, a string names a member of an object. In a
+constructor with arguments the name is element 0, so argument n is at index n + 1. For example,
+`[Shown 3 "hi", Button { label = "+", onPress = Clicked }, Field Typed]` is
+`[["Shown",3,"hi"],["Button",{"label":"+","onPress":"Clicked"}],["Field",null]]`. The message
+`Clicked` is at `[1, 1, "onPress"]`, and the function `Typed : String -> Msg` is at `[2, 1]`; a
+function shows as `null`, but its path still finds it. `Wire.at` follows the same path through the
+`Value.t` the JSON came from.
+
 `Wire.diff old new` gives the edits that turn one compact tree into the other, applied in order:
 `{"path": [3, "name"], "set": value}` replaces the node at the path (numbers index arrays,
 strings name members), and `{"path": [...], "at": 2, "removed": 1, "inserted": [...]}` splices

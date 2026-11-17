@@ -74,3 +74,17 @@ let edit_json edit : Yojson.Safe.t =
   | Splice { path; at; removed; inserted } ->
       `Assoc
         [ located path; ("at", `Int at); ("removed", `Int removed); ("inserted", `List inserted) ]
+
+let rec at (value : Value.t) path =
+  let within items index rest = Option.bind (List.nth_opt items index) (fun item -> at item rest) in
+  match (value, path) with
+  | V_labelled { value; _ }, _ -> at value path
+  | _, [] -> Some value
+  | (V_list items | V_tuple items), Index index :: rest when index >= 0 -> within items index rest
+  | V_constr { arguments; _ }, Index index :: rest when index > 0 -> within arguments (index - 1) rest
+  | V_record fields, Key label :: rest ->
+      Option.bind (List.assoc_opt label fields) (fun field -> at field rest)
+  | ( ( V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _ | V_record _
+      | V_constr _ | V_closure _ | V_task _ | V_json _ ),
+      (Index _ | Key _) :: _ ) ->
+      None

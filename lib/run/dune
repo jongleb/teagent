@@ -1,3 +1,4 @@
 (library
  (name run)
+ (public_name teagent.run)
  (libraries lang interp handler tools value lwt))

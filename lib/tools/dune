@@ -1,3 +1,4 @@
 (library
  (name tools)
+ (public_name teagent.tools)
  (libraries api curl lwt lwt.unix str threads.posix yojson))

@@ -1,5 +1,6 @@
 (library
- (name version))
+ (name version)
+ (public_name teagent.version))
 
 (rule
  (target version.ml)

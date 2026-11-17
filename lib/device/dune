@@ -33,4 +33,5 @@
 
 (library
  (name device)
+ (public_name teagent.device)
  (libraries api llm lwt str tools value yojson))

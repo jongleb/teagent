@@ -1,3 +1,4 @@
 (library
  (name value)
+ (public_name teagent.value)
  (libraries dartea.ir tools yojson))

@@ -1,3 +1,4 @@
 (library
  (name wire)
+ (public_name teagent.wire)
  (libraries value yojson))

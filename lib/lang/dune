@@ -1,5 +1,6 @@
 (library
  (name lang)
+ (public_name teagent.lang)
  (libraries
   agent
   api

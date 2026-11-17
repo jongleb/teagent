@@ -1,3 +1,4 @@
 (library
  (name os)
+ (public_name teagent.os)
  (libraries api dartea.data device handler interp lang tools value yojson))

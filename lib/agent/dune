@@ -10,4 +10,5 @@
     (echo "|elm}\n")))))
 
 (library
- (name agent))
+ (name agent)
+ (public_name teagent.agent))

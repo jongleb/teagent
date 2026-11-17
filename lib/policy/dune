@@ -10,4 +10,5 @@
     (echo "|elm}\n")))))
 
 (library
- (name policy))
+ (name policy)
+ (public_name teagent.policy))

@@ -1,3 +1,4 @@
 (library
  (name interp)
+ (public_name teagent.interp)
  (libraries lang tools value dartea.data dartea.ir dartea.primitives))

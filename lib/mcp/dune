@@ -1,3 +1,4 @@
 (library
  (name mcp)
+ (public_name teagent.mcp)
  (libraries version manual device driver handler lang os run tools value lwt yojson))

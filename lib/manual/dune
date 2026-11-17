@@ -10,4 +10,5 @@
     (echo "|md}\n")))))
 
 (library
- (name manual))
+ (name manual)
+ (public_name teagent.manual))

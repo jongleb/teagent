@@ -74,7 +74,19 @@ let posted ~url ~headers body =
       if not (Atomic.get cancelled) then Lwt.wakeup wakener exchanged);
   waiting
 
-let complete provider ~system messages =
+type usage = { input : int; output : int; cached : int; written : int }
+type reply = { text : string; usage : usage }
+
+let answered provider ~system messages =
+  let counted json key =
+    match json with
+    | `Assoc fields -> (
+        match List.assoc_opt "usage" fields with
+        | Some (`Assoc usage) -> (
+            match List.assoc_opt key usage with Some (`Int count) -> count | _ -> 0)
+        | _ -> 0)
+    | _ -> 0
+  in
   let turns =
     List.map
       (fun { role; text } ->
@@ -118,6 +130,7 @@ let complete provider ~system messages =
                         | Max -> "max") );
                   ] );
               ("fallbacks", `String "default");
+              ("cache_control", `Assoc [ ("type", `String "ephemeral") ]);
             ],
           fun (json : Yojson.Safe.t) ->
             match
@@ -130,7 +143,16 @@ let complete provider ~system messages =
                      (Yojson.Safe.to_string (Yojson.Safe.Util.member "stop_details" json)))
             | _, `List blocks ->
                 Ok
-                  (String.concat ""
+                  {
+                    usage =
+                      {
+                        input = counted json "input_tokens";
+                        output = counted json "output_tokens";
+                        cached = counted json "cache_read_input_tokens";
+                        written = counted json "cache_creation_input_tokens";
+                      };
+                    text =
+                  String.concat ""
                      (List.filter_map
                         (fun block ->
                           match
@@ -139,7 +161,8 @@ let complete provider ~system messages =
                           with
                           | `String "text", `String text -> Some text
                           | _, _ -> None)
-                        blocks))
+                        blocks);
+                  }
             | _, _ -> Error (Unreadable (Yojson.Safe.to_string json)) )
     | Openai_compatible { url; key; model } ->
         ( url ^ "/chat/completions",
@@ -159,7 +182,18 @@ let complete provider ~system messages =
                 match
                   Yojson.Safe.Util.member "content" (Yojson.Safe.Util.member "message" choice)
                 with
-                | `String text -> Ok text
+                | `String text ->
+                    Ok
+                      {
+                        text;
+                        usage =
+                          {
+                            input = counted json "prompt_tokens";
+                            output = counted json "completion_tokens";
+                            cached = 0;
+                            written = 0;
+                          };
+                      }
                 | _ -> Error (Unreadable (Yojson.Safe.to_string json)))
             | _ -> Error (Unreadable (Yojson.Safe.to_string json)) )
   in
@@ -185,6 +219,9 @@ let complete provider ~system messages =
     | Ok { code; body; _ } -> Lwt.return (Error (`Llm (Status { code; body })))
   in
   attempt 4 1.
+
+let complete provider ~system messages =
+  Lwt.map (Result.map (fun reply -> reply.text)) (answered provider ~system messages)
 
 let efforts =
   [ ("low", Low); ("medium", Medium); ("high", High); ("xhigh", Xhigh); ("max", Max) ]

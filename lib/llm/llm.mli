@@ -24,6 +24,13 @@ type error =
   | Refusal of string  (** The model declined the request. *)
   | Unreadable of string  (** The answer is not the JSON this client expects. *)
 
+(** Tokens one completion took: [input] uncached, [cached] read from the prompt cache, [written]
+    into it. *)
+type usage = { input : int; output : int; cached : int; written : int }
+
+type reply = { text : string; usage : usage }
+
+val answered : t -> system:string -> message list -> (reply, [> `Llm of error ]) result Lwt.t
 val complete : t -> system:string -> message list -> (string, [> `Llm of error ]) result Lwt.t
 val efforts : (string * effort) list
 

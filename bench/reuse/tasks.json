@@ -1,0 +1,26 @@
+{
+  "operations": [
+    "repos/get", "repos/list-languages", "repos/list-tags", "repos/get-readme",
+    "repos/list-contributors", "repos/list-branches", "repos/get-branch", "repos/list-releases",
+    "repos/get-latest-release", "repos/list-commits", "repos/get-commit", "repos/list-for-org",
+    "licenses/get-for-repo", "pulls/get", "pulls/list", "pulls/list-commits", "pulls/list-files",
+    "pulls/list-reviews", "issues/get", "issues/list-for-repo", "issues/list-comments",
+    "issues/list-labels-for-repo", "issues/get-label", "users/get-by-username", "orgs/get",
+    "search/issues-and-pull-requests", "search/repos", "activity/list-stargazers-for-repo",
+    "git/get-ref", "repos/get-content"
+  ],
+  "tasks": [
+    { "name": "repo_dune", "task": "Find the license (as an SPDX id) and the default branch of the GitHub repository ocaml/dune.", "answer": ["MIT", "main"] },
+    { "name": "repo_mirage", "task": "Find the license (as an SPDX id) and the default branch of the GitHub repository mirage/mirage.", "answer": ["ISC", "main"] },
+    { "name": "repo_base", "task": "Find the license (as an SPDX id) and the default branch of the GitHub repository janestreet/base.", "answer": ["MIT", "master"] },
+    { "name": "repo_opam", "task": "Find the default branch and the main language of the GitHub repository ocaml/opam.", "answer": ["master", "OCaml"] },
+    { "name": "pull_dune", "task": "Who opened pull request #1001 in the GitHub repository ocaml/dune, what is its title, and was it merged?", "answer": ["emillon", "external-lib-deps"] },
+    { "name": "pull_opam", "task": "Who opened pull request #1003 in the GitHub repository ocaml/opam, what is its title, and was it merged?", "answer": ["dsheets", "leading"] },
+    { "name": "pull_mirage", "task": "Who opened pull request #1002 in the GitHub repository mirage/mirage, what is its title, and was it merged?", "answer": ["hannesm", "alpine"] },
+    { "name": "pull_lsp", "task": "Who opened pull request #1001 in the GitHub repository ocaml/ocaml-lsp, what is its title, and was it merged?", "answer": ["ulugbekna", "1.15.0"] },
+    { "name": "issue_dune", "task": "Who opened issue #100 in the GitHub repository ocaml/dune, and is it open or closed now?", "answer": ["andrewray", "closed"] },
+    { "name": "issue_opam", "task": "Who opened issue #1000 in the GitHub repository ocaml/opam, and is it open or closed now?", "answer": ["lpw25", "closed"] },
+    { "name": "issue_mirage", "task": "Who opened issue #500 in the GitHub repository mirage/mirage, and is it open or closed now?", "answer": ["samoht", "closed"] },
+    { "name": "issue_base", "task": "Who opened issue #50 in the GitHub repository janestreet/base, and is it open or closed now?", "answer": ["XVilka", "closed"] }
+  ]
+}

@@ -77,6 +77,16 @@ let posted ~url ~headers body =
 type usage = { input : int; output : int; cached : int; written : int }
 type reply = { text : string; usage : usage }
 
+let unused = { input = 0; output = 0; cached = 0; written = 0 }
+
+let added one other =
+  {
+    input = one.input + other.input;
+    output = one.output + other.output;
+    cached = one.cached + other.cached;
+    written = one.written + other.written;
+  }
+
 let answered provider ~system messages =
   let counted json key =
     match json with

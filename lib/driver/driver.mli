@@ -36,15 +36,16 @@ type stop =
   | Too_many_programs
   | Unanswered  (** The model had no reply after the last run. *)
   | Open_hole of string  (** The model sent no code for the hole a run stopped at: its question. *)
+  | Cancelled  (** Stopped from outside. *)
 
 (** How a session ended, and how many compile rounds each program took. *)
 type report = { ending : (string, stop) result; rounds : int list }
 
 (** Everything a session touches outside itself: the model, the person, the tools, the disk. *)
 type world = {
-  ask : system:string -> Llm.message list -> (string, [ `Llm of Llm.error | `Silent ]) result Lwt.t;
+  ask : system:string -> Llm.message list -> (Llm.reply, [ `Llm of Llm.error | `Silent ]) result Lwt.t;
       (** [`Silent] when no reply will come, as when a person runs a program by hand. *)
-  approve : string -> decision Lwt.t;
+  approve : Tools.change list -> decision Lwt.t;  (** Shown to the person as a [Staged] diff. *)
   person : string -> Device.consent Lwt.t;  (** Asked before an irreversible call. *)
   handler : Handler.Overlay.t Handler.t;  (** The tools; the OS boots its layers around them. *)
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;

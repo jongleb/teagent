@@ -62,92 +62,86 @@ module Overlay = struct
         match overlay.parents with [] -> overlay | parent :: parents -> { frame = parent; parents })
     | Read _ | Write _ | Edit _ | Grep _ | Shell _ | Call _ | Merge _ -> added overlay changes
 
-  (** One line of a diff, with the line numbers before it in each version. *)
-  type line = { mark : mark; text : string; old_at : int; new_at : int }
+  type hunk = { old_start : int; new_start : int; lines : line list }
+  and line = Kept of string | Removed of string | Added of string
 
-  (** Whether a line stayed, went or came. *)
-  and mark = Kept | Removed | Added
-
-  let diff changes =
+  let hunks ({ before; after; _ } : Tools.change) =
     let lines text =
       match List.rev (String.split_on_char '\n' text) with
       | "" :: rest -> Array.of_list (List.rev rest)
       | all -> Array.of_list (List.rev all)
     in
-    let rendered ({ path; before; after } : Tools.change) =
-      let old = lines (Option.value ~default:"" before)
-      and fresh = lines (Option.value ~default:"" after) in
-      let rows = Array.length old and columns = Array.length fresh in
-      let common = Array.make_matrix (rows + 1) (columns + 1) 0 in
-      for row = rows - 1 downto 0 do
-        for column = columns - 1 downto 0 do
-          common.(row).(column) <-
-            (if String.equal old.(row) fresh.(column) then
-               common.(row + 1).(column + 1) + 1
-             else max common.(row + 1).(column) common.(row).(column + 1))
-        done
-      done;
-      let rec walked row column found =
-        match (row < rows, column < columns) with
-        | true, true when String.equal old.(row) fresh.(column) ->
-            walked (row + 1) (column + 1)
-              ({ mark = Kept; text = old.(row); old_at = row; new_at = column } :: found)
-        | true, _
-          when column = columns
-               || common.(row + 1).(column) >= common.(row).(column + 1) ->
-            walked (row + 1) column
-              ({ mark = Removed; text = old.(row); old_at = row; new_at = column }
-              :: found)
-        | _, true ->
-            walked row (column + 1)
-              ({ mark = Added; text = fresh.(column); old_at = row; new_at = column }
-              :: found)
-        | false, false | true, false -> Array.of_list (List.rev found)
-      in
-      let script = walked 0 0 [] in
-      let context = 3 in
-      let changed =
-        List.filter
-          (fun index -> match script.(index).mark with Kept -> false | Removed | Added -> true)
-          (List.init (Array.length script) Fun.id)
-      in
-      let groups =
-        List.rev
-          (List.fold_left
-             (fun groups index ->
-               match groups with
-               | (first, last) :: rest when index - last <= 2 * context ->
-                   (first, index) :: rest
-               | _ -> (index, index) :: groups)
-             [] changed)
-      in
-      let hunk (first, last) =
-        let low = max 0 (first - context)
-        and high = min (Array.length script - 1) (last + context) in
-        let span = Array.to_list (Array.sub script low (high - low + 1)) in
-        let counted keep =
-          List.length (List.filter (fun line -> keep line.mark) span)
-        in
-        let olds = counted (function Kept | Removed -> true | Added -> false)
-        and news = counted (function Kept | Added -> true | Removed -> false) in
-        Printf.sprintf "@@ -%d,%d +%d,%d @@\n%s"
-          (if olds = 0 then script.(low).old_at else script.(low).old_at + 1)
-          olds
-          (if news = 0 then script.(low).new_at else script.(low).new_at + 1)
-          news
-          (String.concat ""
-             (List.map
-                (fun line ->
-                  (match line.mark with Kept -> " " | Removed -> "-" | Added -> "+")
-                  ^ Tools.revealed line.text ^ "\n")
-                span))
-      in
-      Printf.sprintf "--- %s\n+++ %s\n%s"
-        (Option.fold ~none:"/dev/null" ~some:(fun _ -> "a/" ^ (path :> string)) before)
-        (Option.fold ~none:"/dev/null" ~some:(fun _ -> "b/" ^ (path :> string)) after)
-        (String.concat "" (List.map hunk groups))
+    let old = lines (Option.value ~default:"" before) and fresh = lines (Option.value ~default:"" after) in
+    let rows = Array.length old and columns = Array.length fresh in
+    let common = Array.make_matrix (rows + 1) (columns + 1) 0 in
+    for row = rows - 1 downto 0 do
+      for column = columns - 1 downto 0 do
+        common.(row).(column) <-
+          (if String.equal old.(row) fresh.(column) then common.(row + 1).(column + 1) + 1
+           else max common.(row + 1).(column) common.(row).(column + 1))
+      done
+    done;
+    let rec walked row column found =
+      match (row < rows, column < columns) with
+      | true, true when String.equal old.(row) fresh.(column) ->
+          walked (row + 1) (column + 1) ((Kept old.(row), row, column) :: found)
+      | true, _ when column = columns || common.(row + 1).(column) >= common.(row).(column + 1) ->
+          walked (row + 1) column ((Removed old.(row), row, column) :: found)
+      | _, true -> walked row (column + 1) ((Added fresh.(column), row, column) :: found)
+      | false, false | true, false -> Array.of_list (List.rev found)
     in
-    String.concat "" (List.map rendered changes)
+    let script = walked 0 0 [] in
+    let context = 3 in
+    let changed =
+      List.filter
+        (fun index -> match script.(index) with Kept _, _, _ -> false | (Removed _ | Added _), _, _ -> true)
+        (List.init (Array.length script) Fun.id)
+    in
+    List.rev_map
+      (fun (first, last) ->
+        let low = max 0 (first - context) and high = min (Array.length script - 1) (last + context) in
+        let span = Array.to_list (Array.sub script low (high - low + 1)) in
+        let lines = List.map (fun (line, _, _) -> line) span in
+        let _, old_at, new_at = script.(low) in
+        let counted keep = List.length (List.filter keep lines) in
+        {
+          old_start =
+            (match counted (function Kept _ | Removed _ -> true | Added _ -> false) with 0 -> old_at | _ -> old_at + 1);
+          new_start =
+            (match counted (function Kept _ | Added _ -> true | Removed _ -> false) with 0 -> new_at | _ -> new_at + 1);
+          lines;
+        })
+      (List.fold_left
+         (fun groups index ->
+           match groups with
+           | (first, last) :: rest when index - last <= 2 * context -> (first, index) :: rest
+           | _ -> (index, index) :: groups)
+         [] changed)
+
+  let diff changes =
+    String.concat ""
+      (List.map
+         (fun (change : Tools.change) ->
+           Printf.sprintf "--- %s\n+++ %s\n%s"
+             (Option.fold ~none:"/dev/null" ~some:(fun _ -> "a/" ^ (change.path :> string)) change.before)
+             (Option.fold ~none:"/dev/null" ~some:(fun _ -> "b/" ^ (change.path :> string)) change.after)
+             (String.concat ""
+                (List.map
+                   (fun { old_start; new_start; lines } ->
+                     let counted keep = List.length (List.filter keep lines) in
+                     Printf.sprintf "@@ -%d,%d +%d,%d @@\n%s" old_start
+                       (counted (function Kept _ | Removed _ -> true | Added _ -> false))
+                       new_start
+                       (counted (function Kept _ | Added _ -> true | Removed _ -> false))
+                       (String.concat ""
+                          (List.map
+                             (function
+                               | Kept text -> " " ^ Tools.revealed text ^ "\n"
+                               | Removed text -> "-" ^ Tools.revealed text ^ "\n"
+                               | Added text -> "+" ^ Tools.revealed text ^ "\n")
+                             lines)))
+                   (hunks change))))
+         changes)
 end
 
 type 'state step = Performed of (Value.t, Value.t) result * 'state | Blocked | Exhausted

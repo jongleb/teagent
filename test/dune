@@ -1,6 +1,6 @@
 (tests
- (names lang_test interp_test handler_test driver_test mcp_test os_test api_test wire_test widget_test live_test)
- (libraries api wire live dartea.data device lang interp value tools handler driver llm mcp os lwt.unix str yojson)
+ (names lang_test interp_test handler_test driver_test mcp_test os_test api_test wire_test widget_test live_test session_test)
+ (libraries api wire live session dartea.data device lang interp value tools handler driver llm mcp os lwt.unix str yojson)
  (deps
   (glob_files ../bench/programs/*.elm)
   (glob_files sessions/*.jsonl)

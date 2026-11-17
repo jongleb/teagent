@@ -7,6 +7,15 @@ module Overlay : sig
   val since : t -> t -> Tools.change list
   val after : t -> Value.tool -> Tools.change list -> t
   val diff : Tools.change list -> string
+
+  (** A run of changed lines with up to three unchanged ones around it; the starts are a unified
+      diff's line numbers. *)
+  type hunk = { old_start : int; new_start : int; lines : line list }
+
+  (** One line of a hunk. *)
+  and line = Kept of string | Removed of string | Added of string
+
+  val hunks : Tools.change -> hunk list
 end
 
 (** What a handler did with one tool. *)

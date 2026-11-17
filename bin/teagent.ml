@@ -319,7 +319,7 @@ let () =
     | Error reason -> failed reason
     | Ok provider ->
         {
-          Driver.ask = (fun ~system history -> Llm.complete provider ~system history);
+          Driver.ask = (fun ~system history -> Llm.answered provider ~system history);
           approve = approved;
           person;
           handler = Handler.judging provider (Handler.staged (Os.workspace os) !shell);
@@ -418,7 +418,7 @@ let () =
               match !replies with
               | reply :: rest ->
                   replies := rest;
-                  Lwt.return (Ok reply)
+                  Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
               | [] -> Lwt.return (Error `Silent));
           approve = approved;
           person;

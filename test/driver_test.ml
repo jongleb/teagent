@@ -53,7 +53,7 @@ let () =
               match !replies with
               | reply :: rest ->
                   replies := rest;
-                  Lwt.return (Ok reply)
+                  Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
               | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
           approve = (fun _ -> Lwt.return decision);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
@@ -85,7 +85,7 @@ let () =
               match !replies with
               | reply :: rest ->
                   replies := rest;
-                  Lwt.return (Ok reply)
+                  Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
               | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
@@ -129,7 +129,7 @@ let () =
               match !replies with
               | reply :: rest ->
                   replies := rest;
-                  Lwt.return (Ok reply)
+                  Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
               | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
@@ -172,7 +172,7 @@ let () =
               match !replies with
               | reply :: rest ->
                   replies := rest;
-                  Lwt.return (Ok reply)
+                  Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
               | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Open;
@@ -236,7 +236,7 @@ let () =
             match !replies with
             | reply :: rest ->
                 replies := rest;
-                Lwt.return (Ok reply)
+                Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
             | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
         approve = (fun _ -> Lwt.return Driver.Apply);
         handler = Handler.staged (Os.workspace (Os.granted workspace ~net)) Handler.Open;
@@ -298,7 +298,7 @@ let () =
               match !replies with
               | reply :: rest ->
                   replies := rest;
-                  Lwt.return (Ok reply)
+                  Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
               | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
           approve = (fun _ -> Lwt.return Driver.Apply);
           handler = Handler.staged (Tools.at workspace) Handler.Contained;
@@ -335,7 +335,7 @@ let () =
             match !replies with
             | reply :: rest ->
                 replies := rest;
-                Lwt.return (Ok reply)
+                Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
             | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
         approve = (fun _ -> Lwt.return Driver.Apply);
         handler =
@@ -531,7 +531,7 @@ let () =
                  match !replies with
                  | reply :: rest ->
                      replies := rest;
-                     Lwt.return (Ok reply)
+                     Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                  | [] -> Lwt.return (Error `Silent));
              approve = (fun _ -> Lwt.return Driver.Apply);
              handler = Handler.staged (Tools.at workspace) Handler.Open;
@@ -654,7 +654,7 @@ let () =
                     ask =
                       (fun ~system:_ _ ->
                         incr live_asks;
-                        Lwt.return (Ok "Renamed Foo.bar to Foo.baz."));
+                        Lwt.return (Ok { Llm.text = "Renamed Foo.bar to Foo.baz."; usage = Llm.unused }));
                     approve = (fun _ -> Lwt.return Driver.Apply);
                     handler = Handler.staged (Tools.at workspace) Handler.Open;
                     commit = Tools.commit (Tools.at workspace);
@@ -725,7 +725,7 @@ let () =
                    match !replies with
                    | reply :: rest ->
                        replies := rest;
-                       Lwt.return (Ok reply)
+                       Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                    | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                approve = (fun _ -> Lwt.return Driver.Apply);
                person = (fun _ -> Lwt.return Device.Declines);
@@ -772,7 +772,7 @@ let () =
                      match !replies with
                      | reply :: rest ->
                          replies := rest;
-                         Lwt.return (Ok reply)
+                         Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                      | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                  approve = (fun _ -> Lwt.return Driver.Apply);
                  person =
@@ -817,7 +817,7 @@ let () =
                      match !replies with
                      | reply :: rest ->
                          replies := rest;
-                         Lwt.return (Ok reply)
+                         Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                      | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                  approve = (fun _ -> Lwt.return Driver.Apply);
                  person =
@@ -908,7 +908,7 @@ let () =
                    match !replies with
                    | reply :: rest ->
                        replies := rest;
-                       Lwt.return (Ok reply)
+                       Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                    | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                approve = (fun _ -> Lwt.return Driver.Apply);
                person =
@@ -982,7 +982,7 @@ readsSecrets call =\n\
                    match !replies with
                    | reply :: rest ->
                        replies := rest;
-                       Lwt.return (Ok reply)
+                       Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                    | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                approve = (fun _ -> Lwt.return Driver.Apply);
                person =
@@ -1030,7 +1030,7 @@ readsSecrets call =\n\
                    match !replies with
                    | reply :: rest ->
                        replies := rest;
-                       Lwt.return (Ok reply)
+                       Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                    | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                approve = (fun _ -> Lwt.return Driver.Apply);
                person = (fun _ -> Lwt.return Device.Declines);
@@ -1073,7 +1073,7 @@ readsSecrets call =\n\
                      match !replies with
                      | reply :: rest ->
                          replies := rest;
-                         Lwt.return (Ok reply)
+                         Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                      | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                  approve = (fun _ -> Lwt.return Driver.Apply);
                  person = (fun _ -> Lwt.return person);
@@ -1167,7 +1167,7 @@ readsSecrets call =\n\
                          match !replies with
                          | reply :: rest ->
                              replies := rest;
-                             Lwt.return (Ok reply)
+                             Lwt.return (Ok { Llm.text = reply; usage = Llm.unused })
                          | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies"))));
                      approve = (fun _ -> Lwt.return Driver.Apply);
                      person =

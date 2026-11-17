@@ -30,6 +30,9 @@ type usage = { input : int; output : int; cached : int; written : int }
 
 type reply = { text : string; usage : usage }
 
+val unused : usage
+val added : usage -> usage -> usage
+
 val answered : t -> system:string -> message list -> (reply, [> `Llm of error ]) result Lwt.t
 val complete : t -> system:string -> message list -> (string, [> `Llm of error ]) result Lwt.t
 val efforts : (string * effort) list

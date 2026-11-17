@@ -129,7 +129,7 @@ let () =
                     Lwt_main.run
                       (Driver.solve
                          {
-                           ask = (fun ~system history -> Llm.complete provider ~system history);
+                           ask = (fun ~system history -> Llm.answered provider ~system history);
                            approve = (fun _ -> Lwt.return Driver.Apply);
                            person = (fun _ -> Lwt.return Device.Declines);
                            handler = Handler.staged (Tools.at workspace) !shell;

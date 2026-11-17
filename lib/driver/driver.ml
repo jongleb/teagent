@@ -32,11 +32,12 @@ type stop =
   | Too_many_programs
   | Unanswered
   | Open_hole of string
+  | Cancelled
 type report = { ending : (string, stop) result; rounds : int list }
 
 type world = {
-  ask : system:string -> Llm.message list -> (string, [ `Llm of Llm.error | `Silent ]) result Lwt.t;
-  approve : string -> decision Lwt.t;
+  ask : system:string -> Llm.message list -> (Llm.reply, [ `Llm of Llm.error | `Silent ]) result Lwt.t;
+  approve : Tools.change list -> decision Lwt.t;
   person : string -> Device.consent Lwt.t;
   handler : Handler.Overlay.t Handler.t;
   commit : Tools.change list -> (unit, [ `Tools of Tools.error ]) result Lwt.t;
@@ -52,6 +53,7 @@ let explained = function
   | Too_many_programs -> "Stopped after 8 programs without an answer."
   | Unanswered -> "Stopped: no reply came after the last run."
   | Open_hole question -> question
+  | Cancelled -> "Stopped from outside."
 
 let solve world ~on task =
   let os = ref world.os in
@@ -82,12 +84,12 @@ let solve world ~on task =
   let ask ~system history =
     match next replies with
     | Some reply -> Lwt.return (Ok reply)
-    | None -> world.ask ~system history
+    | None -> Lwt.map (Result.map (fun (reply : Llm.reply) -> reply.text)) (world.ask ~system history)
   in
-  let approve diff =
+  let approve changes =
     match next decisions with
     | Some decision -> Lwt.return decision
-    | None -> world.approve diff
+    | None -> world.approve changes
   in
   let commit changes =
     match next commits with
@@ -193,7 +195,7 @@ let solve world ~on task =
       | _ :: _ ->
           let diff = Handler.Overlay.diff inside in
           let* () = on (Staged diff) in
-          let* decision = approve diff in
+          let* decision = approve inside in
           let+ () = on (Decided decision) in
           decision
     in

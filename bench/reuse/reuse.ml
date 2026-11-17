@@ -75,16 +75,10 @@ let () =
              ask =
                (fun ~system history ->
                  Lwt.map
-                   (Result.map (fun ({ text; usage } : Llm.reply) ->
+                   (Result.map (fun (reply : Llm.reply) ->
                         incr calls;
-                        spent :=
-                          {
-                            input = !spent.input + usage.input;
-                            output = !spent.output + usage.output;
-                            cached = !spent.cached + usage.cached;
-                            written = !spent.written + usage.written;
-                          };
-                        text))
+                        spent := Llm.added !spent reply.usage;
+                        reply))
                    (Llm.answered provider ~system history));
              approve = (fun _ -> Lwt.return Driver.Apply);
              person = (fun _ -> Lwt.return Device.Declines);

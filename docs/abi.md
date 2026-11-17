@@ -57,6 +57,26 @@ Every value is an object with a single key that names its kind.
 | a constructor | `{"constr": {"module": "Agent", "name": "Denied", "arguments": [...]}}` |
 | a function or a task | `{"opaque": null}` |
 
+The log needs the kinds to read values back without their types. A host that knows the types,
+such as a view drawn in an IDE, takes the compact form from `Wire.json` instead; it is never
+logged and is not part of this ABI.
+
+| Value | Compact JSON |
+| --- | --- |
+| `Int`, `Float` | `1`, `1.5` |
+| `String`, `Char` | `"text"` |
+| `Bool` | `true` |
+| `()`, a function, a task | `null` |
+| a list, a tuple | `[...]` |
+| a record | `{"label": value, ...}`, labels sorted |
+| a constructor | `"Nothing"`, or `["Just", argument, ...]` |
+
+`Wire.diff old new` gives the edits that turn one compact tree into the other, applied in order:
+`{"path": [3, "name"], "set": value}` replaces the node at the path (numbers index arrays,
+strings name members), and `{"path": [...], "at": 2, "removed": 1, "inserted": [...]}` splices
+the array at the path. In an array, the elements equal at both ends are kept; the run between
+them is edited element by element when its length did not change, and spliced when it did.
+
 ## 3. The session log
 
 A log is JSON lines. The first line is the header:

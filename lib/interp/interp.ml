@@ -387,11 +387,9 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
       | (Payload _ | Index _ | Field _ | Hd | Tl), _ ->
           stuck "an access that does not fit its value")
   | B_call { callee; arguments } | B_partial { callee; arguments; _ } -> (
-      match
-        ( global ~home callee,
-          List.map (fun argument -> snd (Value.plain (atom program ~home scope argument))) arguments )
-      with
-      | { module_name = "Agent"; name = "hole" }, [ V_string description ] ->
+      match (global ~home callee, List.map (atom program ~home scope) arguments) with
+      | ( { module_name = "Agent"; name = "hole" },
+          [ (V_string description | V_labelled { value = V_string description; _ }) ] ) ->
           V_task
             (Hole
                {
@@ -406,13 +404,23 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
                             name)
                      scope;
                })
-      | _, _ -> called program (top program ~home callee) (List.map (atom program ~home scope) arguments))
+      | _, values -> called program (top program ~home callee) values)
   | B_call_closure { callee; arguments } ->
       called program
         (atom program ~home scope callee)
         (List.map (atom program ~home scope) arguments)
   | B_primitive { operator; arguments } -> (
-      let found = List.map (fun argument -> Value.plain (atom program ~home scope argument)) arguments in
+      let found =
+        List.map
+          (fun argument ->
+            let value = atom program ~home scope argument in
+            match operator with
+            | Equal | Not_equal | Less | Less_or_equal | Greater | Greater_or_equal -> Value.plain value
+            | Add | Subtract | Multiply | Divide | Integer_divide | Power | Append | Conjunction
+            | Disjunction ->
+                peeled value)
+          arguments
+      in
       Value.labelled (List.concat_map fst found)
       @@
       match (operator, List.map snd found) with
@@ -461,7 +469,15 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
              (0, "") (uchars text))
       in
       let math operation number : Value.t = V_number (operation number) in
-      let found = List.map (fun argument -> Value.plain (atom program ~home scope argument)) arguments in
+      let found =
+        List.map
+          (fun argument ->
+            let value = atom program ~home scope argument in
+            match language with
+            | Binary Utils_compare | Unary String_from_list -> Value.plain value
+            | Nullary _ | Unary _ | Binary _ -> peeled value)
+          arguments
+      in
       Value.labelled (List.concat_map fst found)
       @@
       match (language, List.map snd found) with

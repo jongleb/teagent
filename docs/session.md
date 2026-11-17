@@ -23,6 +23,7 @@ Session.solve world ~on ~cancelled task : Driver.report Lwt.t
 | `Began id` | the agent spawned the child `id`; the child's own events follow under `Spawned { id; ... }` |
 | `Merged id` | the agent took in the changes of the child `id` |
 | `Proposed files` | before the person is asked to apply staged changes: each file's `Tools.change`, with before and after, and its hunks |
+| `Asking { question; answers }` | the agent asks the person; it comes before the host's `Handler.asking` is called |
 
 A hunk is `{ old_start; new_start; lines }`, with each line `Kept`, `Removed` or `Added`, as in a
 unified diff; `Handler.Overlay.hunks` computes them for any change.
@@ -35,7 +36,10 @@ returned. Sessions share no state, so several can run at once in one process.
 A program asks the person with `Person.ask question answers`, which waits for one of the
 answers. The OS offers it only when the host can answer (`Os.Person` among the offers), and the
 host answers through `Handler.asking`: a function from the question and the answers to the one
-picked, or `None`. Only the asking program waits; other sessions go on. The question and the
+picked, or `None`. Just before that function is called, the stream gets `Asking` with the agent
+that asks: the tasks of a session run one at a time, so the question is the next thing the host
+hears from that session. A replayed call is answered from the log and does not ask. Only the
+asking program waits; other sessions go on. The question and the
 answer reach the log, and the stream, as a `Performed` call to `person.ask`.
 
 ## Cancelling

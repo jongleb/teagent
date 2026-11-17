@@ -15,6 +15,8 @@ type happened =
   | Began of int  (** The agent spawned the child with this id. *)
   | Merged of int  (** The agent took in the changes of the child with this id. *)
   | Proposed of file list  (** The staged changes the person is asked to apply. *)
+  | Asking of { question : string; answers : string list }
+      (** The agent asks the person, just before the host's [Handler.asking] is called. *)
 
 type event = {
   agent : agent;

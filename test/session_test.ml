@@ -94,7 +94,7 @@ let () =
                              hunks))
                     files)
               ^ " " ^ tail)
-        | Logged _ -> None)
+        | Logged _ | Asking _ -> None)
       events
   in
   let expected =
@@ -136,11 +136,13 @@ let () =
                     | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies")))))
                ~cancelled:(fst (Lwt.wait ()))
            in
-           List.find_map
-             (fun ({ happened; _ } : Session.event) ->
-               match happened with
-               | Logged (Ran text) -> Some (`Ran text)
-               | Logged (Refused _) -> Some `Refused
+           List.filter_map
+             (fun ({ agent; happened; _ } : Session.event) ->
+               match (agent, happened) with
+               | Main, Asking { question = "Which name?"; answers = [ "foo"; "bar" ] } -> Some `Asking
+               | _, Asking _ -> Some `Misattributed
+               | _, Logged (Ran text) -> Some (`Ran text)
+               | _, Logged (Refused _) -> Some `Refused
                | _ -> None)
              events
          in
@@ -148,7 +150,7 @@ let () =
            ( ran (Os.granted workspace ~net:[]),
              ran (Os.only (List.filter (fun call -> call <> Os.Person) (List.map snd Os.calls)) (Os.granted workspace ~net:[])) )
          with
-         | Some (`Ran "main finished with:\n\"bar\""), Some `Refused -> None
+         | [ `Asking; `Ran "main finished with:\n\"bar\"" ], [ `Refused ] -> None
          | _ -> Some "session: Person.ask was not answered by the person, or compiled where nobody can answer");
       ]
   in

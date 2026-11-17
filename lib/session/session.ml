@@ -3,7 +3,12 @@ open Lwt.Syntax
 type agent = Main | Spawned of { id : int; parent : agent }
 type touched = { read : Tools.Path.t list; changed : Tools.Path.t list }
 type file = { change : Tools.change; hunks : Handler.Overlay.hunk list }
-type happened = Logged of Driver.event | Began of int | Merged of int | Proposed of file list
+type happened =
+  | Logged of Driver.event
+  | Began of int
+  | Merged of int
+  | Proposed of file list
+  | Asking of { question : string; answers : string list }
 
 type event = {
   agent : agent;
@@ -106,7 +111,28 @@ let solve (world : Driver.world) ~on ~cancelled task =
           in
           stopping (fun () -> world.approve changes));
       person = (fun question -> stopping (fun () -> world.person question));
-      handler = { perform = (fun tool sources state -> stopping (fun () -> world.handler.perform tool sources state)) };
+      handler =
+        {
+          perform =
+            (fun tool sources state ->
+              let* () =
+                match tool with
+                | Call
+                    {
+                      name = "person.ask";
+                      argument = V_record [ ("answers", V_list answers); ("question", V_string question) ];
+                    } ->
+                    emitted nothing
+                      (Asking
+                         {
+                           question;
+                           answers =
+                             List.filter_map (function Value.V_string answer -> Some answer | _ -> None) answers;
+                         })
+                | _ -> Lwt.return_unit
+              in
+              stopping (fun () -> world.handler.perform tool sources state));
+        };
       keep = (fun ~name source -> stopping (fun () -> world.keep ~name source));
       commit =
         (fun changes ->

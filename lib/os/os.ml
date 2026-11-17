@@ -93,7 +93,7 @@ let decided os history (tool : Value.tool) sources =
         let failed reason : Handler.verdict =
           Deny ("the rules failed: " ^ reason)
         in
-        let program = Interp.load ~budget:1_000_000 modules in
+        let program = Interp.load ~budget:(Total 1_000_000) modules in
         let rec applied (decide : Value.t) arguments =
           match (decide, arguments) with
           | _, [] -> Ok decide

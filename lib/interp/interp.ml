@@ -3,6 +3,8 @@ type error =
   | Crashed of string
   | Stuck of string
 
+type budget = Total of int | Each of int
+
 exception Stopped of error
 
 (** A join point: [definition] runs with [parameters] bound in its own scope. *)
@@ -17,7 +19,9 @@ type t = {
   declarations : (Value.global, Ir.Ast.declaration) Hashtbl.t;
   constructors : (Value.global, int) Hashtbl.t;
   cached : (Value.global, Value.t) Hashtbl.t;
+  budget : budget;
   mutable steps : int;
+  mutable spent : int;
 }
 
 let stuck reason = raise (Stopped (Stuck reason))
@@ -35,7 +39,9 @@ let load ~budget (modules : Lang.t list) =
       declarations = Hashtbl.create 64;
       constructors = Hashtbl.create 64;
       cached = Hashtbl.create 64;
-      steps = budget;
+      budget;
+      steps = (match budget with Total steps | Each steps -> steps);
+      spent = 0;
     }
   in
   List.iter
@@ -835,23 +841,27 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
   | B_closure { parameters; captures = _; body } ->
       V_closure { home; parameters; scope; body; recursion = Anonymous }
 
-let guarded run =
-  match run () with
-  | value -> Ok value
-  | exception Stopped error -> Error (`Interp error)
+let guarded program run =
+  (match program.budget with Each steps -> program.steps <- steps | Total _ -> ());
+  let before = program.steps in
+  let outcome = match run () with value -> Ok value | exception Stopped error -> Error (`Interp error) in
+  program.spent <- min before (before - program.steps);
+  outcome
+
+let spent program = program.spent
 
 let main program =
   Result.bind
-    (guarded (fun () -> top program ~home:"Main" (Data.Name.local "main")))
+    (guarded program (fun () -> top program ~home:"Main" (Data.Name.local "main")))
     (function
       | Value.V_task task -> Ok task
       | _ -> Error (`Interp (Stuck "main is not a task")))
 
 let apply program callback argument =
-  guarded (fun () -> called program (V_closure callback) [ argument ])
+  guarded program (fun () -> called program (V_closure callback) [ argument ])
 
 let lookup program (name : Value.global) =
   Option.fold
     ~none:(Error (`Undeclared name))
-    ~some:(fun _ -> guarded (fun () -> top program ~home:name.module_name (Data.Name.local name.name)))
+    ~some:(fun _ -> guarded program (fun () -> top program ~home:name.module_name (Data.Name.local name.name)))
     (Hashtbl.find_opt program.declarations name)

@@ -31,7 +31,7 @@ let () =
     Result.bind
       (Result.map_error (fun report -> `Lang report) (Lang.compile Lang.Calls.all source))
       (fun modules ->
-        let program = Interp.load ~budget:1_000_000 modules in
+        let program = Interp.load ~budget:(Total 1_000_000) modules in
         Result.map (fun task -> (program, task)) (Interp.main program))
   in
   let explained name = function

@@ -16,7 +16,7 @@ let () =
     | `Interp Interp.Budget_exhausted -> Some (name ^ ": out of budget")
   in
   let loaded () =
-    Result.map (Interp.load ~budget:10_000_000)
+    Result.map (Interp.load ~budget:(Total 10_000_000))
       (Result.map_error
          (fun report -> `Lang report)
          (Lang.compile_modules sources ~entries:[ render; source ]))
@@ -36,6 +36,15 @@ let () =
     Printf.sprintf
       {|{"id":"%s","task":"%s","goal":"g","state":"%s","step":1,"doing":"%s step","tokens":%d}|}
       task task state task tokens
+  in
+  let agents =
+    Value.V_json
+      (Yojson.Safe.from_string
+         ("["
+         ^ agent ~task:"beta" ~state:"running" ~tokens:1200
+         ^ ","
+         ^ agent ~task:"alpha" ~state:"needs-you" ~tokens:7
+         ^ "]"))
   in
   let failures =
     List.filter_map Fun.id
@@ -59,14 +68,29 @@ let () =
                     match rendered with
                     | V_json json when Yojson.Safe.equal json expected -> None
                     | other -> Some ("rendered " ^ Value.to_elm other))
-                  (called program render
-                     (V_json
-                        (Yojson.Safe.from_string
-                           ("["
-                           ^ agent ~task:"beta" ~state:"running" ~tokens:1200
-                           ^ ","
-                           ^ agent ~task:"alpha" ~state:"needs-you" ~tokens:7
-                           ^ "]"))))));
+                  (called program render agents)));
+        run "budget per call" (fun () ->
+            Result.bind
+              (Result.map_error
+                 (fun report -> `Lang report)
+                 (Lang.compile_modules sources ~entries:[ render; source ]))
+              (fun modules ->
+                let drawn budget =
+                  let program = Interp.load ~budget modules in
+                  let first = called program render agents in
+                  let second = called program render agents in
+                  (first, second, Interp.spent program)
+                in
+                match drawn (Total 10_000_000) with
+                | Ok _, Ok _, steps -> (
+                    match (drawn (Each (steps * 3 / 2)), drawn (Total (steps * 3 / 2)), drawn (Each (steps / 2))) with
+                    | ( (Ok _, Ok _, again),
+                        (Ok _, Error (`Interp Interp.Budget_exhausted), _),
+                        (Error (`Interp Interp.Budget_exhausted), Error (`Interp Interp.Budget_exhausted), _) )
+                      when again = steps ->
+                        Ok None
+                    | _ -> Ok (Some (Printf.sprintf "a budget of one call does not hold for each of %d steps" steps)))
+                | (Error _ as failed), _, _ | _, (Error _ as failed), _ -> Result.map (fun _ -> None) failed));
         run "source" (fun () ->
             Result.bind (loaded ()) (fun program ->
                 Result.map

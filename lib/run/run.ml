@@ -91,7 +91,7 @@ let run t ~seen (handler : Handler.Overlay.t Handler.t) ~settle =
               Lwt.return outcome);
     }
   in
-  let program = Interp.load ~budget:10_000_000 t.modules in
+  let program = Interp.load ~budget:(Total 10_000_000) t.modules in
   let rec stepped task =
     let* outcome, overlay = Handler.interpret replaying program Handler.Overlay.empty task in
     match outcome with

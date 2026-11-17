@@ -108,7 +108,7 @@ let () =
                   with
                   | Error report -> (Error ("the reference does not compile:\n" ^ report), [])
                   | Ok modules -> (
-                      let program = Interp.load ~budget:10_000_000 modules in
+                      let program = Interp.load ~budget:(Total 10_000_000) modules in
                       match Interp.main program with
                       | Error (`Interp _) -> (Error "the reference does not start", [ 1 ])
                       | Ok started -> (

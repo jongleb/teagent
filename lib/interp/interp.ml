@@ -67,7 +67,7 @@ let peeled (value : Value.t) =
   match value with
   | V_labelled { sources; value } -> (sources, value)
   | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _ | V_record _
-  | V_constr _ | V_closure _ | V_task _ ->
+  | V_constr _ | V_closure _ | V_task _ | V_json _ ->
       ([], value)
 
 let rec equal (left : Value.t) (right : Value.t) =
@@ -80,6 +80,7 @@ let rec equal (left : Value.t) (right : Value.t) =
       String.equal left right
   | V_bool left, V_bool right -> Bool.equal left right
   | V_unit, V_unit -> true
+  | V_json left, V_json right -> Yojson.Safe.equal left right
   | V_list left, V_list right | V_tuple left, V_tuple right ->
       List.equal equal left right
   | V_record left, V_record right ->
@@ -90,7 +91,7 @@ let rec equal (left : Value.t) (right : Value.t) =
       left.constructor = right.constructor
       && List.equal equal left.arguments right.arguments
   | ( ( V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _
-      | V_tuple _ | V_record _ | V_constr _ ),
+      | V_tuple _ | V_record _ | V_constr _ | V_json _ ),
       _ ) ->
       stuck "an equality of values of different types"
 
@@ -160,7 +161,8 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
   if program.steps < 0 then raise (Stopped Budget_exhausted);
   match current with
   | T_return returned -> atom program ~home scope returned
-  | T_let { name; bind = B_closure { parameters; captures = _; body = inner }; body } ->
+  | T_let { name; bind = B_closure { parameters = _ :: _ as parameters; captures = _; body = inner }; body }
+    ->
       term program ~home
         (Value.Scope.add name
            (Value.V_closure { home; parameters; scope; body = inner; recursion = Named name })
@@ -204,7 +206,7 @@ let rec term program ~home scope joins (current : Ir.Ast.term) : Value.t =
             Test_ctor (Data.Name.global ~module_name ~exported_name:name)
         | V_constr { constructor = { module_name; name }; arguments = _ :: _ } ->
             Test_tag (Data.Name.global ~module_name ~exported_name:name)
-        | V_unit | V_tuple _ | V_record _ | V_closure _ | V_task _ | V_labelled _ ->
+        | V_unit | V_tuple _ | V_record _ | V_closure _ | V_task _ | V_json _ | V_labelled _ ->
             stuck "a case on a value without a shape"
       in
       match
@@ -638,6 +640,77 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
             ("a kernel with the wrong arguments: "
             ^ Data.Name.to_string (Data.Kernel.origin language)))
   | B_kernel { kernel = Platform { name; _ }; arguments } -> (
+      match Lang.Json.of_name name with
+      | Some kernel -> (
+          let found =
+            List.map (fun argument -> Value.plain (atom program ~home scope argument)) arguments
+          in
+          Value.labelled (List.concat_map fst found)
+          @@
+          match (kernel, List.map snd found) with
+          | Is_string, [ V_json json ] -> V_bool (match json with `String _ -> true | _ -> false)
+          | Is_bool, [ V_json json ] -> V_bool (match json with `Bool _ -> true | _ -> false)
+          | Is_number, [ V_json json ] ->
+              V_bool (match json with `Int _ | `Intlit _ | `Float _ -> true | _ -> false)
+          | Is_int, [ V_json json ] ->
+              V_bool
+                (match json with
+                | `Int _ | `Intlit _ -> true
+                | `Float number -> Float.is_integer number
+                | _ -> false)
+          | Is_null, [ V_json json ] -> V_bool (match json with `Null -> true | _ -> false)
+          | Is_array, [ V_json json ] -> V_bool (match json with `List _ -> true | _ -> false)
+          | Is_object, [ V_json json ] -> V_bool (match json with `Assoc _ -> true | _ -> false)
+          | Has_field, [ V_string label; V_json json ] ->
+              V_bool (match json with `Assoc fields -> List.mem_assoc label fields | _ -> false)
+          | Unsafe_field, [ V_string label; V_json (`Assoc fields) ] -> (
+              match List.assoc_opt label fields with
+              | Some json -> V_json json
+              | None -> stuck ("a JSON object without the field " ^ label))
+          | Length, [ V_json (`List items) ] -> V_number (Float.of_int (List.length items))
+          | Unsafe_index, [ V_number index; V_json (`List items) ] -> (
+              match List.nth_opt items (Float.to_int index) with
+              | Some json -> V_json json
+              | None -> stuck "a JSON index out of range")
+          | Identity, [ V_json (`String text) ] -> V_string text
+          | Identity, [ V_json (`Bool truth) ] -> V_bool truth
+          | Identity, [ V_json (`Int number) ] -> V_number (Float.of_int number)
+          | Identity, [ V_json (`Intlit number) ] -> V_number (Float.of_string number)
+          | Identity, [ V_json (`Float number) ] -> V_number number
+          | Identity, [ V_string text ] -> V_json (`String text)
+          | Identity, [ V_bool truth ] -> V_json (`Bool truth)
+          | Identity, [ V_number number ] when Float.is_integer number && Float.abs number < 1e15 ->
+              V_json (`Int (Float.to_int number))
+          | Identity, [ V_number number ] -> V_json (`Float number)
+          | Stringify, [ V_number 0.; V_json json ] -> V_string (Yojson.Safe.to_string json)
+          | Stringify, [ V_number _; V_json json ] -> V_string (Yojson.Safe.pretty_to_string json)
+          | Is_valid, [ V_string text ] -> (
+              match Yojson.Safe.from_string text with
+              | _ -> V_bool true
+              | exception Yojson.Json_error _ -> V_bool false)
+          | Unsafe_parse, [ V_string text ] -> (
+              match Yojson.Safe.from_string text with
+              | json -> V_json json
+              | exception Yojson.Json_error reason -> crashed ("not JSON: " ^ reason))
+          | Empty_array, [] -> V_json (`List [])
+          | Pushed, [ V_json item; V_json (`List items) ] -> V_json (`List (items @ [ item ]))
+          | Empty_object, [] -> V_json (`Assoc [])
+          | With_field, [ V_string label; V_json json; V_json (`Assoc fields) ] ->
+              V_json
+                (`Assoc
+                   (Option.fold
+                      ~none:(fields @ [ (label, json) ])
+                      ~some:(fun _ ->
+                        List.map
+                          (fun (key, old) -> (key, if String.equal key label then json else old))
+                          fields)
+                      (List.assoc_opt label fields)))
+          | ( ( Is_string | Is_bool | Is_number | Is_int | Is_null | Is_array | Is_object | Has_field
+              | Unsafe_field | Length | Unsafe_index | Identity | Stringify | Is_valid | Unsafe_parse
+              | Empty_array | Pushed | Empty_object | With_field ),
+              _ ) ->
+              stuck ("a JSON kernel with the wrong arguments: " ^ Data.Name.to_string name))
+      | None -> (
       let field label fields =
         match List.assoc_opt label fields with
         | Some (Value.V_string text) -> text
@@ -740,7 +813,9 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
               ("an agent kernel with the wrong arguments: "
               ^ Data.Name.to_string name)
         | None, _ ->
-            stuck ("an unknown platform kernel " ^ Data.Name.to_string name)))
+            stuck ("an unknown platform kernel " ^ Data.Name.to_string name))))
+  | B_closure { parameters = []; captures = _; body } ->
+      term program ~home scope Value.Scope.empty body
   | B_closure { parameters; captures = _; body } ->
       V_closure { home; parameters; scope; body; recursion = Anonymous }
 
@@ -758,3 +833,9 @@ let main program =
 
 let apply program callback argument =
   guarded (fun () -> called program (V_closure callback) [ argument ])
+
+let lookup program (name : Value.global) =
+  Option.fold
+    ~none:(Error (`Undeclared name))
+    ~some:(fun _ -> guarded (fun () -> top program ~home:name.module_name (Data.Name.local name.name)))
+    (Hashtbl.find_opt program.declarations name)

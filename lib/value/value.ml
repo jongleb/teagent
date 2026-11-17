@@ -25,6 +25,7 @@ type t =
   | V_constr of { constructor : global; arguments : t list }
   | V_closure of closure
   | V_task of task
+  | V_json of Yojson.Safe.t  (** What [Json.Encode] builds and [Json.Decode] reads. *)
   | V_labelled of { sources : source list; value : t }
       (** [value] holds content from [sources]; never a task and never labelled itself. *)
 
@@ -103,7 +104,7 @@ let labelled sources (value : t) =
   | _, V_task task -> V_task (Labelled { sources = List.sort_uniq compare sources; task })
   | _, V_labelled { sources = more; value } -> V_labelled { sources = merged more; value }
   | _, (V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _ | V_record _
-       | V_constr _ | V_closure _) ->
+       | V_constr _ | V_closure _ | V_json _) ->
       V_labelled { sources = List.sort_uniq compare sources; value }
 
 let rec plain (value : t) =
@@ -131,7 +132,8 @@ let rec plain (value : t) =
     | V_constr { constructor; arguments } ->
         let sources, arguments = all arguments in
         (sources, V_constr { constructor; arguments })
-    | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_closure _ | V_task _ -> ([], value)
+    | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_closure _ | V_task _ | V_json _ ->
+        ([], value)
   in
   (List.sort_uniq compare sources, value)
 
@@ -140,7 +142,7 @@ let rec to_elm (value : t) =
     match value with
     | V_constr { arguments = _ :: _; _ } -> "(" ^ to_elm value ^ ")"
     | V_number _ | V_string _ | V_char _ | V_bool _ | V_unit | V_list _ | V_tuple _
-    | V_record _ | V_constr { arguments = []; _ } | V_closure _ | V_task _ ->
+    | V_record _ | V_constr { arguments = []; _ } | V_closure _ | V_task _ | V_json _ ->
         to_elm value
     | V_labelled { value; _ } -> to_elm value
   in
@@ -180,6 +182,7 @@ let rec to_elm (value : t) =
       String.concat " " (name :: List.map nested arguments)
   | V_closure _ -> "<function>"
   | V_task _ -> "<task>"
+  | V_json json -> Yojson.Safe.to_string json
 
 let rec to_json (value : t) : Yojson.Safe.t =
   match value with
@@ -204,6 +207,7 @@ let rec to_json (value : t) : Yojson.Safe.t =
                 ("arguments", `List (List.map to_json arguments));
               ] );
         ]
+  | V_json json -> `Assoc [ ("json", json) ]
   | V_closure _ | V_task _ -> `Assoc [ ("opaque", `Null) ]
 
 let rec of_json (json : Yojson.Safe.t) : (t, string) result =
@@ -220,6 +224,7 @@ let rec of_json (json : Yojson.Safe.t) : (t, string) result =
   | `Assoc [ ("char", `String char) ] -> Ok (V_char char)
   | `Assoc [ ("bool", `Bool truth) ] -> Ok (V_bool truth)
   | `Assoc [ ("unit", `Null) ] -> Ok V_unit
+  | `Assoc [ ("json", json) ] -> Ok (V_json json)
   | `Assoc [ ("list", `List items) ] -> Result.map (fun items -> V_list items) (all items)
   | `Assoc [ ("tuple", `List items) ] -> Result.map (fun items -> V_tuple items) (all items)
   | `Assoc [ ("record", `Assoc fields) ] ->

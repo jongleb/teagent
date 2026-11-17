@@ -12,6 +12,7 @@ let rec json (value : Value.t) : Yojson.Safe.t =
   | V_number number -> `Float number
   | V_string text | V_char text -> `String text
   | V_bool truth -> `Bool truth
+  | V_json json -> json
   | V_unit | V_closure _ | V_task _ -> `Null
   | V_list items | V_tuple items -> `List (List.map json items)
   | V_record fields -> `Assoc (List.map (fun (label, value) -> (label, json value)) fields)

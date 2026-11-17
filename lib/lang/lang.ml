@@ -4,12 +4,67 @@ type t = {
   constructors : (Data.Name.t * int) list;
 }
 
+module Json = struct
+  type t =
+    | Is_string
+    | Is_bool
+    | Is_number
+    | Is_int
+    | Is_null
+    | Is_array
+    | Is_object
+    | Has_field
+    | Unsafe_field
+    | Length
+    | Unsafe_index
+    | Identity
+    | Stringify
+    | Is_valid
+    | Unsafe_parse
+    | Empty_array
+    | Pushed
+    | Empty_object
+    | With_field
+
+  let found (name : Data.Name.t) =
+    match name with
+    | Global { module_name = "Json"; exported_name } ->
+        List.assoc_opt exported_name
+          [
+            ("isString", (Is_string, 1));
+            ("isBool", (Is_bool, 1));
+            ("isNumber", (Is_number, 1));
+            ("isInt", (Is_int, 1));
+            ("isNull", (Is_null, 1));
+            ("isArray", (Is_array, 1));
+            ("isObject", (Is_object, 1));
+            ("hasField", (Has_field, 2));
+            ("unsafeField", (Unsafe_field, 2));
+            ("length", (Length, 1));
+            ("unsafeIndex", (Unsafe_index, 2));
+            ("identity", (Identity, 1));
+            ("stringify", (Stringify, 2));
+            ("isValid", (Is_valid, 1));
+            ("unsafeParse", (Unsafe_parse, 1));
+            ("emptyArray", (Empty_array, 0));
+            ("pushed", (Pushed, 2));
+            ("emptyObject", (Empty_object, 0));
+            ("withField", (With_field, 3));
+          ]
+    | Global _ | Local _ -> None
+
+  let of_name name = Option.map fst (found name)
+end
+
 module Compiler = Dartea.Compiler.Make (struct
   let extension = "ir"
   let runtime_modules _ = []
 
   let platform_kernel name =
-    Option.map Data.Kernel.agent_arity (Data.Kernel.agent_of_name name)
+    Option.fold
+      ~none:(Option.map snd (Json.found name))
+      ~some:(fun kernel -> Some (Data.Kernel.agent_arity kernel))
+      (Data.Kernel.agent_of_name name)
 
   let through _ = None
 
@@ -260,6 +315,31 @@ module Calls = struct
       @ searched)
 end
 
+let linked ~roots (outcome : Dartea.Compiler.outcome) =
+  let alive = Compiler.reach ~roots outcome.modules in
+  List.filter_map
+    (fun (linked : Dartea.Compiler.linkable) ->
+      match
+        ( List.filter
+            (fun declaration ->
+              Dartea.Compiler.Reached.mem
+                (linked.module_name, Dartea.Compiler.name_of_declaration declaration)
+                alive)
+            linked.declarations,
+          linked.constructors )
+      with
+      | [], [] -> None
+      | reached, constructors ->
+          Some
+            {
+              module_name = linked.module_name;
+              declarations =
+                Ir.Of_optimized.convert ~arities:linked.arities ~constructors
+                  ~siblings:linked.siblings reached;
+              constructors;
+            })
+    outcome.modules
+
 let module_name source =
   Option.bind (Result.to_option (parsed source))
     (List.find_map (function
@@ -447,34 +527,7 @@ let compile calls source =
                      [ _; _ ] );
                _;
              } as entry) ) ->
-          let alive =
-            Compiler.reach ~roots:[ Dartea.Compiler.entry_root entry ]
-              outcome.modules
-          in
-          Ok
-            (List.filter_map
-               (fun (linked : Dartea.Compiler.linkable) ->
-                 match
-                   ( List.filter
-                       (fun declaration ->
-                         Dartea.Compiler.Reached.mem
-                           ( linked.module_name,
-                             Dartea.Compiler.name_of_declaration declaration )
-                           alive)
-                       linked.declarations,
-                     linked.constructors )
-                 with
-                 | [], [] -> None
-                 | reached, constructors ->
-                     Some
-                       {
-                         module_name = linked.module_name;
-                         declarations =
-                           Ir.Of_optimized.convert ~arities:linked.arities
-                             ~constructors ~siblings:linked.siblings reached;
-                         constructors;
-                       })
-               outcome.modules)
+          Ok (linked ~roots:[ Dartea.Compiler.entry_root entry ] outcome)
       | [], [], Some entry ->
           refused
             [
@@ -499,6 +552,62 @@ let compile calls source =
                     ];
               };
             ]
+
+let compile_modules sources ~entries =
+  match List.find_opt (fun (_, source) -> Option.is_some (found "Elm.Kernel" source)) sources with
+  | Some (name, _) ->
+      Error
+        ("-- KERNEL ACCESS ---------------------------------------------------- " ^ name
+       ^ ".elm\n\nA module cannot name `Elm.Kernel` directly.")
+  | None -> (
+      let outcome =
+        Compiler.compile_modules ~entry:None
+          (Project.Sources.of_list
+             (List.map
+                (fun (name, source) -> Project.Elm_file.of_path ~path:(name ^ ".elm") source)
+                sources))
+      in
+      match outcome.errors with
+      | _ :: _ as errors ->
+          let sources = Reporting.Sources.of_list outcome.sources in
+          Error
+            (String.concat "\n\n"
+               (List.map
+                  (fun error ->
+                    Reporting.Report.to_string ~colours:false (Reporting.Sources.report sources error))
+                  errors))
+      | [] -> (
+          let modules =
+            linked
+              ~roots:
+                (List.map
+                   (fun ({ module_name; name } : Value.global) ->
+                     Data.Name.global ~module_name ~exported_name:name)
+                   entries)
+              outcome
+          in
+          match
+            List.filter
+              (fun ({ module_name; name } : Value.global) ->
+                not
+                  (List.exists
+                     (fun compiled ->
+                       String.equal compiled.module_name module_name
+                       && List.exists
+                            (fun (declaration : Ir.Ast.declaration) ->
+                              String.equal declaration.name name)
+                            compiled.declarations)
+                     modules))
+              entries
+          with
+          | [] -> Ok modules
+          | missing ->
+              Error
+                (String.concat "\n"
+                   (List.map
+                      (fun ({ module_name; name } : Value.global) ->
+                        Printf.sprintf "%s does not expose a declaration `%s`." module_name name)
+                      missing))))
 
 type call = Kernel of Data.Kernel.agent | Driver of string | Computed
 

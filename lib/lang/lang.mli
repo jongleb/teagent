@@ -1,4 +1,4 @@
-(** One module of a compiled program, cut down to what [Main.main] reaches. *)
+(** One module of a compiled program, cut down to what its entries reach. *)
 type t = private {
   module_name : string;
   declarations : Ir.Ast.declaration list;
@@ -34,6 +34,35 @@ type call =
   | Driver of string  (** A driver call by its name, such as [fetch.get]. *)
   | Computed  (** A driver call whose name is not written out. *)
 
+(** A kernel of [Json.Decode] and [Json.Encode]; it works on [Value.V_json]. *)
+module Json : sig
+  type t =
+    | Is_string
+    | Is_bool
+    | Is_number
+    | Is_int
+    | Is_null
+    | Is_array
+    | Is_object
+    | Has_field
+    | Unsafe_field
+    | Length
+    | Unsafe_index
+    | Identity  (** Between a JSON string, bool or number and the Elm value. *)
+    | Stringify
+    | Is_valid
+    | Unsafe_parse
+    | Empty_array
+    | Pushed
+    | Empty_object
+    | With_field
+
+  val of_name : Data.Name.t -> t option
+end
+
 val module_name : string -> string option
 val compile : Calls.t -> string -> (t list, string) result
+
+val compile_modules :
+  (string * string) list -> entries:Value.global list -> (t list, string) result
 val calls : t list -> call list

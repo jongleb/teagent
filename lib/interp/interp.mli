@@ -9,4 +9,7 @@ type t
 
 val load : budget:int -> Lang.t list -> t
 val main : t -> (Value.task, [> `Interp of error ]) result
+val lookup :
+  t -> Value.global -> (Value.t, [> `Interp of error | `Undeclared of Value.global ]) result
+
 val apply : t -> Value.closure -> Value.t -> (Value.t, [> `Interp of error ]) result

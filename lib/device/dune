@@ -21,6 +21,17 @@
     (echo "|elm}\n")))))
 
 (rule
+ (target person_elm.ml)
+ (deps Person.elm)
+ (action
+  (with-stdout-to
+   person_elm.ml
+   (progn
+    (echo "let source = {elm|")
+    (cat Person.elm)
+    (echo "|elm}\n")))))
+
+(rule
  (target catalog_elm.ml)
  (deps Catalog.elm)
  (action

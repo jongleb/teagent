@@ -171,7 +171,10 @@ let () =
                     (In_channel.with_open_text file In_channel.input_all))
                  (fun skill -> Os.learned skill os)))
           (Filename.chop_suffix_opt ~suffix:".elm" name))
-      narrowed
+      (match (!approval, !mode) with
+      | `Ask, `Mcp | (`Auto | `Dry), _ ->
+          Os.only (List.filter (fun call -> call <> Os.Person) (List.map snd Os.calls)) narrowed
+      | `Ask, _ -> narrowed)
       (match Sys.readdir folder with
       | exception Sys_error _ -> []
       | names -> List.sort String.compare (Array.to_list names))
@@ -299,6 +302,15 @@ let () =
         | "y" | "yes" -> Lwt.return Device.Agrees
         | _ -> Lwt.return Device.Declines)
   in
+  let asked ~question answers =
+    Printf.printf "\nThe program asks: %s\n%s\nAnswer with a number: " question
+      (String.concat "\n" (List.mapi (fun index answer -> Printf.sprintf "  %d. %s" (index + 1) answer) answers));
+    flush stdout;
+    Lwt.return
+      (Option.bind
+         (int_of_string_opt (String.trim (Option.value ~default:"" (In_channel.input_line stdin))))
+         (fun number -> List.nth_opt answers (number - 1)))
+  in
   let profiled_as image =
     let os = profiled () in
     match String.equal (Os.image os) image with
@@ -306,12 +318,12 @@ let () =
     | false ->
         failed
           ("The log was made on image " ^ image ^ ", and this OS is image " ^ Os.image os
-         ^ ".\nUse the same profile, skills and --net hosts as the session did.")
+         ^ ".\nUse the same profile, skills, --net hosts and --ask as the session did.")
   in
   let tooled os =
     Result.fold
-      ~ok:(fun provider -> Handler.judging provider (Handler.staged (Os.workspace os) !shell))
-      ~error:(fun _ -> Handler.staged (Os.workspace os) !shell)
+      ~ok:(fun provider -> Handler.asking asked (Handler.judging provider (Handler.staged (Os.workspace os) !shell)))
+      ~error:(fun _ -> Handler.asking asked (Handler.staged (Os.workspace os) !shell))
       (Llm.configured ~model:!model ~effort:!effort ~openai:!openai)
   in
   let live os =
@@ -322,7 +334,7 @@ let () =
           Driver.ask = (fun ~system history -> Llm.answered provider ~system history);
           approve = approved;
           person;
-          handler = Handler.judging provider (Handler.staged (Os.workspace os) !shell);
+          handler = Handler.asking asked (Handler.judging provider (Handler.staged (Os.workspace os) !shell));
           commit = Tools.commit (Os.workspace os);
           keep = Tools.keep (Os.workspace os);
           os;

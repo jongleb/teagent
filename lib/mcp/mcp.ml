@@ -228,6 +228,7 @@ let handled program json =
       | Some Run -> Result.map (fun source -> `Run (source, Result.to_option (field "goal"))) (field "program")
       | Some Fetch -> Error "fetch is not a tool of its own: a program sent to run reaches it as Fetch.get."
       | Some Model -> Error "model is not a tool of its own: a program sent to run reaches it as Model.judge."
+      | Some Person -> Error "person is not a tool of its own: a program sent to run reaches it as Person.ask."
       | None -> (
           match (name, offered Os.Run) with
           | "fill", Some _ ->

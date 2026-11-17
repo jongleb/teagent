@@ -25,17 +25,23 @@ function below becomes one call; the column on the right is its JSON in the log.
 | `Fetch.get : String -> Task FetchErr Response` | Egress | `{"call": {"name": "fetch.get", "argument": value}}` |
 | `Fetch.post : String -> String -> Task FetchErr Response` | Irreversible | `{"call": {"name": "fetch.post", "argument": value}}` |
 | `Model.judge : String -> List String -> Task ModelErr String` | Pure | `{"call": {"name": "model.judge", "argument": value}}` |
+| `Person.ask : String -> List String -> Task PersonErr String` | Pure | `{"call": {"name": "person.ask", "argument": value}}` |
 
 `IoErr` is `NotFound String | Denied String | Conflict String`. `Model.judge question answers`
 sends the question and the answers to the model teagent runs with and returns the answer it
 picks, as written; a reply that is none of them is `Unclear reply`, and a run with no model is
 `Unreachable`. It is `Pure` because that model is the one the session already shows the project
-to; a replay answers it from the log. The classes are `Pure` (reads
+to; a replay answers it from the log. `Person.ask question answers` asks the person and returns
+the answer they pick; `Unanswered reason` when they pick none. Only an OS whose host can ask
+someone offers it (the command line with `--ask`), so a program that asks where nobody answers
+does not compile. The classes are `Pure` (reads
 only), `Staged` (changes the overlay), `Contained` (a sandboxed command whose writes are staged),
 `Egress` (sends data to a granted host) and `Irreversible` (asks the person first). A driver adds calls only through
 `call` with a dotted name. Its Elm module is part of the image (section 4), so a driver can
 change without a new ABI version, but sessions logged against the old driver no longer replay
-under the new image.
+under the new image. A driver added within a version, such as `Person`, gets its row in this
+table and changes only the image of an OS that offers it: logs of an OS without it replay as
+before.
 
 `hole`, `succeed`, `fail`, `andThen`, `map`, `mapErr`, `onError` and `batch` are not calls.
 They shape the task and never reach the runtime.
@@ -141,7 +147,7 @@ keys in this order:
 
 ```json
 {"abi": 2,
- "offers": ["bash", "read", "write", "edit", "grep", "run", "fetch", "model"],
+ "offers": ["bash", "read", "write", "edit", "grep", "run", "fetch", "model", "person"],
  "mounts": [["path", "hidden"], ...],
  "reads": "anywhere" or ["/abs/path", ...],
  "net": ["host", ...],

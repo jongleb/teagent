@@ -84,6 +84,16 @@ let () =
             | [ (Driver "fetch.get", Sends) ] -> None
             | _ -> Some "live: the powers of a widget that fetches are not one send")
         | Error report -> Some ("live: a granted Fetch did not compile:\n" ^ report));
+        (match
+           compiled
+             (Lang.Calls.plugging [ Device.Person ] Lang.Calls.pure)
+             "module Fetching exposing (main)\n\nimport Live\nimport Person\n\n\nmain : Live.Program () () ()\nmain =\n    Live.program\n        { init = ( (), Live.attempt (\\_ -> ()) (Person.ask \"Which?\" [ \"a\" ]) )\n        , update = \\_ m -> ( m, Cmd.none )\n        , view = \\m -> m\n        , subscriptions = \\_ -> Sub.none\n        }\n"
+         with
+        | Ok modules -> (
+            match Live.powers ~apis:[] modules with
+            | [ (Driver "person.ask", Asks) ] -> None
+            | _ -> Some "live: the powers of a widget that asks are not one question")
+        | Error report -> Some ("live: a granted Person did not compile:\n" ^ report));
         (match Lang.compile_modules Lang.Calls.pure [ ("Live", counter) ] ~entries:[] with
         | Error _ -> None
         | Ok _ -> Some "live: a module took the name Live");

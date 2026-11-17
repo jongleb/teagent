@@ -1,4 +1,4 @@
-type call = Bash | Read | Write | Edit | Grep | Run | Fetch | Model
+type call = Bash | Read | Write | Edit | Grep | Run | Fetch | Model | Person
 
 let calls =
   [
@@ -10,6 +10,7 @@ let calls =
     ("run", Run);
     ("fetch", Fetch);
     ("model", Model);
+    ("person", Person);
   ]
 
 type view = {
@@ -324,6 +325,7 @@ let view os = os.allows
 let device = function
   | Fetch -> Some Device.Fetch
   | Model -> Some Device.Model
+  | Person -> Some Device.Person
   | Bash | Read | Write | Edit | Grep | Run -> None
 
 let workspace os =
@@ -350,7 +352,7 @@ let table os =
             | Write -> Some Data.Kernel.Agent_write
             | Edit -> Some Data.Kernel.Agent_edit
             | Grep -> Some Data.Kernel.Agent_grep
-            | Run | Fetch | Model -> None)
+            | Run | Fetch | Model | Person -> None)
           missing)
   |> Lang.Calls.unplugged (List.filter_map device missing)
   |> Lang.Calls.plugging
@@ -438,6 +440,7 @@ let exposure os calls =
     | Kernel Agent_shell, `Offline -> Some ("shell", [ `Reads ])
     | Kernel Agent_shell, `Networked -> Some ("shell with --net", [ `Reads; `Inward; `Outward ])
     | Kernel Agent_hole, _ -> Some ("hole", [ `Inward ])
+    | Driver "person.ask", _ -> None
     | Driver name, _ -> Some (name, [ `Inward ])
     | Computed, _ -> Some ("a driver call", [ `Inward; `Outward ])
     | ( Kernel

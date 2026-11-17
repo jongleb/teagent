@@ -8,6 +8,7 @@ type call =
   | Run  (** A Dartea program; it sees only the other calls this OS offers. *)
   | Fetch  (** The [Fetch] module of programs, over the hosts granted with [--net]. *)
   | Model  (** The [Model] module of programs: the model teagent runs with judges a question. *)
+  | Person  (** The [Person] module of programs: the person picks an answer to a question. *)
 
 val calls : (string * call) list
 

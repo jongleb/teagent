@@ -30,6 +30,14 @@ unified diff; `Handler.Overlay.hunks` computes them for any change.
 The events of one session come in order, each after the callback for the one before has
 returned. Sessions share no state, so several can run at once in one process.
 
+## Questions to the person
+
+A program asks the person with `Person.ask question answers`, which waits for one of the
+answers. The OS offers it only when the host can answer (`Os.Person` among the offers), and the
+host answers through `Handler.asking`: a function from the question and the answers to the one
+picked, or `None`. Only the asking program waits; other sessions go on. The question and the
+answer reach the log, and the stream, as a `Performed` call to `person.ask`.
+
 ## Cancelling
 
 When `cancelled` resolves, the call the session is waiting on (the model, a tool, the person) is

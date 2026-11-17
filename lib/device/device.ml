@@ -1,10 +1,11 @@
-type t = Fetch | Model | Catalog | Api of Api.t
+type t = Fetch | Model | Person | Catalog | Api of Api.t
 type consent = Agrees | Declines
 
-let all = [ Fetch; Model ]
+let all = [ Fetch; Model; Person ]
 let source = function
   | Fetch -> Fetch_elm.source
   | Model -> Model_elm.source
+  | Person -> Person_elm.source
   | Catalog -> Catalog_elm.source
   | Api api -> Api.source api
 
@@ -43,6 +44,7 @@ let refused ~name reason =
   match String.split_on_char '.' name with
   | "fetch" :: _ -> failed "Fetch" "Declined" reason
   | "model" :: _ -> failed "Model" "Declined" reason
+  | "person" :: _ -> failed "Person" "Unanswered" reason
   | [ "api"; module_name; _ ] -> failed module_name "Declined" reason
   | _ -> Value.V_string reason
 
@@ -129,6 +131,7 @@ let perform workspace ~name argument =
   | "fetch.get", Value.V_string url -> fetched Tools.Get url
   | "fetch.post", Value.V_record [ ("body", V_string body); ("url", V_string url) ] ->
       fetched (Tools.Post body) url
+  | "person.ask", _ -> Lwt.return (Error (failed "Person" "Unanswered" "nobody here answers questions"))
   | "model.judge", _ ->
       Lwt.return
         (Error
@@ -338,3 +341,18 @@ let judged model argument =
                  };
                ]))
   | _ -> Lwt.return (Error (failed "Model" "Unclear" "judge takes a question and a list of answers"))
+
+let asked person argument =
+  match argument with
+  | Value.V_record [ ("answers", V_list answers); ("question", V_string question) ] -> (
+      match List.filter_map (function Value.V_string answer -> Some answer | _ -> None) answers with
+      | [] -> Lwt.return (Error (failed "Person" "Unanswered" "ask needs at least one answer to pick"))
+      | answers ->
+          Lwt.map
+            (fun picked ->
+              Option.fold
+                ~none:(Error (failed "Person" "Unanswered" "the person picked none of the answers"))
+                ~some:(fun answer -> Ok (Value.V_string answer))
+                (Option.bind picked (fun picked -> List.find_opt (String.equal picked) answers)))
+            (person ~question answers))
+  | _ -> Lwt.return (Error (failed "Person" "Unanswered" "ask takes a question and a list of answers"))

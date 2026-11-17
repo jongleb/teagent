@@ -9,6 +9,7 @@ type power =
   | Reads  (** It only reads. *)
   | Sends  (** It sends data out to a host. *)
   | Changes  (** It changes files, runs a command, or acts on the world outside. *)
+  | Asks  (** It asks the person a question. *)
 
 type error = [ `Interp of Interp.error | `Undeclared of Value.global | `Live of string ]
 

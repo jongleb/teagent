@@ -248,6 +248,17 @@ let judging model inner =
             inner.perform tool sources state);
   }
 
+let asking person inner =
+  {
+    perform =
+      (fun (tool : Value.tool) sources state ->
+        match tool with
+        | Call { name = "person.ask"; argument } ->
+            Lwt.map (fun result -> Performed (result, state)) (Device.asked person argument)
+        | Read _ | Write _ | Edit _ | Grep _ | Shell _ | Enter _ | Leave | Merge _ | Call _ ->
+            inner.perform tool sources state);
+  }
+
 type shell = Open | Contained | Disabled
 
 let shells = [ ("contained", Contained); ("open", Open); ("off", Disabled) ]

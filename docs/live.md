@@ -41,8 +41,8 @@ with Elm's.
 the table is the program's rights. `Lang.Calls.pure` has Agent's tasks and none of its tools, and no
 driver; `Lang.Calls.plugging [ Device.Fetch ] Lang.Calls.pure` adds one. A module that imports a
 driver the table does not have, or calls a tool it dropped, does not compile. `Live.powers` lists
-what the compiled calls can do, `Reads`, `Sends` or `Changes`, so a host can ask the person before
-it runs anything.
+what the compiled calls can do, `Reads`, `Sends`, `Changes` or `Asks` (`Person.ask`, with
+`Device.Person` plugged), so a host can ask the person before it runs anything.
 
 ## The host
 

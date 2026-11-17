@@ -16,18 +16,23 @@ let () =
     \            )\n"
   in
   let usage = { Llm.input = 10; output = 2; cached = 0; written = 0 } in
-  let world ask =
+  let offered os ask =
     {
       Driver.ask;
       approve = (fun _ -> Lwt.return Driver.Apply);
       person = (fun _ -> Lwt.return Device.Declines);
-      handler = Handler.staged (Tools.at workspace) Handler.Open;
+      handler =
+        Handler.asking
+          (fun ~question answers ->
+            Lwt.return (match (question, answers) with "Which name?", [ _; second ] -> Some second | _ -> None))
+          (Handler.staged (Tools.at workspace) Handler.Open);
       commit = Tools.commit (Tools.at workspace);
       keep = Tools.keep (Tools.at workspace);
-      os = Os.granted workspace ~net:[];
+      os;
       recorded = [];
     }
   in
+  let world = offered (Os.granted workspace ~net:[]) in
   let solved world ~cancelled =
     let events = ref [] in
     let report =
@@ -115,6 +120,36 @@ let () =
          match solved silent ~cancelled:stop with
          | { ending = Error Cancelled; _ }, [ { happened = Logged (Ended "Stopped from outside."); _ } ] -> None
          | _ -> Some "session: a cancelled session did not end at once");
+        (let asking =
+           "```elm\nmodule Main exposing (main)\n\nimport Agent exposing (..)\nimport Person\n\n\n\
+            main : Task Person.PersonErr String\nmain =\n    Person.ask \"Which name?\" [ \"foo\", \"bar\" ]\n```\n"
+         in
+         let ran os =
+           let replies = ref [ asking; "Done." ] in
+           let _, events =
+             solved
+               (offered os (fun ~system:_ _ ->
+                    match !replies with
+                    | text :: rest ->
+                        replies := rest;
+                        Lwt.return (Ok { Llm.text; usage })
+                    | [] -> Lwt.return (Error (`Llm (Llm.Transport "no more replies")))))
+               ~cancelled:(fst (Lwt.wait ()))
+           in
+           List.find_map
+             (fun ({ happened; _ } : Session.event) ->
+               match happened with
+               | Logged (Ran text) -> Some (`Ran text)
+               | Logged (Refused _) -> Some `Refused
+               | _ -> None)
+             events
+         in
+         match
+           ( ran (Os.granted workspace ~net:[]),
+             ran (Os.only (List.filter (fun call -> call <> Os.Person) (List.map snd Os.calls)) (Os.granted workspace ~net:[])) )
+         with
+         | Some (`Ran "main finished with:\n\"bar\""), Some `Refused -> None
+         | _ -> Some "session: Person.ask was not answered by the person, or compiled where nobody can answer");
       ]
   in
   List.iter prerr_endline failures;

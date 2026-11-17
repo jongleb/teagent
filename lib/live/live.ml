@@ -7,7 +7,7 @@ type t = {
 }
 
 type listening = { source : string; task : Value.task }
-type power = Reads | Sends | Changes
+type power = Reads | Sends | Changes | Asks
 type error = [ `Interp of Interp.error | `Undeclared of Value.global | `Live of string ]
 
 let rec plain (value : Value.t) = match value with V_labelled { value; _ } -> plain value | _ -> value
@@ -138,6 +138,7 @@ let powers ~apis modules =
             Changes
         | Driver ("fetch.get" | "model.judge") -> Sends
         | Driver "catalog.search" -> Reads
+        | Driver "person.ask" -> Asks
         | Driver name -> (
             match String.split_on_char '.' name with
             | [ "api"; module_name; key ] ->

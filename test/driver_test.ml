@@ -1112,7 +1112,9 @@ readsSecrets call =\n\
                 lost, or undo and replay disagree");
         (match In_channel.with_open_text (Printf.sprintf "sessions/abi%d.jsonl" Os.abi) In_channel.input_lines with
         | header :: lines -> (
-            let os = Os.granted "/project" ~net:[] in
+            let os =
+              Os.only (List.filter (fun call -> call <> Os.Person) (List.map snd Os.calls)) (Os.granted "/project" ~net:[])
+            in
             match
               ( Yojson.Safe.from_string header,
                 List.map (fun line -> Driver.event_of_json (Yojson.Safe.from_string line)) lines )

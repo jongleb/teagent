@@ -50,6 +50,9 @@ val run : Tools.t -> unit t
 val staged : Tools.t -> shell -> Overlay.t t
 val judging : Llm.t -> 'state t -> 'state t
 
+val asking : (question:string -> string list -> string option Lwt.t) -> 'state t -> 'state t
+(** Answers [Person.ask] with what the person picks, [None] when they pick nothing. *)
+
 (** The layers an OS boots around the tools, outermost first. *)
 module Boot : sig
   (** One wrapper around the handler inside it. *)

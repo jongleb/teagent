@@ -37,6 +37,8 @@
   ocurl
   ezcurl
   lwt
+  (trace
+   (>= 0.12))
   digestif
   base64
   (tar

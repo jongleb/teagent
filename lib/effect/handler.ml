@@ -486,99 +486,162 @@ end
 
 type verdict = Allow | Ask of string | Deny of string
 
+let calls = Hashtbl.create 5
+let denials = Atomic.make 0
+
 let booted boot ~class_of ~rules ~person ~journal base =
-  List.fold_right
-    (fun (layer : Boot.layer) inner ->
-      match layer with
-      | Journal -> journal inner
-      | Policy ->
-          let answers = ref [] in
-          {
-            perform =
-              (fun tool sources state ->
-                let carried =
-                  List.filter_map
-                    (fun (source : Value.source) ->
-                      match source with
-                      | File path -> Some path
-                      | Search -> Some "lines grep found"
-                      | Command -> Some "a shell command's output"
-                      | Child -> Some "a child process's changes"
-                      | Driver _ -> None)
-                    sources
-                in
-                let asked question declined agreed =
-                  match
-                    ( !answers,
-                      List.length (List.filter (function `Declined -> true | `Agreed -> false) !answers) )
-                  with
-                  | `Declined :: `Declined :: `Declined :: _, _ -> Lwt.return (Performed (declined, state))
-                  | _, refusals when refusals >= 20 -> Lwt.return (Performed (declined, state))
-                  | _, _ -> (
-                      let* consent = person question in
-                      match consent with
-                      | Device.Agrees ->
-                          answers := `Agreed :: !answers;
-                          agreed ()
-                      | Declines ->
-                          answers := `Declined :: !answers;
-                          Lwt.return (Performed (declined, state)))
-                in
-                let performed () = inner.perform tool sources state in
-                let checked () =
-                  match ((class_of tool : Value.class_), carried) with
-                  | Irreversible { question; declined }, [] -> asked question (Error declined) performed
-                  | Irreversible { question; declined }, _ :: _ ->
-                      asked
-                        (question ^ "\n\nIt carries content of the project: " ^ String.concat ", " carried)
-                        (Error declined) performed
-                  | Egress { declined }, _ :: _ ->
-                      asked
-                        ("send content of the project (" ^ String.concat ", " carried ^ ") out with "
-                        ^ Yojson.Safe.to_string (Value.tool_to_json tool))
-                        declined performed
-                  | (Pure | Staged | Contained | Egress _), _ -> performed ()
-                in
-                let refusal reason : (Value.t, Value.t) result option =
-                  match tool with
-                  | Read _ | Write _ | Edit _ ->
-                      Some
-                        (Error
-                           (V_constr
-                              {
-                                constructor = { module_name = "Agent"; name = "Denied" };
-                                arguments = [ V_string reason ];
-                              }))
-                  | Grep _ -> Some (Ok (V_list []))
-                  | Shell _ -> Some (Ok (V_record [ ("code", V_number 126.); ("out", V_string reason) ]))
-                  | Call { name; _ } -> Some (Error (Device.refused ~name reason))
-                  | Enter _ | Leave | Merge _ -> None
-                in
-                match Option.map (fun _ -> rules tool sources) (refusal "") with
-                | None | Some Allow -> checked ()
-                | Some (Deny reason) ->
-                    Lwt.return
-                      (Performed
-                         (Option.value ~default:(Error (Value.V_string reason)) (refusal reason), state))
-                | Some (Ask question) ->
-                    asked question
-                      (Option.value ~default:(Error (Value.V_string question))
-                         (refusal ("the person said no: " ^ question)))
-                      checked);
-          }
-      | Budget calls ->
-          let spent = ref 0 in
-          {
-            perform =
-              (fun tool sources state ->
-                match !spent < calls with
-                | false -> Lwt.return Exhausted
-                | true ->
-                    let+ step = inner.perform tool sources state in
-                    (match step with Performed _ -> incr spent | Blocked | Exhausted -> ());
-                    step);
-          })
-    boot base
+  let named (tool : Value.tool) =
+    match (tool, Value.tool_to_json tool) with
+    | Call { name; _ }, _ -> name
+    | _, `Assoc [ (name, _) ] -> name
+    | _, _ -> "a tool"
+  in
+  let denied tool reason =
+    let total = Atomic.fetch_and_add denials 1 + 1 in
+    if Trace_core.enabled () then begin
+      Trace_core.message "handler.denied"
+        ~data:(fun () -> [ ("call", `String (named tool)); ("reason", `String reason) ]);
+      Trace_core.counter_int "handler.denials" total
+    end
+  in
+  let stacked =
+    List.fold_right
+      (fun (layer : Boot.layer) inner ->
+        match layer with
+        | Journal -> journal inner
+        | Policy ->
+            let answers = ref [] in
+            {
+              perform =
+                (fun tool sources state ->
+                  let carried =
+                    List.filter_map
+                      (fun (source : Value.source) ->
+                        match source with
+                        | File path -> Some path
+                        | Search -> Some "lines grep found"
+                        | Command -> Some "a shell command's output"
+                        | Child -> Some "a child process's changes"
+                        | Driver _ -> None)
+                      sources
+                  in
+                  let asked question declined agreed =
+                    match
+                      ( !answers,
+                        List.length (List.filter (function `Declined -> true | `Agreed -> false) !answers) )
+                    with
+                    | `Declined :: `Declined :: `Declined :: _, _ ->
+                        denied tool "the person said no three times in a row";
+                        Lwt.return (Performed (declined, state))
+                    | _, refusals when refusals >= 20 ->
+                        denied tool "the person said no twenty times";
+                        Lwt.return (Performed (declined, state))
+                    | _, _ -> (
+                        let* consent = person question in
+                        match consent with
+                        | Device.Agrees ->
+                            answers := `Agreed :: !answers;
+                            agreed ()
+                        | Declines ->
+                            answers := `Declined :: !answers;
+                            denied tool "the person said no";
+                            Lwt.return (Performed (declined, state)))
+                  in
+                  let performed () = inner.perform tool sources state in
+                  let checked () =
+                    match ((class_of tool : Value.class_), carried) with
+                    | Irreversible { question; declined }, [] -> asked question (Error declined) performed
+                    | Irreversible { question; declined }, _ :: _ ->
+                        asked
+                          (question ^ "\n\nIt carries content of the project: " ^ String.concat ", " carried)
+                          (Error declined) performed
+                    | Egress { declined }, _ :: _ ->
+                        asked
+                          ("send content of the project (" ^ String.concat ", " carried ^ ") out with "
+                          ^ Yojson.Safe.to_string (Value.tool_to_json tool))
+                          declined performed
+                    | (Pure | Staged | Contained | Egress _), _ -> performed ()
+                  in
+                  let refusal reason : (Value.t, Value.t) result option =
+                    match tool with
+                    | Read _ | Write _ | Edit _ ->
+                        Some
+                          (Error
+                             (V_constr
+                                {
+                                  constructor = { module_name = "Agent"; name = "Denied" };
+                                  arguments = [ V_string reason ];
+                                }))
+                    | Grep _ -> Some (Ok (V_list []))
+                    | Shell _ -> Some (Ok (V_record [ ("code", V_number 126.); ("out", V_string reason) ]))
+                    | Call { name; _ } -> Some (Error (Device.refused ~name reason))
+                    | Enter _ | Leave | Merge _ -> None
+                  in
+                  match Option.map (fun _ -> rules tool sources) (refusal "") with
+                  | None | Some Allow -> checked ()
+                  | Some (Deny reason) ->
+                      denied tool reason;
+                      Lwt.return
+                        (Performed
+                           (Option.value ~default:(Error (Value.V_string reason)) (refusal reason), state))
+                  | Some (Ask question) ->
+                      asked question
+                        (Option.value ~default:(Error (Value.V_string question))
+                           (refusal ("the person said no: " ^ question)))
+                        checked);
+            }
+        | Budget calls ->
+            let spent = ref 0 in
+            {
+              perform =
+                (fun tool sources state ->
+                  match !spent < calls with
+                  | false -> Lwt.return Exhausted
+                  | true ->
+                      let+ step = inner.perform tool sources state in
+                      (match step with Performed _ -> incr spent | Blocked | Exhausted -> ());
+                      step);
+            })
+      boot base
+  in
+  {
+    perform =
+      (fun tool sources state ->
+        match Trace_core.enabled () with
+        | false -> stacked.perform tool sources state
+        | true ->
+            let class_ =
+              match (class_of tool : Value.class_) with
+              | Pure -> "pure"
+              | Staged -> "staged"
+              | Contained -> "contained"
+              | Egress _ -> "egress"
+              | Irreversible _ -> "irreversible"
+            in
+            let total = 1 + Option.value ~default:0 (Hashtbl.find_opt calls class_) in
+            Hashtbl.replace calls class_ total;
+            Trace_core.counter_int ("handler.calls." ^ class_) total;
+            let span =
+              Trace_core.enter_span ~__FILE__ ~__LINE__ ~flavor:`Async
+                ~data:(fun () -> [ ("class", `String class_) ])
+                ("handler.call " ^ named tool)
+            in
+            Lwt.finalize
+              (fun () ->
+                let+ step = stacked.perform tool sources state in
+                Trace_core.add_data_to_span span
+                  [
+                    ( "outcome",
+                      `String
+                        (match step with
+                        | Performed (Ok _, _) -> "ok"
+                        | Performed (Error _, _) -> "failed"
+                        | Blocked -> "blocked"
+                        | Exhausted -> "exhausted") );
+                  ];
+                step)
+              (fun () -> Lwt.return (Trace_core.exit_span span)));
+  }
 
 let interpret handler program state (task : Value.task) =
   let rec interpret ~pc state (task : Value.task) =

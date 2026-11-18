@@ -1,4 +1,4 @@
 (library
  (name llm)
  (public_name teagent.llm)
- (libraries curl lwt lwt.unix threads.posix yojson))
+ (libraries curl lwt lwt.unix threads.posix trace.core yojson))

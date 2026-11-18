@@ -1,4 +1,4 @@
 (library
  (name interp)
  (public_name teagent.interp)
- (libraries lang tools value yojson dartea.data dartea.ir dartea.primitives))
+ (libraries lang tools trace.core value yojson dartea.data dartea.ir dartea.primitives))

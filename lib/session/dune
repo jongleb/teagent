@@ -1,4 +1,4 @@
 (library
  (name session)
  (public_name teagent.session)
- (libraries driver handler llm tools value lwt))
+ (libraries driver handler llm tools trace.core value lwt))

@@ -65,7 +65,16 @@ let moved program (pair : Value.t) =
   | V_tuple [ model; command ] -> Result.map (fun tasks -> (model, tasks)) (commands command)
   | other -> Error (`Live ("not a ( model, Cmd msg ) pair: " ^ Value.to_elm other))
 
+let traced name program run =
+  Trace_core.with_span ~__FILE__ ~__LINE__ name (fun span ->
+      let before = Interp.used program in
+      let outcome = run () in
+      if Trace_core.enabled () then
+        Trace_core.add_data_to_span span [ ("steps", `Int (Interp.used program - before)) ];
+      outcome)
+
 let started program main =
+  traced "live.init" program @@ fun () ->
   Result.bind (Interp.lookup program main) (fun value ->
       match plain value with
       | V_constr { constructor = { module_name = "Live"; name = "Program" }; arguments = [ fields ] } -> (
@@ -84,9 +93,10 @@ let started program main =
             (`Live
                (main.module_name ^ "." ^ main.name ^ " is not a Live.program: " ^ Value.to_elm other)))
 
-let drawn live = Interp.apply live.program live.view live.model
+let drawn live = traced "live.view" live.program (fun () -> Interp.apply live.program live.view live.model)
 
 let updated live message =
+  traced "live.update" live.program @@ fun () ->
   Result.bind (applied live.program (V_closure live.update) [ message; live.model ]) (fun pair ->
       Result.map (fun (model, tasks) -> ({ live with model }, tasks)) (moved live.program pair))
 
@@ -112,7 +122,8 @@ let listening live =
         | other -> Error (`Live ("a subscription keyed by " ^ Value.to_elm other)))
     | other -> Error (`Live ("not a Sub: " ^ Value.to_elm other))
   in
-  Result.bind (Interp.apply live.program live.subscriptions live.model) found
+  traced "live.listen" live.program (fun () ->
+      Result.bind (Interp.apply live.program live.subscriptions live.model) found)
 
 let message live ~view path arguments =
   Option.fold

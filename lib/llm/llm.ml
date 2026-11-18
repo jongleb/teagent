@@ -208,11 +208,12 @@ let answered provider ~system messages =
             | _ -> Error (Unreadable (Yojson.Safe.to_string json)) )
   in
   let request = Yojson.Safe.to_string body in
+  let span = Trace_core.enter_span ~__FILE__ ~__LINE__ ~flavor:`Async "model.request" in
   let rec attempt left delay =
     let* exchanged = posted ~url ~headers request in
     let retried retry_after failure =
       match left with
-      | 0 -> Lwt.return (Error (`Llm failure))
+      | 0 -> Lwt.return (Error failure)
       | _ ->
           let* () = Lwt_unix.sleep (Option.value ~default:delay retry_after) in
           attempt (left - 1) (delay *. 2.)
@@ -222,13 +223,36 @@ let answered provider ~system messages =
     | Ok { code = 200; body; _ } ->
         Lwt.return
           (match Yojson.Safe.from_string body with
-          | json -> Result.map_error (fun failure -> `Llm failure) (read json)
-          | exception Yojson.Json_error reason -> Error (`Llm (Unreadable reason)))
+          | json -> read json
+          | exception Yojson.Json_error reason -> Error (Unreadable reason))
     | Ok { code = (408 | 429 | 500 | 502 | 503 | 504 | 529) as code; body; retry_after } ->
         retried retry_after (Status { code; body })
-    | Ok { code; body; _ } -> Lwt.return (Error (`Llm (Status { code; body })))
+    | Ok { code; body; _ } -> Lwt.return (Error (Status { code; body }))
   in
-  attempt 4 1.
+  Lwt.finalize
+    (fun () ->
+      let+ answer = attempt 4 1. in
+      if Trace_core.enabled () then
+        Trace_core.add_data_to_span span
+          (match answer with
+          | Ok { usage; _ } ->
+              [
+                ("tokens_in", `Int (usage.input + usage.cached + usage.written));
+                ("tokens_out", `Int usage.output);
+                ("tokens_cached", `Int usage.cached);
+              ]
+          | Error failure ->
+              [
+                ( "error",
+                  `String
+                    (match failure with
+                    | Status { code; _ } -> "status " ^ string_of_int code
+                    | Transport _ -> "transport"
+                    | Refusal _ -> "refusal"
+                    | Unreadable _ -> "unreadable") );
+              ]);
+      Result.map_error (fun failure -> `Llm failure) answer)
+    (fun () -> Lwt.return (Trace_core.exit_span span))
 
 let complete provider ~system messages =
   Lwt.map (Result.map (fun reply -> reply.text)) (answered provider ~system messages)

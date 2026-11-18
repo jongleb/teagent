@@ -22,7 +22,27 @@ let solve (world : Driver.world) ~on ~cancelled task =
   let current = ref Main and count = ref 0 and step = ref None and spent = ref Llm.unused in
   let left = ref [] in
   let nothing = { read = []; changed = [] } in
-  let emitted touched happened = on { agent = !current; step = !step; spent = !spent; touched; happened } in
+  let emitted touched happened =
+    if Trace_core.enabled () then
+      Trace_core.message "session.event" ~data:(fun () ->
+          [
+            ( "agent",
+              `String (match !current with Main -> "main" | Spawned { id; _ } -> "spawned " ^ string_of_int id) );
+            ( "kind",
+              `String
+                (match happened with
+                | Logged event -> (
+                    match Driver.event_to_json event with `Assoc [ (kind, _) ] -> kind | _ -> "logged")
+                | Began _ -> "began"
+                | Merged _ -> "merged"
+                | Proposed _ -> "proposed"
+                | Asking _ -> "asking") );
+            ("step", Option.fold ~none:`None ~some:(fun step -> `String step) !step);
+            ("tokens_in", `Int !spent.input);
+            ("tokens_out", `Int !spent.output);
+          ]);
+    on { agent = !current; step = !step; spent = !spent; touched; happened }
+  in
   let listed (value : Value.t) =
     match value with
     | V_list rows ->

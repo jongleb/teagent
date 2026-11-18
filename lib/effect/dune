@@ -1,4 +1,4 @@
 (library
  (name handler)
  (public_name teagent.handler)
- (libraries device interp llm tools value lwt yojson))
+ (libraries device interp llm tools trace.core value lwt yojson))

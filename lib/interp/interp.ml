@@ -22,6 +22,7 @@ type t = {
   budget : budget;
   mutable steps : int;
   mutable spent : int;
+  mutable used : int;
 }
 
 let stuck reason = raise (Stopped (Stuck reason))
@@ -42,6 +43,7 @@ let load ~budget (modules : Lang.t list) =
       budget;
       steps = (match budget with Total steps | Each steps -> steps);
       spent = 0;
+      used = 0;
     }
   in
   List.iter
@@ -868,27 +870,51 @@ and bind program ~home scope (bound : Ir.Ast.bind) : Value.t =
   | B_closure { parameters; captures = _; body } ->
       V_closure { home; parameters; scope; body; recursion = Anonymous }
 
-let guarded program run =
-  (match program.budget with Each steps -> program.steps <- steps | Total _ -> ());
-  let before = program.steps in
-  let outcome = match run () with value -> Ok value | exception Stopped error -> Error (`Interp error) in
-  program.spent <- min before (before - program.steps);
-  outcome
+let steps = Atomic.make 0
+
+let guarded program ~entry run =
+  Trace_core.with_span ~__FILE__ ~__LINE__ "interp.entry" (fun span ->
+      (match program.budget with Each steps -> program.steps <- steps | Total _ -> ());
+      let before = program.steps in
+      let outcome = match run () with value -> Ok value | exception Stopped error -> Error (`Interp error) in
+      program.spent <- min before (before - program.steps);
+      program.used <- program.used + program.spent;
+      let total = Atomic.fetch_and_add steps program.spent + program.spent in
+      if Trace_core.enabled () then begin
+        Trace_core.add_data_to_span span
+          [
+            ("global", `String (entry ()));
+            ("steps", `Int program.spent);
+            ("budget", `Int before);
+            ( "outcome",
+              `String
+                (match outcome with
+                | Ok _ -> "ok"
+                | Error (`Interp Budget_exhausted) -> "out of budget"
+                | Error (`Interp (Crashed _)) -> "crashed"
+                | Error (`Interp (Stuck _)) -> "stuck") );
+          ];
+        Trace_core.counter_int "interp.steps" total
+      end;
+      outcome)
 
 let spent program = program.spent
+let used program = program.used
 
 let main program =
   Result.bind
-    (guarded program (fun () -> top program ~home:"Main" (Data.Name.local "main")))
+    (guarded program ~entry:(fun () -> "Main.main") (fun () -> top program ~home:"Main" (Data.Name.local "main")))
     (function
       | Value.V_task task -> Ok task
       | _ -> Error (`Interp (Stuck "main is not a task")))
 
-let apply program callback argument =
-  guarded program (fun () -> called program (V_closure callback) [ argument ])
+let apply program (callback : Value.closure) argument =
+  guarded program ~entry:(fun () -> "a function of " ^ callback.home) (fun () ->
+      called program (V_closure callback) [ argument ])
 
 let lookup program (name : Value.global) =
   Option.fold
     ~none:(Error (`Undeclared name))
-    ~some:(fun _ -> guarded program (fun () -> top program ~home:name.module_name (Data.Name.local name.name)))
+    ~some:(fun _ ->
+      guarded program ~entry:(fun () -> name.module_name ^ "." ^ name.name) (fun () -> top program ~home:name.module_name (Data.Name.local name.name)))
     (Hashtbl.find_opt program.declarations name)

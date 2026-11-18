@@ -125,7 +125,7 @@ let message live ~view path arguments =
       | _, _ :: _ -> Error (`Live "the view holds a message here, not a function of the event"))
     (Wire.at view path)
 
-let powers ~apis modules =
+let powers ~devices modules =
   List.map
     (fun (call : Lang.call) ->
       ( call,
@@ -140,14 +140,23 @@ let powers ~apis modules =
         | Driver "catalog.search" -> Reads
         | Driver "person.ask" -> Asks
         | Driver name -> (
-            match String.split_on_char '.' name with
-            | [ "api"; module_name; key ] ->
+            match
+(Device.declared devices name, String.split_on_char '.' name)
+            with
+            | Some Pure, _ -> Reads
+            | Some (Egress _), _ -> Sends
+            | Some (Staged | Contained | Irreversible _), _ -> Changes
+            | None, [ "api"; module_name; key ] ->
                 Option.fold ~none:Changes
                   ~some:(fun (operation : Api.operation) ->
                     match operation.meth with Get | Head -> Sends | Post | Put | Patch | Delete -> Changes)
                   (Option.bind
-                     (List.find_opt (fun api -> String.equal (Api.name api) module_name) apis)
+                     (List.find_map
+                        (function
+                          | Device.Api api when String.equal (Api.name api) module_name -> Some api
+                          | _ -> None)
+                        devices)
                      (fun api -> Api.operation api key))
-            | _ -> Changes)
+            | None, _ -> Changes)
         | Computed -> Changes ))
     (Lang.calls modules)

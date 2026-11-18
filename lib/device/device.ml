@@ -1,4 +1,5 @@
-type t = Fetch | Model | Person | Catalog | Api of Api.t
+type t = Fetch | Model | Person | Catalog | Api of Api.t | Hosted of hosted
+and hosted = { name : string; source : string; calls : (string * Value.class_) list }
 type consent = Agrees | Declines
 
 let all = [ Fetch; Model; Person ]
@@ -8,11 +9,22 @@ let source = function
   | Person -> Person_elm.source
   | Catalog -> Catalog_elm.source
   | Api api -> Api.source api
+  | Hosted hosted -> hosted.source
 
 let failed module_name constructor detail =
   Value.V_constr { constructor = { module_name; name = constructor }; arguments = [ V_string detail ] }
 
-let class_of ~name argument =
+let declared devices name =
+  List.find_map
+    (function Hosted hosted -> List.assoc_opt name hosted.calls | Fetch | Model | Person | Catalog | Api _ -> None)
+    devices
+
+let class_of devices ~name argument =
+  match declared devices name with
+  | Some (Value.Irreversible { question; declined }) ->
+      Value.Irreversible { question = question ^ ", with:\n" ^ Value.to_elm argument; declined }
+  | Some class_ -> class_
+  | None -> (
   match (name, argument) with
   | "fetch.post", Value.V_record [ ("body", V_string body); ("url", V_string url) ] ->
       Value.Irreversible
@@ -38,7 +50,46 @@ let class_of ~name argument =
               question = "make the call " ^ name ^ " of an API, which may not be taken back";
               declined = failed module_name "Declined" "the person did not let this call go out; ask them first";
             }
-      | _ -> Value.Pure)
+      | _ -> Value.Pure))
+
+let hosted ~name ~source ~calls =
+  let prefix = String.lowercase_ascii name ^ "." in
+  let identifier = Str.string_match (Str.regexp "[A-Z][A-Za-z0-9_]*$") name 0 in
+  let kernels =
+    match Str.split_delim (Str.regexp_string "Elm.Kernel.") source with
+    | [] -> []
+    | _ :: uses -> uses
+  in
+  let opening = "Agent.call \"" in
+  let undeclared =
+    List.find_map
+      (fun use ->
+        match String.starts_with ~prefix:opening use with
+        | false ->
+            Some ("Elm.Kernel." ^ Option.fold ~none:use ~some:(fun at -> String.sub use 0 at) (String.index_opt use '\n'))
+        | true -> (
+            let rest = String.sub use (String.length opening) (String.length use - String.length opening) in
+            match String.index_opt rest '"' with
+            | None -> Some "a call whose name is not written out"
+            | Some at ->
+                let called = String.sub rest 0 at in
+                Option.fold ~none:(Some ("the call " ^ called ^ ", which has no class")) ~some:(fun _ -> None)
+                  (List.assoc_opt called calls)))
+      kernels
+  in
+  match
+    ( identifier,
+      List.mem name [ "Main"; "Agent"; "Live"; "Policy"; "Listen"; "Api"; "Fetch"; "Model"; "Person"; "Catalog" ],
+      String.starts_with ~prefix:("module " ^ name ^ " ") source,
+      List.find_opt (fun (called, _) -> not (String.starts_with ~prefix called)) calls,
+      undeclared )
+  with
+  | false, _, _, _, _ -> Error (name ^ " is not a module name")
+  | true, true, _, _, _ -> Error (name ^ " is a module of teagent")
+  | true, false, false, _, _ -> Error ("the source is not the module " ^ name)
+  | true, false, true, Some (called, _), _ -> Error ("the call " ^ called ^ " does not start with " ^ prefix)
+  | true, false, true, None, Some use -> Error ("the module uses " ^ use)
+  | true, false, true, None, None -> Ok (Hosted { name; source; calls })
 
 let refused ~name reason =
   match String.split_on_char '.' name with

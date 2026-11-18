@@ -187,11 +187,11 @@ let maybe text =
 let ran ({ out; code } : Tools.ran) =
   Value.V_record [ ("code", V_number (Float.of_int code)); ("out", V_string out) ]
 
-let class_of : Value.tool -> Value.class_ = function
+let class_of devices : Value.tool -> Value.class_ = function
   | Read _ | Grep _ -> Pure
   | Write _ | Edit _ | Enter _ | Leave | Merge _ -> Staged
   | Shell _ -> Contained
-  | Call { name; argument } -> Device.class_of ~name argument
+  | Call { name; argument } -> Device.class_of devices ~name argument
 
 let answering answer =
   {

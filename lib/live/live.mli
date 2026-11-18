@@ -18,4 +18,4 @@ val drawn : t -> (Value.t, [> error ]) result
 val updated : t -> Value.t -> (t * Value.task list, [> error ]) result
 val listening : t -> (listening list, [> error ]) result
 val message : t -> view:Value.t -> Wire.step list -> Value.t list -> (Value.t, [> error ]) result
-val powers : apis:Api.t list -> Lang.t list -> (Lang.call * power) list
+val powers : devices:Device.t list -> Lang.t list -> (Lang.call * power) list

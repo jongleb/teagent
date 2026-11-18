@@ -6,13 +6,19 @@ type t =
   | Person  (** [Person.ask]: the person picks one of the answers a program gives. *)
   | Catalog  (** [Catalog.search]: finds the calls of the APIs by words, with their types. *)
   | Api of Api.t  (** A module of typed calls to an HTTP API the person described. *)
+  | Hosted of hosted  (** A module the host wrote, whose calls the host answers. *)
+
+(** A host's module: each call it makes, with its class. *)
+and hosted = private { name : string; source : string; calls : (string * Value.class_) list }
 
 (** Whether the person lets an irreversible call go ahead. *)
 type consent = Agrees | Declines
 
 val all : t list
 val source : t -> string
-val class_of : name:string -> Value.t -> Value.class_
+val declared : t list -> string -> Value.class_ option
+val class_of : t list -> name:string -> Value.t -> Value.class_
+val hosted : name:string -> source:string -> calls:(string * Value.class_) list -> (t, string) result
 val refused : name:string -> string -> Value.t
 val perform : Tools.t -> name:string -> Value.t -> (Value.t, Value.t) result Lwt.t
 val searched : Api.t list -> string -> string

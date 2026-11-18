@@ -80,7 +80,7 @@ let () =
         | _ -> Some "live: a widget without rights reached Fetch or Agent.read");
         (match compiled (Lang.Calls.plugging [ Device.Fetch ] Lang.Calls.pure) fetching with
         | Ok modules -> (
-            match Live.powers ~apis:[] modules with
+            match Live.powers ~devices:[] modules with
             | [ (Driver "fetch.get", Sends) ] -> None
             | _ -> Some "live: the powers of a widget that fetches are not one send")
         | Error report -> Some ("live: a granted Fetch did not compile:\n" ^ report));
@@ -90,10 +90,63 @@ let () =
              "module Fetching exposing (main)\n\nimport Live\nimport Person\n\n\nmain : Live.Program () () ()\nmain =\n    Live.program\n        { init = ( (), Live.attempt (\\_ -> ()) (Person.ask \"Which?\" [ \"a\" ]) )\n        , update = \\_ m -> ( m, Cmd.none )\n        , view = \\m -> m\n        , subscriptions = \\_ -> Sub.none\n        }\n"
          with
         | Ok modules -> (
-            match Live.powers ~apis:[] modules with
+            match Live.powers ~devices:[] modules with
             | [ (Driver "person.ask", Asks) ] -> None
             | _ -> Some "live: the powers of a widget that asks are not one question")
         | Error report -> Some ("live: a granted Person did not compile:\n" ^ report));
+        (let slack_source =
+           "module Slack exposing (SlackErr(..), post)\n\nimport Agent exposing (Task)\n\n\ntype SlackErr\n    = Failed String\n\n\npost : { channel : String, text : String } -> Task SlackErr String\npost message =\n    Elm.Kernel.Agent.call \"slack.post\" message\n"
+         in
+         let declined = Value.V_string "the person did not let it post" in
+         let calls = [ ("slack.post", Value.Irreversible { question = "post to Slack"; declined }) ] in
+         let posting =
+           "module Fetching exposing (main)\n\nimport Live\nimport Slack\n\n\nmain : Live.Program String String String\nmain =\n    Live.program\n        { init = ( \"\", Live.attempt (\\r -> case r of\n            Ok ts -> ts\n            Err _ -> \"failed\"\n          ) (Slack.post { channel = \"c\", text = \"hi\" }) )\n        , update = \\m _ -> ( m, Cmd.none )\n        , view = \\m -> m\n        , subscriptions = \\_ -> Sub.none\n        }\n"
+         in
+         let refusals =
+           List.filter_map
+             (fun (name, source, calls) -> Result.fold ~ok:(fun _ -> Some name) ~error:(fun _ -> None) (Device.hosted ~name ~source ~calls))
+             [
+               ("Fetch", slack_source, calls);
+               ("Slack", "module Slack exposing (x)\n\nx =\n    Elm.Kernel.Agent.shell \"ls\"\n", calls);
+               ("Slack", slack_source, []);
+               ("Slack", slack_source, ("fetch.get", Value.Pure) :: calls);
+               ("Jira", slack_source, calls);
+             ]
+         in
+         match (Device.hosted ~name:"Slack" ~source:slack_source ~calls, refusals) with
+         | Error reason, _ -> Some ("live: a host's module was refused: " ^ reason)
+         | Ok _, _ :: _ -> Some "live: Device.hosted let in a module it should refuse"
+         | Ok slack, [] -> (
+             match compiled (Lang.Calls.plugging [ slack ] Lang.Calls.pure) posting with
+             | Error report -> Some ("live: a widget with a host's module did not compile:\n" ^ report)
+             | Ok modules -> (
+                 let program = Interp.load ~budget:(Each 1_000_000) modules in
+                 let answered ~name argument =
+                   Lwt.return
+                     (match (name, argument) with
+                     | "slack.post", Value.V_record [ ("channel", V_string "c"); ("text", V_string "hi") ] ->
+                         Ok (Value.V_string "ts1")
+                     | _ -> Error (Value.V_string "unexpected"))
+                 in
+                 let main : Value.global = { module_name = "Fetching"; name = "main" } in
+                 let viewed =
+                   Result.bind (Live.started program main) (fun (live, tasks) ->
+                       match tasks with
+                       | [ task ] -> (
+                           match fst (Lwt_main.run (Handler.interpret (Handler.answering answered) program () task)) with
+                           | Finished (Ok message) -> Result.bind (Live.updated live message) (fun (live, _) -> Live.drawn live)
+                           | _ -> Error (`Live "the post did not end in a message"))
+                       | _ -> Error (`Live "init did not post once"))
+                 in
+                 match
+                   ( Live.powers ~devices:[ slack ] modules,
+                     Handler.class_of [ slack ] (Call { name = "slack.post"; argument = V_string "hi" }),
+                     viewed,
+                     Lang.compile_modules (Lang.Calls.plugging [ slack ] Lang.Calls.pure) [ ("Slack", slack_source) ] ~entries:[] )
+                 with
+                 | [ (Driver "slack.post", Changes) ], Irreversible { question = "post to Slack, with:\n\"hi\""; _ }, Ok (V_string "ts1"), Error _ -> None
+                 | _, _, Error error, _ -> Some ("live: the host did not answer the post: " ^ shown error)
+                 | _ -> Some "live: a host's call got the wrong power or class, or a program took its module's name")));
         (match Lang.compile_modules Lang.Calls.pure [ ("Live", counter) ] ~entries:[] with
         | Error _ -> None
         | Ok _ -> Some "live: a module took the name Live");

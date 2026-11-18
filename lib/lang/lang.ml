@@ -573,7 +573,7 @@ let compile calls source =
             ]
 
 let compile_modules calls sources ~entries =
-  let reserved = "Main" :: "Agent" :: "Live" :: "Policy" :: List.map named Device.all in
+  let reserved = "Main" :: "Agent" :: "Live" :: "Policy" :: List.map named (Device.all @ calls.Calls.plugged) in
   match
     ( List.find_opt (fun (_, source) -> Option.is_some (found "Elm.Kernel" source)) sources,
       List.find_opt (fun (name, _) -> List.mem name reserved) sources )

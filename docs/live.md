@@ -44,6 +44,22 @@ driver the table does not have, or calls a tool it dropped, does not compile. `L
 what the compiled calls can do, `Reads`, `Sends`, `Changes` or `Asks` (`Person.ask`, with
 `Device.Person` plugged), so a host can ask the person before it runs anything.
 
+A host adds its own calls, such as actions through its integrations, with a module it writes:
+
+```ocaml
+Device.hosted ~name:"Slack" ~source
+  ~calls:[ ("slack.post", Irreversible { question = "post to Slack"; declined }) ]
+```
+
+The source is an Elm module named `name` whose functions wrap `Elm.Kernel.Agent.call` with a
+name written out, as `Fetch` does. `Device.hosted` refuses a module that uses any other kernel,
+makes a call missing from `calls`, names a call that does not start with the module's name in
+lower case (`slack.`), or takes the name of a module of teagent. The device plugs in like any
+other (`Lang.Calls.plugging [ slack ]`), and no program can take its name. Its classes reach the
+handler through `Handler.class_of [ slack ]`, which adds the argument to an irreversible call's
+question, and `Live.powers ~devices:[ slack ]`. The host answers the calls with
+`Handler.answering`.
+
 ## The host
 
 | Call | What it does |

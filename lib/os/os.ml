@@ -427,7 +427,7 @@ let class_of os (tool : Value.tool) =
                      and can reach the network" );
                ]);
         }
-  | _, _ -> Handler.class_of tool)
+  | _, _ -> Handler.class_of [] tool)
 
 type exposure = { reads : string list; inward : string list; outward : string list }
 

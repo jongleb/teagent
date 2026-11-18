@@ -140,12 +140,14 @@ let () =
                  in
                  match
                    ( Live.powers ~devices:[ slack ] modules,
+                     Handler.class_of [] (Call { name = "slack.post"; argument = V_string "hi" }),
+                     Handler.class_of [] (Call { name = "listen.agents"; argument = V_unit }),
                      Handler.class_of [ slack ] (Call { name = "slack.post"; argument = V_string "hi" }),
                      viewed,
                      Lang.compile_modules (Lang.Calls.plugging [ slack ] Lang.Calls.pure) [ ("Slack", slack_source) ] ~entries:[] )
                  with
-                 | [ (Driver "slack.post", Changes) ], Irreversible { question = "post to Slack, with:\n\"hi\""; _ }, Ok (V_string "ts1"), Error _ -> None
-                 | _, _, Error error, _ -> Some ("live: the host did not answer the post: " ^ shown error)
+                 | [ (Driver "slack.post", Changes) ], Irreversible _, Pure, Irreversible { question = "post to Slack, with:\n\"hi\""; _ }, Ok (V_string "ts1"), Error _ -> None
+                 | _, _, _, _, Error error, _ -> Some ("live: the host did not answer the post: " ^ shown error)
                  | _ -> Some "live: a host's call got the wrong power or class, or a program took its module's name")));
         (match Lang.compile_modules Lang.Calls.pure [ ("Live", counter) ] ~entries:[] with
         | Error _ -> None

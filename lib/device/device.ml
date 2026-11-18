@@ -42,6 +42,8 @@ let class_of devices ~name argument =
               (failed "Fetch" "Declined"
                  "the person did not let this request carry content of the project; ask them first");
         }
+  | ("model.judge" | "person.ask" | "catalog.search"), _ -> Value.Pure
+  | _ when String.starts_with ~prefix:"listen." name -> Value.Pure
   | _ -> (
       match String.split_on_char '.' name with
       | [ "api"; module_name; _ ] ->
@@ -50,7 +52,12 @@ let class_of devices ~name argument =
               question = "make the call " ^ name ^ " of an API, which may not be taken back";
               declined = failed module_name "Declined" "the person did not let this call go out; ask them first";
             }
-      | _ -> Value.Pure))
+      | _ ->
+          Value.Irreversible
+            {
+              question = "make the call " ^ name ^ ", which teagent does not know, with:\n" ^ Value.to_elm argument;
+              declined = Value.V_string "the person did not let this call go out; ask them first";
+            }))
 
 let hosted ~name ~source ~calls =
   let prefix = String.lowercase_ascii name ^ "." in

@@ -33,6 +33,28 @@ let () =
         | Value.Egress _, Value.Irreversible _, Value.Irreversible _ -> None
         | _ -> Some "api: reads are not egress, or writes are not irreversible");
         (match
+           Api.parsed ~name:"Ops" ~base:None ~token:None ~only:[]
+             (Yojson.Safe.from_string
+                {|{"openapi": "3.0.0", "servers": [{"url": "https://ops"}],
+                   "paths": {"/p": {"get": {"operationId": "getP", "responses": {"200": {"content":
+                     {"application/json": {"schema": {"$ref": "#/components/schemas/Participant"}}}}}}}},
+                   "components": {"schemas": {"Participant": {"type": "object", "required": ["type"],
+                     "properties": {"type": {"type": "string"},
+                       "owner": {"$ref": "#/components/schemas/Participant"},
+                       "participants": {"type": "array", "items": {"$ref": "#/components/schemas/Participant"}}}}}}}|})
+         with
+        | Ok ops -> (
+            match Api.alias ops "Participant" with
+            | Record
+                [
+                  { json = "type"; shape = Text; _ };
+                  { json = "owner"; shape = Raw; _ };
+                  { json = "participants"; shape = Listed Raw; _ };
+                ] ->
+                None
+            | _ -> Some "api: a schema that refers to itself is not cut to Raw below its first level")
+        | Error reason -> Some ("api: a schema that refers to itself was refused: " ^ reason));
+        (match
            Api.parsed ~name:"Agent" ~base:None ~token:None ~only:[] (Yojson.Safe.from_file "shop.json")
          with
         | Error _ -> None

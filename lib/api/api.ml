@@ -179,7 +179,7 @@ let parsed ~name ~base ~token ~only document =
                     Record
                       (List.map2
                          (fun (key, property) elm ->
-                           let property = resolved property in
+                           let target = resolved property in
                            {
                              elm;
                              json = key;
@@ -187,8 +187,8 @@ let parsed ~name ~base ~token ~only document =
                              presence =
                                (match
                                   ( List.mem key required,
-                                    member "nullable" property,
-                                    member "type" property )
+                                    member "nullable" target,
+                                    member "type" target )
                                 with
                                | true, Some (`Bool true), _ -> Optional
                                | true, _, Some (`List kinds) when List.mem (`String "null") kinds -> Optional
